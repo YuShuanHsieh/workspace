@@ -1,6 +1,6 @@
 module workspace.io/echo-server
 
-go 1.24.13
+go 1.25
 
 require (
 	github.com/bytedance/sonic v1.11.6 // indirect
