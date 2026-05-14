@@ -34,3 +34,18 @@ func TestHelloHandler_EmptyPodName_StillReturns200(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, "hello from unknown", w.Body.String())
 }
+
+func TestHelloHandler_WithInjectedIdentity_IncludesItInBody(t *testing.T) {
+	t.Setenv("POD_NAME", "documents-api-xyz")
+	gin.SetMode(gin.TestMode)
+
+	r := newRouter()
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/hello", nil)
+	req.Header.Set("X-User-Id", "alice-uid-001")
+	req.Header.Set("X-User-Role", "editor")
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "hello from documents-api-xyz (uid=alice-uid-001 role=editor)", w.Body.String())
+}

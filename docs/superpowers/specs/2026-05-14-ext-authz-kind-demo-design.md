@@ -228,7 +228,44 @@ Key configuration decisions, common to both `documents-ext-authz` and `wiki-ext-
 
 The complete EnvoyFilter resources are in §4.6 (documents) and §4.7 (wiki). They are byte-for-byte identical except for `metadata.namespace` and `metadata.name`.
 
-### 3.5 All-namespace Istio Injection
+### 3.5 Request Enrichment (Mutation)
+
+`ext_authz` has an optional second capability beyond allow/deny: **request
+mutation**. When PCS returns `200`, it can also set response headers that
+Envoy will append to the original request before forwarding it to the upstream
+app. This is configured via `authorization_response.allowed_upstream_headers`
+in the `http_service` block of each EnvoyFilter.
+
+In this demo PCS sets three headers on allow:
+
+| Header | Example value |
+|--------|---------------|
+| `X-User-Id` | `alice-uid-001` |
+| `X-User-Role` | `editor` |
+| `X-Allowed-Scopes` | `documents:read,documents:write` |
+
+The EnvoyFilter's `authorization_response` block tells Envoy to copy these
+from PCS's response onto the original inbound request:
+
+```yaml
+authorization_response:
+  allowed_upstream_headers:
+    patterns:
+    - exact: x-user-id
+    - exact: x-user-role
+    - exact: x-allowed-scopes
+```
+
+The upstream app (`echo-server`) reads those headers, logs them as structured
+fields (`injected_user_id`, `injected_role`, `injected_scopes`), and includes
+`uid` and `role` in the response body. Because these headers come from PCS
+(infrastructure), the app can trust them as authoritative — they cannot be
+forged by a caller. This is the canonical pattern for propagating verified
+identity through a mesh: the authz service decides who the caller is and
+asserts it via injected headers; app code reads those headers rather than
+trusting caller-supplied identity directly.
+
+### 3.6 All-namespace Istio Injection
 
 Both app namespaces (`documents`, `wiki`) carry the `istio-injection: enabled` label. This mirrors the production cluster's posture (every namespace defaults to sidecar-injected). Concrete consequences:
 

@@ -304,7 +304,81 @@ app code. The app is never invoked for denied requests.
 
 ---
 
-## 6. The demo flow (live script)
+## 6. Request enrichment (mutation) — what PCS returns flows into App B
+
+### What mutation is
+
+Mutation is the optional second purpose of `ext_authz`. When PCS allows a
+request, it does not have to return a bare `200` with no body. It can also set
+response headers — and Envoy can be told to **append those headers to the
+original request** before forwarding it to the upstream app. The application
+then sees those headers as if they were sent by the caller, but they weren't:
+they were injected by Envoy after the PCS decision. Because they came from PCS
+(infrastructure), the app can **trust** them as authoritative identity
+information rather than reading the caller-supplied `x-workspace-user-id`
+directly (which a caller could forge).
+
+This is how identity propagates in real authz-mesh deployments: the application
+trusts the authz service's decision and the identity it returns, rather than
+reading the user's identity from the client request directly.
+
+### The Envoy knob: `authorization_response.allowed_upstream_headers`
+
+In each EnvoyFilter's `http_service` block, alongside `authorization_request`,
+there is now an `authorization_response` section:
+
+```yaml
+authorization_response:
+  allowed_upstream_headers:
+    patterns:
+    - exact: x-user-id
+    - exact: x-user-role
+    - exact: x-allowed-scopes
+```
+
+This tells Envoy: "if PCS sets any of these headers in its `200` response,
+copy them onto the original request before forwarding it upstream." Headers
+that PCS does not set are simply absent on the forwarded request.
+
+### The three injected headers
+
+| Header | Example value | Meaning |
+|--------|---------------|---------|
+| `X-User-Id` | `alice-uid-001` | Stable internal identifier for the user |
+| `X-User-Role` | `editor` | Role granted by the policy service |
+| `X-Allowed-Scopes` | `documents:read,documents:write` | Scopes the user is allowed to exercise |
+
+### Request flow for an alice request (with mutation)
+
+1. `dashboard-client` sends `GET /hello` with `x-workspace-user-id: alice@workspace.test`
+2. `ext_authz` POSTs to PCS with that header
+3. PCS returns `200` + `X-User-Id: alice-uid-001`, `X-User-Role: editor`, `X-Allowed-Scopes: documents:read,documents:write`
+4. Envoy reads those response headers (because `allowed_upstream_headers` lists them) and **appends them to the original request**
+5. App container receives `GET /hello` with the original header AND the three injected headers
+6. App logs them as structured fields (`injected_user_id`, `injected_role`, `injected_scopes`) and includes uid + role in the response body
+
+### Visible proof
+
+The app container log now shows the injected fields for every alice request:
+
+```json
+{"msg":"hello request","pod":"documents-api-...","user":"alice@workspace.test","injected_user_id":"alice-uid-001","injected_role":"editor","injected_scopes":"documents:read,documents:write"}
+```
+
+And the response body itself carries the identity:
+
+```
+hello from documents-api-846d5bd8bd-ptfcf (uid=alice-uid-001 role=editor)
+```
+
+Mallory's requests never reach the app container, so Mallory's identity is
+never injected — because there is no PCS `200` response for Mallory to trigger
+the mutation path. The app sees `(uid=..., role=...)` only for users that PCS
+has affirmatively allowed.
+
+---
+
+## 7. The demo flow (live script)
 
 ### Before the demo
 
@@ -410,13 +484,17 @@ kubectl -n documents logs deploy/dashboard-client -c dashboard-client -f
 
 **Expected output (rolling, one line per 2 seconds):**
 ```json
-{"level":"INFO","msg":"call result","target":"documents-api","user":"alice@workspace.test","status":200,"body":"hello from documents-api-..."}
+{"level":"INFO","msg":"call result","target":"documents-api","user":"alice@workspace.test","status":200,"body":"hello from documents-api-... (uid=alice-uid-001 role=editor)"}
 {"level":"INFO","msg":"call result","target":"documents-api","user":"mallory@workspace.test","status":403,"body":""}
-{"level":"INFO","msg":"call result","target":"documents-search","user":"alice@workspace.test","status":200,"body":"hello from documents-search-..."}
+{"level":"INFO","msg":"call result","target":"documents-search","user":"alice@workspace.test","status":200,"body":"hello from documents-search-... (uid=alice-uid-001 role=editor)"}
 {"level":"INFO","msg":"call result","target":"documents-search","user":"mallory@workspace.test","status":403,"body":""}
-{"level":"INFO","msg":"call result","target":"wiki-api","user":"alice@workspace.test","status":200,"body":"hello from wiki-api-..."}
+{"level":"INFO","msg":"call result","target":"wiki-api","user":"alice@workspace.test","status":200,"body":"hello from wiki-api-... (uid=alice-uid-001 role=editor)"}
 {"level":"INFO","msg":"call result","target":"wiki-api","user":"mallory@workspace.test","status":403,"body":""}
 ```
+
+**Point at:** alice's body now carries `(uid=alice-uid-001 role=editor)` — injected
+by Envoy from PCS's response. mallory's body is empty because the request was
+denied before reaching the app.
 
 ---
 
@@ -474,18 +552,64 @@ kubectl -n wiki logs deploy/wiki-api -c wiki-api | grep -c mallory
 
 All three should return `0`.
 
-And confirm alice DID reach the app:
+And confirm alice DID reach the app — AND that the injected identity is visible:
 
 ```bash
-kubectl -n documents logs deploy/documents-api -c documents-api | grep -c alice
+kubectl -n documents logs deploy/documents-api -c documents-api --tail=3
 ```
 
-This should return a positive number — proof the grep is working, not that logs
-are empty.
+**Expected:** structured JSON lines for alice showing `injected_user_id=alice-uid-001`,
+`injected_role=editor`, `injected_scopes=documents:read,documents:write`. This is the
+mutation in action — PCS returned those headers on allow, Envoy injected them
+into the request, and the app received them as first-class request headers.
+
+**Step 5b — Show mutation in the response body**
+
+**Say:** "The response body itself now carries the identity too — visual proof."
+
+```bash
+kubectl -n documents logs deploy/documents-api -c documents-api --tail=3
+# See injected_user_id, injected_role in the log
+
+curl -s --resolve documents.local:80:127.0.0.1 \
+  -H "x-workspace-user-id: alice@workspace.test" \
+  http://documents.local/hello
+```
+
+**Expected:** `hello from documents-api-... (uid=alice-uid-001 role=editor)`
+
+**Point at:** "The app didn't get that uid and role from the client request — it
+got it from Envoy, which got it from PCS. The client only sent
+`x-workspace-user-id: alice@workspace.test`. The identity enrichment happened
+in the infrastructure layer."
 
 ---
 
-### Step 6 — External curl demonstrating both gateways
+### Step 6 — Show mutation from the outside (external curl)
+
+**Say:** "The enriched body is visible from outside the cluster too."
+
+```bash
+curl -s --resolve documents.local:80:127.0.0.1 \
+  -H "x-workspace-user-id: alice@workspace.test" \
+  http://documents.local/hello
+```
+
+**Expected:** `hello from documents-api-... (uid=alice-uid-001 role=editor)`
+
+**Say:** "Try mallory — no mutation, just a bare 403."
+
+```bash
+curl -s --resolve documents.local:80:127.0.0.1 \
+  -H "x-workspace-user-id: mallory@workspace.test" \
+  http://documents.local/hello
+```
+
+**Expected:** `403`, empty body — mallory never reached the app.
+
+---
+
+### Step 7 — External curl demonstrating both gateways
 
 **Say:** "The same allow/deny behaviour is reachable from outside the cluster via
 the per-namespace ingressgateways."
@@ -512,7 +636,7 @@ sidecar for cluster-internal calls, as the dashboard-client loop demonstrates.
 
 ---
 
-### Step 7 — Fail-closed proof (optional, 60 extra seconds)
+### Step 8 — Fail-closed proof (optional, 60 extra seconds)
 
 **Say:** "What if PCS is down? The filter is configured with
 `failure_mode_allow: false` — fail-closed. Let's prove it."
@@ -546,7 +670,7 @@ change required."
 
 ---
 
-## 7. What to expect (and what NOT to expect)
+## 8. What to expect (and what NOT to expect)
 
 ### What you SHOULD see
 
@@ -554,8 +678,9 @@ change required."
   cycling every 2 seconds through all three targets
 - PCS logging 3 allow + 3 deny decisions per 12-second dashboard-client cycle —
   one pair per workload
-- `documents-api` app log shows `"msg":"hello request"` lines for alice only —
-  never a line mentioning mallory
+- `documents-api` app log shows `"msg":"hello request"` lines for alice only
+  (never a line mentioning mallory), each with `injected_user_id`, `injected_role`,
+  and `injected_scopes` fields populated by PCS via Envoy's request mutation
 - The same pattern for `documents-search` and `wiki-api` app logs
 - Both gateways responding 200 or 403 based on the `x-workspace-user-id` header
 - `kubectl get envoyfilter -A` showing exactly two rows: `documents-ext-authz`
@@ -590,7 +715,7 @@ after a change, wait and re-check. The steady-state is what matters.
 
 ---
 
-## 8. FAQ — questions your audience will ask
+## 9. FAQ — questions your audience will ask
 
 **Q: Why are there sidecars on every pod? Doesn't that add latency and memory?**
 
@@ -676,6 +801,16 @@ everything else. (3) Apply it to their namespace. (4) Add
 — their workload is now gated through the documents team's PCS. In Stage 2 they
 skip step 2 and 3 entirely.
 
+**Q: Can PCS pass info back to App B?**
+
+A: Yes — via the ext_authz `authorization_response.allowed_upstream_headers`
+configuration. PCS sets response headers (e.g. `X-User-Id`,
+`X-User-Role`), Envoy appends them to the original request, and App B sees
+them. This is how identity propagates in real authz-mesh deployments:
+the application trusts the authz service's decision and the identity it
+returns, rather than reading the user's identity from the client request
+directly.
+
 **Q: Is this how Istio's AuthorizationPolicy works under the hood?**
 
 Not exactly. `AuthorizationPolicy` with `action: CUSTOM` and a registered
@@ -688,7 +823,7 @@ a future migration path to `AuthorizationPolicy action: CUSTOM`.
 
 ---
 
-## 9. Troubleshooting
+## 10. Troubleshooting
 
 **Problem: Getting `404` instead of `200` or `403`**
 
@@ -768,7 +903,7 @@ kubectl -n documents get envoyfilter documents-ext-authz -o jsonpath='{.spec.wor
 
 ---
 
-## 10. Glossary (for the audience)
+## 11. Glossary (for the audience)
 
 **Pod** — The smallest deployable unit in Kubernetes. A Pod holds one or more
 containers that share a network namespace (same IP address, same localhost).

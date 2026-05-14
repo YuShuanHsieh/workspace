@@ -18,11 +18,23 @@ func newRouter() *gin.Engine {
 			podName = "unknown"
 		}
 		user := c.GetHeader("x-workspace-user-id")
+		userId := c.GetHeader("X-User-Id")
+		role := c.GetHeader("X-User-Role")
+		scopes := c.GetHeader("X-Allowed-Scopes")
+
 		slog.Info("hello request",
 			"pod", podName,
 			"user", user,
+			"injected_user_id", userId,
+			"injected_role", role,
+			"injected_scopes", scopes,
 		)
-		c.String(http.StatusOK, "hello from "+podName)
+
+		body := "hello from " + podName
+		if userId != "" {
+			body += " (uid=" + userId + " role=" + role + ")"
+		}
+		c.String(http.StatusOK, body)
 	})
 
 	return r

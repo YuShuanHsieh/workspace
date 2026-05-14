@@ -16,6 +16,9 @@ var allowList = map[string]struct{}{
 
 // checkHandler authorizes a request based on the x-workspace-user-id header.
 // Returns 200 if the header value is in allowList, 403 otherwise.
+// On allow, sets identity headers so Envoy can inject them into the original
+// request before forwarding to the upstream app (request mutation via
+// authorization_response.allowed_upstream_headers in the EnvoyFilter).
 func checkHandler(c *gin.Context) {
 	user := c.GetHeader("x-workspace-user-id")
 	decision := "deny"
@@ -23,6 +26,15 @@ func checkHandler(c *gin.Context) {
 	if _, ok := allowList[user]; ok && user != "" {
 		decision = "allow"
 		status = http.StatusOK
+		// Mutation: enrich the original request with identity/role/scopes
+		// before Envoy forwards it to the upstream app. Envoy reads these
+		// from PCS's response headers and (when configured via
+		// authorization_response.allowed_upstream_headers in the EnvoyFilter)
+		// appends them to the original request.
+		identity := identityFor(user)
+		c.Header("X-User-Id", identity.id)
+		c.Header("X-User-Role", identity.role)
+		c.Header("X-Allowed-Scopes", identity.scopes)
 	}
 	slog.Info("decision",
 		"user", user,
@@ -30,6 +42,22 @@ func checkHandler(c *gin.Context) {
 		"ts", time.Now().UTC().Format(time.RFC3339Nano),
 	)
 	c.Status(status)
+}
+
+type principal struct {
+	id     string
+	role   string
+	scopes string
+}
+
+func identityFor(user string) principal {
+	switch user {
+	case "alice@workspace.test":
+		return principal{id: "alice-uid-001", role: "editor", scopes: "documents:read,documents:write"}
+	case "bob@workspace.test":
+		return principal{id: "bob-uid-002", role: "viewer", scopes: "documents:read"}
+	}
+	return principal{}
 }
 
 func newRouter() *gin.Engine {

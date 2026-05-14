@@ -35,4 +35,10 @@ spec:
                 patterns:
                 - exact: x-workspace-user-id
                 - exact: authorization
+            authorization_response:
+              allowed_upstream_headers:
+                patterns:
+                - exact: x-user-id
+                - exact: x-user-role
+                - exact: x-allowed-scopes
           failure_mode_allow: false

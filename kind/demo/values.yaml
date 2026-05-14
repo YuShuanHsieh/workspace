@@ -52,6 +52,16 @@ extAuthz:
     port: 8080
     pathPrefix: /check
 
+# Headers PCS returns on allow get appended to the original request before
+# the app sees it. The EnvoyFilter template hardcodes the list below;
+# changing it requires editing the template. Listed here so the values.yaml
+# is self-documenting.
+extAuthzMutation:
+  injectedHeaders:
+  - x-user-id
+  - x-user-role
+  - x-allowed-scopes
+
 # ===========================================================================
 # INGRESS GATEWAYS — installed separately by setup.sh (subchart-namespace
 # limitation; see README.md). Settings are sourced from here for single-file
