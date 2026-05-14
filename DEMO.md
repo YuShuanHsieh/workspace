@@ -393,7 +393,9 @@ has affirmatively allowed.
   ```bash
   echo '127.0.0.1  documents.local wiki.local' | sudo tee -a /etc/hosts
   ```
-  If you can't or prefer not to, the `--resolve` alternative in the troubleshooting section works without any system edits.
+  If you can't or prefer not to, pass the host explicitly with `-H "Host: documents.local"`
+  (Istio's VirtualService matches on the `Host` header, not real DNS — see the
+  troubleshooting section for the full no-edit form).
 - Open 4 terminal windows and pre-position them. Suggested layout:
   - Terminal 1 (top-left): kubectl commands you'll type live
   - Terminal 2 (top-right): `dashboard-client` log (follow mode, pre-running)
@@ -576,8 +578,8 @@ kubectl -n documents logs deploy/documents-api -c documents-api --tail=3
 
 # Primary (with /etc/hosts):
 curl -s -H "x-workspace-user-id: alice@workspace.test" http://documents.local:8080/hello
-# Alternative (no /etc/hosts):
-curl -s --resolve documents.local:8080:127.0.0.1 -H "x-workspace-user-id: alice@workspace.test" http://documents.local:8080/hello
+# Alternative (no /etc/hosts) — pass the VirtualService host as a header:
+curl -s -H "Host: documents.local" -H "x-workspace-user-id: alice@workspace.test" http://127.0.0.1:8080/hello
 ```
 
 **Expected:** `hello from documents-api-... (uid=alice-uid-001 role=editor)`
@@ -629,14 +631,17 @@ curl -H "x-workspace-user-id: alice@workspace.test"   http://wiki.local:8081/hel
 curl -H "x-workspace-user-id: mallory@workspace.test" http://wiki.local:8081/hello
 ```
 
-Alternative (no `/etc/hosts` edit needed):
+Alternative (no `/etc/hosts` edit needed) — Istio's VirtualService matches on the
+`Host` header, so passing it explicitly is enough:
 
 ```bash
-curl --resolve documents.local:8080:127.0.0.1 -H "x-workspace-user-id: alice@workspace.test"   http://documents.local:8080/hello
-curl --resolve documents.local:8080:127.0.0.1 -H "x-workspace-user-id: mallory@workspace.test" http://documents.local:8080/hello
-curl --resolve wiki.local:8081:127.0.0.1      -H "x-workspace-user-id: alice@workspace.test"   http://wiki.local:8081/hello
-curl --resolve wiki.local:8081:127.0.0.1      -H "x-workspace-user-id: mallory@workspace.test" http://wiki.local:8081/hello
+curl -H "Host: documents.local" -H "x-workspace-user-id: alice@workspace.test"   http://127.0.0.1:8080/hello
+curl -H "Host: documents.local" -H "x-workspace-user-id: mallory@workspace.test" http://127.0.0.1:8080/hello
+curl -H "Host: wiki.local"      -H "x-workspace-user-id: alice@workspace.test"   http://127.0.0.1:8081/hello
+curl -H "Host: wiki.local"      -H "x-workspace-user-id: mallory@workspace.test" http://127.0.0.1:8081/hello
 ```
+
+(`curl --resolve documents.local:8080:127.0.0.1 …` also works if you prefer.)
 
 **Point at:**
 - alice returning `200 hello from documents-api-...` and `200 hello from wiki-api-...`
@@ -664,8 +669,8 @@ Wait about 8 seconds for the sidecar config to propagate, then:
 ```bash
 # Primary (with /etc/hosts):
 curl -H "x-workspace-user-id: alice@workspace.test" http://documents.local:8080/hello
-# Alternative:
-curl --resolve documents.local:8080:127.0.0.1 -H "x-workspace-user-id: alice@workspace.test" http://documents.local:8080/hello
+# Alternative (no /etc/hosts):
+curl -H "Host: documents.local" -H "x-workspace-user-id: alice@workspace.test" http://127.0.0.1:8080/hello
 ```
 
 **Expected:** `503` or `403` — even alice is denied because PCS is unreachable
@@ -847,8 +852,9 @@ a future migration path to `AuthorizationPolicy action: CUSTOM`.
 The workload responded but Envoy could not route to it. Most likely causes:
 (1) The `VirtualService` or `Gateway` host name does not match — verify you are
 using the correct hostname and port in your curl command (e.g. `http://documents.local:8080/hello`
-with `/etc/hosts` containing `127.0.0.1 documents.local wiki.local`, or using
-`--resolve documents.local:8080:127.0.0.1` as the alternative). (2) PCS is not ready
+with `/etc/hosts` containing `127.0.0.1 documents.local wiki.local`, or — without any
+`/etc/hosts` edit — `curl -H "Host: documents.local" http://127.0.0.1:8080/hello`,
+since Istio routes on the `Host` header). (2) PCS is not ready
 and Envoy's upstream cluster for PCS is in a bad state — check
 `kubectl -n documents get pod -l app=pcs`. (3) The EnvoyFilter was applied before
 istiod pushed config to the sidecar — wait 15 seconds and retry.
@@ -882,8 +888,9 @@ kubectl config use-context kind-ext-authz-demo
 **Problem: External curl times out or `connection refused`**
 
 Check (1) You are using the correct port — documents gateway is on `8080`, wiki
-gateway is on `8081`. Use `--resolve <host>:<port>:127.0.0.1` so curl sends the
-right `Host` header, or add `127.0.0.1 documents.local wiki.local` to `/etc/hosts`.
+gateway is on `8081`. Either add `127.0.0.1 documents.local wiki.local` to `/etc/hosts`,
+or send the host as a header directly: `-H "Host: documents.local"` against
+`http://127.0.0.1:8080/hello` (Istio's VirtualService matches on the `Host` header).
 (2) The ingressgateway pods are running:
 ```bash
 kubectl -n documents get pod -l istio=documents-ingressgateway

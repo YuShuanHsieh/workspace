@@ -102,6 +102,17 @@ helm upgrade --install wiki-ingressgateway "${CHARTS}/gateway-1.24.2.tgz" \
   --set 'resources.requests.cpu=20m,resources.requests.memory=64Mi,resources.limits.cpu=200m,resources.limits.memory=128Mi'
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Phase D — Wait for gateway pods to be Ready.
+# Helm's --wait sometimes returns before the gateway pod has fully connected
+# to istiod; the pod then restarts once and takes ~50s to flip to Ready. Block
+# here so the banner below is not shown until external curls would succeed.
+# ─────────────────────────────────────────────────────────────────────────────
+
+log "Waiting for ingressgateway pods to be Ready"
+kubectl -n documents wait --for=condition=ready pod -l istio=documents-ingressgateway --timeout=180s
+kubectl -n wiki      wait --for=condition=ready pod -l istio=wiki-ingressgateway      --timeout=180s
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Verification banner
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -119,9 +130,9 @@ Then curl from host:
   curl -H "x-workspace-user-id: alice@workspace.test"   http://wiki.local:8081/hello            # 200
   curl -H "x-workspace-user-id: mallory@workspace.test" http://wiki.local:8081/hello            # 403
 
-Alternative (no sudo / CI-friendly):
-  curl --resolve documents.local:8080:127.0.0.1 -H "x-workspace-user-id: alice@workspace.test" http://documents.local:8080/hello
-  curl --resolve wiki.local:8081:127.0.0.1      -H "x-workspace-user-id: alice@workspace.test" http://wiki.local:8081/hello
+Alternative (no sudo / CI-friendly) — pass the host as a header, Istio routes on it:
+  curl -H "Host: documents.local" -H "x-workspace-user-id: alice@workspace.test" http://127.0.0.1:8080/hello
+  curl -H "Host: wiki.local"      -H "x-workspace-user-id: alice@workspace.test" http://127.0.0.1:8081/hello
 
 Watch the dashboard-client cycle:
   kubectl -n documents logs deploy/dashboard-client -c dashboard-client -f
