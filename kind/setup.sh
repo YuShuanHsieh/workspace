@@ -37,15 +37,29 @@ kind load docker-image workspace/pcs:dev              --name "${CLUSTER_NAME}"
 kind load docker-image workspace/dashboard-client:dev --name "${CLUSTER_NAME}"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Phase B — Install the umbrella chart (Istio control plane + all app
-# k8s manifests via templates/)
+# Phase B — Istio control plane (separate Helm releases) + umbrella chart
+#          for the app k8s manifests
 # ─────────────────────────────────────────────────────────────────────────────
+#
+# istio-base + istiod are installed as their OWN Helm releases (not as
+# subcharts of the umbrella) because the istiod chart redeclares some of
+# the resources istio-base creates (ServiceAccounts, ClusterRoles), so
+# bundling them into one umbrella triggers Helm ownership conflicts.
+# Istio's own install docs recommend this same separated pattern.
+#
+# The umbrella chart (kind/demo/) then carries ONLY the app k8s manifests
+# (Deployments, Services, EnvoyFilters, Gateway, VirtualService) — and the
+# single values.yaml that drives image-registry overrides everywhere.
 
-log "Resolving Helm subchart dependencies for kind/demo"
-helm dependency update "${DEMO}" --skip-refresh
+log "Installing istio-base (provides Istio CRDs)"
+kubectl create namespace istio-system --dry-run=client -o yaml | kubectl apply -f -
+helm upgrade --install istio-base "${CHARTS}/base-1.24.2.tgz" -n istio-system --wait
 
-log "Installing umbrella chart 'demo' into istio-system"
-helm upgrade --install demo "${DEMO}" -n istio-system --create-namespace --wait
+log "Installing istiod (Istio control plane)"
+helm upgrade --install istiod "${CHARTS}/istiod-1.24.2.tgz" -n istio-system --wait
+
+log "Installing umbrella chart 'demo' (app k8s manifests in documents + wiki)"
+helm upgrade --install demo "${DEMO}" -n istio-system --wait
 
 # Wait for the app workloads applied by the umbrella to be Available
 log "Waiting for documents-team Deployments to be Available"

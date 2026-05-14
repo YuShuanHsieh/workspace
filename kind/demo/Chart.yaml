@@ -4,10 +4,17 @@ description: Umbrella chart for the ext-authz kind demo (per-namespace EnvoyFilt
 type: application
 version: 0.1.0
 appVersion: "1.24.2"
-dependencies:
-- name: base
-  version: 1.24.2
-  repository: file://charts
-- name: istiod
-  version: 1.24.2
-  repository: file://charts
+# No subchart dependencies declared.
+#
+# Istio (istio-base, istiod, gateway) is installed by setup.sh as separate
+# Helm releases — wrapping them as subchart dependencies of this umbrella
+# would conflict with the istio-base install (overlapping ServiceAccounts /
+# CRDs across charts) and would force every Istio resource into the umbrella's
+# single Helm release namespace, which doesn't work for the per-namespace
+# gateways.
+#
+# What this chart owns:
+#   - All app Kubernetes manifests (Deployments, Services, EnvoyFilters,
+#     Gateway/VirtualService CRDs) under templates/.
+#   - The single values.yaml that setup.sh ALSO reads to drive the Istio
+#     installs — so registry/tag/resource overrides remain centralised.
