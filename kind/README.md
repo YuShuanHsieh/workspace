@@ -29,12 +29,6 @@ From the repo root:
 
 Idempotent — re-running picks up where the previous run left off. Total wall-clock on a warm Docker cache is ≤ 3 minutes.
 
-Add to `/etc/hosts`:
-
-```
-127.0.0.1  documents.local wiki.local
-```
-
 ## Verify
 
 ```bash
@@ -44,11 +38,23 @@ kubectl -n documents logs deploy/dashboard-client -c dashboard-client -f
 # Watch authorization decisions
 kubectl -n documents logs deploy/pcs -c pcs -f
 
-# Curl from host (after /etc/hosts)
-curl -H "x-workspace-user-id: alice@workspace.test"   http://documents.local/hello       # 200
-curl -H "x-workspace-user-id: mallory@workspace.test" http://documents.local/hello       # 403
-curl -H "x-workspace-user-id: alice@workspace.test"   http://wiki.local:8081/hello       # 200
-curl -H "x-workspace-user-id: mallory@workspace.test" http://wiki.local:8081/hello       # 403
+# Curl from host — primary path: add to /etc/hosts once (requires sudo):
+#   echo '127.0.0.1  documents.local wiki.local' | sudo tee -a /etc/hosts
+#
+# Then:
+curl -H "x-workspace-user-id: alice@workspace.test"   http://documents.local:8080/hello   # 200
+curl -H "x-workspace-user-id: mallory@workspace.test" http://documents.local:8080/hello   # 403
+curl -H "x-workspace-user-id: alice@workspace.test"   http://wiki.local:8081/hello        # 200
+curl -H "x-workspace-user-id: mallory@workspace.test" http://wiki.local:8081/hello        # 403
+```
+
+Alternative (no `/etc/hosts` edit needed):
+
+```bash
+curl --resolve documents.local:8080:127.0.0.1 -H "x-workspace-user-id: alice@workspace.test"   http://documents.local:8080/hello
+curl --resolve documents.local:8080:127.0.0.1 -H "x-workspace-user-id: mallory@workspace.test" http://documents.local:8080/hello
+curl --resolve wiki.local:8081:127.0.0.1      -H "x-workspace-user-id: alice@workspace.test"   http://wiki.local:8081/hello
+curl --resolve wiki.local:8081:127.0.0.1      -H "x-workspace-user-id: mallory@workspace.test" http://wiki.local:8081/hello
 ```
 
 ## Teardown

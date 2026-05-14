@@ -38,6 +38,8 @@ The demo exercises three onboarding cases end-to-end:
 
 Prerequisites: Docker Desktop running with ≥ 6 GB RAM, plus `kind`, `kubectl`, `helm`, and `go` (≥ 1.25) installed.
 
+> **Cross-platform note:** the demo runs on macOS Docker Desktop AND Linux Docker without changes. All host ports are unprivileged (8080, 8081, 8443), so no `sudo` is required for port binding on either platform — only for the optional one-time `/etc/hosts` edit.
+
 ```bash
 ./kind/setup.sh
 ```
@@ -48,13 +50,26 @@ Prerequisites: Docker Desktop running with ≥ 6 GB RAM, plus `kind`, `kubectl`,
 kubectl -n documents logs deploy/dashboard-client -c dashboard-client -f
 ```
 
-External curl (after adding `127.0.0.1 documents.local wiki.local` to `/etc/hosts`):
+External curl — primary path (add one line to `/etc/hosts`, then use clean URLs):
 
 ```bash
-curl -H "x-workspace-user-id: alice@workspace.test"   http://documents.local/hello       # 200
-curl -H "x-workspace-user-id: mallory@workspace.test" http://documents.local/hello       # 403
-curl -H "x-workspace-user-id: alice@workspace.test"   http://wiki.local:8081/hello       # 200
-curl -H "x-workspace-user-id: mallory@workspace.test" http://wiki.local:8081/hello       # 403
+# One-time setup (requires sudo):
+echo '127.0.0.1  documents.local wiki.local' | sudo tee -a /etc/hosts
+
+# Then:
+curl -H "x-workspace-user-id: alice@workspace.test"   http://documents.local:8080/hello   # 200
+curl -H "x-workspace-user-id: mallory@workspace.test" http://documents.local:8080/hello   # 403
+curl -H "x-workspace-user-id: alice@workspace.test"   http://wiki.local:8081/hello        # 200
+curl -H "x-workspace-user-id: mallory@workspace.test" http://wiki.local:8081/hello        # 403
+```
+
+Alternative (no `/etc/hosts` edit — useful in CI or environments without sudo):
+
+```bash
+curl --resolve documents.local:8080:127.0.0.1 -H "x-workspace-user-id: alice@workspace.test"   http://documents.local:8080/hello
+curl --resolve documents.local:8080:127.0.0.1 -H "x-workspace-user-id: mallory@workspace.test" http://documents.local:8080/hello
+curl --resolve wiki.local:8081:127.0.0.1      -H "x-workspace-user-id: alice@workspace.test"   http://wiki.local:8081/hello
+curl --resolve wiki.local:8081:127.0.0.1      -H "x-workspace-user-id: mallory@workspace.test" http://wiki.local:8081/hello
 ```
 
 Teardown:

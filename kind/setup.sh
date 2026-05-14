@@ -110,20 +110,24 @@ cat <<EOF
 ─────────────────────────────────────────────────────────────
 ✓ kind ext-authz demo is up (via umbrella chart kind/demo/)
 
-Add to /etc/hosts (one line):
-  127.0.0.1  documents.local wiki.local
+One-time /etc/hosts setup (primary path — clean URLs):
+  echo '127.0.0.1  documents.local wiki.local' | sudo tee -a /etc/hosts
+
+Then curl from host:
+  curl -H "x-workspace-user-id: alice@workspace.test"   http://documents.local:8080/hello       # 200
+  curl -H "x-workspace-user-id: mallory@workspace.test" http://documents.local:8080/hello       # 403
+  curl -H "x-workspace-user-id: alice@workspace.test"   http://wiki.local:8081/hello            # 200
+  curl -H "x-workspace-user-id: mallory@workspace.test" http://wiki.local:8081/hello            # 403
+
+Alternative (no sudo / CI-friendly):
+  curl --resolve documents.local:8080:127.0.0.1 -H "x-workspace-user-id: alice@workspace.test" http://documents.local:8080/hello
+  curl --resolve wiki.local:8081:127.0.0.1      -H "x-workspace-user-id: alice@workspace.test" http://wiki.local:8081/hello
 
 Watch the dashboard-client cycle:
   kubectl -n documents logs deploy/dashboard-client -c dashboard-client -f
 
 Watch PCS decisions:
   kubectl -n documents logs deploy/pcs -c pcs -f
-
-Curl from host (after /etc/hosts):
-  curl -H "x-workspace-user-id: alice@workspace.test"   http://documents.local/hello       # 200
-  curl -H "x-workspace-user-id: mallory@workspace.test" http://documents.local/hello       # 403
-  curl -H "x-workspace-user-id: alice@workspace.test"   http://wiki.local:8081/hello       # 200
-  curl -H "x-workspace-user-id: mallory@workspace.test" http://wiki.local:8081/hello       # 403
 
 EnvoyFilters in app namespaces (none in istio-system):
   kubectl get envoyfilter -A

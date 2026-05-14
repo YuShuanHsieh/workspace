@@ -1979,20 +1979,24 @@ cat <<EOF
 ─────────────────────────────────────────────────────────────
 ✓ kind ext-authz demo is up
 
-Add to /etc/hosts (one line):
-  127.0.0.1  documents.local wiki.local
-
 Watch the dashboard-client cycle:
   kubectl -n documents logs deploy/dashboard-client -c dashboard-client -f
 
 Watch PCS decisions:
   kubectl -n documents logs deploy/pcs -c pcs -f
 
-Curl from host (after /etc/hosts):
-  curl -H "x-workspace-user-id: alice@workspace.test"   http://documents.local/hello       # 200
-  curl -H "x-workspace-user-id: mallory@workspace.test" http://documents.local/hello       # 403
-  curl -H "x-workspace-user-id: alice@workspace.test"   http://wiki.local:8081/hello       # 200
-  curl -H "x-workspace-user-id: mallory@workspace.test" http://wiki.local:8081/hello       # 403
+One-time /etc/hosts setup (primary path — clean URLs):
+  echo '127.0.0.1  documents.local wiki.local' | sudo tee -a /etc/hosts
+
+Then curl from host:
+  curl -H "x-workspace-user-id: alice@workspace.test"   http://documents.local:8080/hello       # 200
+  curl -H "x-workspace-user-id: mallory@workspace.test" http://documents.local:8080/hello       # 403
+  curl -H "x-workspace-user-id: alice@workspace.test"   http://wiki.local:8081/hello            # 200
+  curl -H "x-workspace-user-id: mallory@workspace.test" http://wiki.local:8081/hello            # 403
+
+Alternative (no sudo / CI-friendly):
+  curl --resolve documents.local:8080:127.0.0.1 -H "x-workspace-user-id: alice@workspace.test" http://documents.local:8080/hello
+  curl --resolve wiki.local:8081:127.0.0.1      -H "x-workspace-user-id: alice@workspace.test" http://wiki.local:8081/hello
 
 EnvoyFilters in app namespaces (none in istio-system):
   kubectl get envoyfilter -A
@@ -2060,12 +2064,6 @@ From the repo root:
 
 Idempotent — re-running picks up where the previous run left off. Total wall-clock on a warm Docker cache is ≤ 3 minutes.
 
-Add to `/etc/hosts`:
-
-```
-127.0.0.1  documents.local wiki.local
-```
-
 ## Verify
 
 ```bash
@@ -2075,11 +2073,23 @@ kubectl -n documents logs deploy/dashboard-client -c dashboard-client -f
 # Watch authorization decisions
 kubectl -n documents logs deploy/pcs -c pcs -f
 
-# Curl from host (after /etc/hosts)
-curl -H "x-workspace-user-id: alice@workspace.test"   http://documents.local/hello       # 200
-curl -H "x-workspace-user-id: mallory@workspace.test" http://documents.local/hello       # 403
-curl -H "x-workspace-user-id: alice@workspace.test"   http://wiki.local:8081/hello       # 200
-curl -H "x-workspace-user-id: mallory@workspace.test" http://wiki.local:8081/hello       # 403
+# Curl from host — primary path: add to /etc/hosts once (requires sudo):
+#   echo '127.0.0.1  documents.local wiki.local' | sudo tee -a /etc/hosts
+#
+# Then:
+curl -H "x-workspace-user-id: alice@workspace.test"   http://documents.local:8080/hello   # 200
+curl -H "x-workspace-user-id: mallory@workspace.test" http://documents.local:8080/hello   # 403
+curl -H "x-workspace-user-id: alice@workspace.test"   http://wiki.local:8081/hello        # 200
+curl -H "x-workspace-user-id: mallory@workspace.test" http://wiki.local:8081/hello        # 403
+```
+
+Alternative (no `/etc/hosts` edit needed):
+
+```bash
+curl --resolve documents.local:8080:127.0.0.1 -H "x-workspace-user-id: alice@workspace.test"   http://documents.local:8080/hello
+curl --resolve documents.local:8080:127.0.0.1 -H "x-workspace-user-id: mallory@workspace.test" http://documents.local:8080/hello
+curl --resolve wiki.local:8081:127.0.0.1      -H "x-workspace-user-id: alice@workspace.test"   http://wiki.local:8081/hello
+curl --resolve wiki.local:8081:127.0.0.1      -H "x-workspace-user-id: mallory@workspace.test" http://wiki.local:8081/hello
 ```
 
 ## Teardown
@@ -2109,12 +2119,14 @@ cd ~/ashwini-repos/workspace
 
 Expected: completes in ≤ 3 minutes (warm Docker cache). Ends with the verification banner.
 
-- [ ] **Step 2: Add `/etc/hosts` entry.**
+- [ ] **Step 2: Set up `/etc/hosts` for clean URLs (primary path).**
 
 ```bash
 grep -q 'documents.local wiki.local' /etc/hosts || \
   echo '127.0.0.1  documents.local wiki.local' | sudo tee -a /etc/hosts
 ```
+
+If you cannot run sudo (e.g. in CI), the curl commands in Step 7 include `--resolve` alternatives.
 
 - [ ] **Step 3: Verify the dashboard-client cycle.**
 
@@ -2169,10 +2181,32 @@ Expected: every workload reports `mallory hits: 0`, `alice hits: > 0`.
 - [ ] **Step 7: External curl through both ingressgateways.**
 
 ```bash
-curl -s -o /dev/null -w "documents alice: %{http_code}\n"   -H "x-workspace-user-id: alice@workspace.test"   http://documents.local/hello
-curl -s -o /dev/null -w "documents mallory: %{http_code}\n" -H "x-workspace-user-id: mallory@workspace.test" http://documents.local/hello
-curl -s -o /dev/null -w "wiki alice: %{http_code}\n"        -H "x-workspace-user-id: alice@workspace.test"   http://wiki.local:8081/hello
-curl -s -o /dev/null -w "wiki mallory: %{http_code}\n"      -H "x-workspace-user-id: mallory@workspace.test" http://wiki.local:8081/hello
+# Primary (with /etc/hosts from Step 2):
+curl -s -o /dev/null -w "documents alice: %{http_code}\n" \
+  -H "x-workspace-user-id: alice@workspace.test"   http://documents.local:8080/hello
+curl -s -o /dev/null -w "documents mallory: %{http_code}\n" \
+  -H "x-workspace-user-id: mallory@workspace.test" http://documents.local:8080/hello
+curl -s -o /dev/null -w "wiki alice: %{http_code}\n" \
+  -H "x-workspace-user-id: alice@workspace.test"   http://wiki.local:8081/hello
+curl -s -o /dev/null -w "wiki mallory: %{http_code}\n" \
+  -H "x-workspace-user-id: mallory@workspace.test" http://wiki.local:8081/hello
+```
+
+Alternative (no `/etc/hosts` edit — same expected output):
+
+```bash
+curl -s -o /dev/null -w "documents alice: %{http_code}\n" \
+  --resolve documents.local:8080:127.0.0.1 \
+  -H "x-workspace-user-id: alice@workspace.test"   http://documents.local:8080/hello
+curl -s -o /dev/null -w "documents mallory: %{http_code}\n" \
+  --resolve documents.local:8080:127.0.0.1 \
+  -H "x-workspace-user-id: mallory@workspace.test" http://documents.local:8080/hello
+curl -s -o /dev/null -w "wiki alice: %{http_code}\n" \
+  --resolve wiki.local:8081:127.0.0.1 \
+  -H "x-workspace-user-id: alice@workspace.test"   http://wiki.local:8081/hello
+curl -s -o /dev/null -w "wiki mallory: %{http_code}\n" \
+  --resolve wiki.local:8081:127.0.0.1 \
+  -H "x-workspace-user-id: mallory@workspace.test" http://wiki.local:8081/hello
 ```
 
 Expected output:
@@ -2191,8 +2225,10 @@ sleep 8
 kubectl -n documents logs deploy/dashboard-client --tail=10
 # Expected: all 10 lines show status=403 — regardless of target or user
 
-curl -s -o /dev/null -w "documents alice (pcs down): %{http_code}\n" -H "x-workspace-user-id: alice@workspace.test" http://documents.local/hello
-curl -s -o /dev/null -w "wiki alice (pcs down): %{http_code}\n"      -H "x-workspace-user-id: alice@workspace.test" http://wiki.local:8081/hello
+curl -s -o /dev/null -w "documents alice (pcs down): %{http_code}\n" \
+  -H "x-workspace-user-id: alice@workspace.test" http://documents.local:8080/hello
+curl -s -o /dev/null -w "wiki alice (pcs down): %{http_code}\n" \
+  -H "x-workspace-user-id: alice@workspace.test" http://wiki.local:8081/hello
 # Expected: both 403
 
 kubectl -n documents scale deploy/pcs --replicas=1

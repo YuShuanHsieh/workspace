@@ -46,7 +46,7 @@ Concretely the harness must produce these observable outcomes on a fresh checkou
 5. `dashboard-client` runs in the `documents` namespace and issues calls in a loop to all three protected workloads (`documents-api`, `documents-search`, `wiki-api`) with alternating `x-workspace-user-id` headers (`alice@workspace.test` and `mallory@workspace.test`). Its log shows the pattern of `200`s and `403`s.
 6. Each protected workload's app container sees **only `alice`'s traffic**; `mallory`'s requests never reach the app container — the deny decision is enforced in the workload's own Envoy sidecar.
 7. `pcs` logs show three allow + three deny decisions per dashboard-client iteration cycle.
-8. The same allow/deny behaviour is observable from outside the cluster via the per-namespace ingressgateway: `curl -H "x-workspace-user-id: alice@workspace.test" http://documents.local/hello` returns `200`; the same call with `mallory@workspace.test` returns `403`.
+8. The same allow/deny behaviour is observable from outside the cluster via the per-namespace ingressgateway: `curl -H "x-workspace-user-id: alice@workspace.test" http://documents.local:8080/hello` (with `/etc/hosts` entry) returns `200`; the same call with `mallory@workspace.test` returns `403`. The `--resolve documents.local:8080:127.0.0.1` alternative works in environments without an `/etc/hosts` edit.
 9. Scaling `pcs` to zero causes all gated traffic to receive `403` (fail-closed); restoring the replica brings allow decisions back.
 10. `kubectl get envoyfilter -A` shows exactly **two** EnvoyFilters — `documents-ext-authz` in `documents` namespace and `wiki-ext-authz` in `wiki` namespace. **Nothing in `istio-system`** (proving the Stage 1 no-istio-system-writes property).
 
@@ -76,7 +76,7 @@ A single-node `kind` cluster with `extraPortMappings` exposing per-namespace ing
 ```text
                        ┌──────────────────────────────────────────────────────────┐
                        │                kind cluster (single node)                │
-   curl from host ─80──┤                                                          │
+   curl from host ─8080┤                                                          │
                        │  ns: istio-system            (Istio control plane)       │
                        │    istio-base                                            │
                        │    istiod                                                │
@@ -84,7 +84,7 @@ A single-node `kind` cluster with `extraPortMappings` exposing per-namespace ing
                        │                                                          │
                        │  ns: documents               (injection: enabled)        │
                        │    documents-ingressgateway Pod                          │
-                       │      └─ istio-proxy (NodePort 30080 → host 80)           │
+                       │      └─ istio-proxy (NodePort 30080 → host 8080)         │
                        │                                                          │
                        │    documents-api Pod   labels: {workspace.io/ext-authz=  │
                        │                                  enabled, app=docs-api}  │
@@ -142,15 +142,13 @@ A single-node `kind` cluster with `extraPortMappings` exposing per-namespace ing
 
 | Host port | Container port | Purpose |
 |---|---|---|
-| 80 | 30080 | Plain HTTP to `documents-ingressgateway` (main product) |
+| 8080 | 30080 | Plain HTTP to `documents-ingressgateway` (main product) |
 | 8081 | 30081 | Plain HTTP to `wiki-ingressgateway` (cross-namespace example) |
-| 443 | 30443 | HTTPS reserved for future TLS upgrade (see §10.5) |
+| 8443 | 30443 | HTTPS reserved for future TLS upgrade (see §10.5) |
 
-**Required `/etc/hosts` additions** (printed at the end of `setup.sh`):
+All host ports are unprivileged (≥ 1024) — no `sudo` required on macOS or Linux.
 
-```text
-127.0.0.1  documents.local wiki.local
-```
+**Accessing from host:** primary path — add `127.0.0.1 documents.local wiki.local` to `/etc/hosts` once (`echo '127.0.0.1  documents.local wiki.local' | sudo tee -a /etc/hosts`) for clean URLs. Alternative — use `curl --resolve <host>:<port>:127.0.0.1` with no `/etc/hosts` edit (useful in CI or environments without sudo).
 
 Each app namespace has its own ingressgateway with a dedicated NodePort, mirroring the production convention where every app namespace operates its own ingress.
 
@@ -210,7 +208,7 @@ Per dashboard-client iteration:
 
 A 2-second sleep separates each call, giving a 12-second cycle.
 
-**External paths** exist for both `documents-api` (via `documents-ingressgateway` on host port 80, hostname `documents.local`) and `wiki-api` (via `wiki-ingressgateway` on host port 8081, hostname `wiki.local`). `documents-search` stays internal-only (no Gateway/VirtualService) — it represents a sibling service that's only reachable from inside the cluster. In every case the ext_authz filter on the workload's own sidecar fires identically, regardless of whether the request came in via cluster DNS or via that namespace's ingressgateway.
+**External paths** exist for both `documents-api` (via `documents-ingressgateway` on host port 8080, hostname `documents.local`) and `wiki-api` (via `wiki-ingressgateway` on host port 8081, hostname `wiki.local`). `documents-search` stays internal-only (no Gateway/VirtualService) — it represents a sibling service that's only reachable from inside the cluster. In every case the ext_authz filter on the workload's own sidecar fires identically, regardless of whether the request came in via cluster DNS or via that namespace's ingressgateway.
 
 ### 3.4 ext_authz Wiring: per-namespace EnvoyFilter with label opt-in (Stage 1)
 
@@ -617,7 +615,7 @@ Total wall-clock on a warm Docker cache should be ≤ 3 minutes on a 16 GB MacBo
 
 ## 6. Verification
 
-The setup script prints these commands at the end, plus a reminder to add `127.0.0.1 documents.local` to `/etc/hosts`.
+The setup script prints these commands at the end.
 
 **Internal-path demo — dashboard-client cycling through all three workloads:**
 
@@ -635,13 +633,25 @@ kubectl -n documents logs deploy/dashboard-client -c dashboard-client -f
 **External-path demo — curl from host through each namespace's own ingressgateway:**
 
 ```bash
-# Via documents-ingressgateway (host port 80)
-curl -H "x-workspace-user-id: alice@workspace.test"   http://documents.local/hello       # 200
-curl -H "x-workspace-user-id: mallory@workspace.test" http://documents.local/hello       # 403
+# Primary: add to /etc/hosts once (if not already done):
+#   echo '127.0.0.1  documents.local wiki.local' | sudo tee -a /etc/hosts
+
+# Via documents-ingressgateway (host port 8080)
+curl -H "x-workspace-user-id: alice@workspace.test"   http://documents.local:8080/hello   # 200
+curl -H "x-workspace-user-id: mallory@workspace.test" http://documents.local:8080/hello   # 403
 
 # Via wiki-ingressgateway (host port 8081)
-curl -H "x-workspace-user-id: alice@workspace.test"   http://wiki.local:8081/hello       # 200
-curl -H "x-workspace-user-id: mallory@workspace.test" http://wiki.local:8081/hello       # 403
+curl -H "x-workspace-user-id: alice@workspace.test"   http://wiki.local:8081/hello        # 200
+curl -H "x-workspace-user-id: mallory@workspace.test" http://wiki.local:8081/hello        # 403
+```
+
+Alternative (no `/etc/hosts` edit):
+
+```bash
+curl --resolve documents.local:8080:127.0.0.1 -H "x-workspace-user-id: alice@workspace.test"   http://documents.local:8080/hello
+curl --resolve documents.local:8080:127.0.0.1 -H "x-workspace-user-id: mallory@workspace.test" http://documents.local:8080/hello
+curl --resolve wiki.local:8081:127.0.0.1      -H "x-workspace-user-id: alice@workspace.test"   http://wiki.local:8081/hello
+curl --resolve wiki.local:8081:127.0.0.1      -H "x-workspace-user-id: mallory@workspace.test" http://wiki.local:8081/hello
 ```
 
 **PCS (in `documents` ns) sees all three workloads' decisions:**
@@ -704,8 +714,11 @@ kubectl -n documents logs deploy/dashboard-client --tail=20
 # Expected: every status code in the last 20 lines is 403 — across all three target workloads,
 # including wiki-api (cross-ns call to documents' PCS fails when PCS is down).
 
-curl -H "x-workspace-user-id: alice@workspace.test" http://documents.local/hello   # 403
-curl -H "x-workspace-user-id: alice@workspace.test" http://wiki.local:8081/hello   # 403
+curl -H "x-workspace-user-id: alice@workspace.test" http://documents.local:8080/hello  # 403
+curl -H "x-workspace-user-id: alice@workspace.test" http://wiki.local:8081/hello       # 403
+# Alternative (no /etc/hosts):
+# curl --resolve documents.local:8080:127.0.0.1 -H "x-workspace-user-id: alice@workspace.test" http://documents.local:8080/hello
+# curl --resolve wiki.local:8081:127.0.0.1      -H "x-workspace-user-id: alice@workspace.test" http://wiki.local:8081/hello
 
 kubectl -n documents scale deploy/pcs --replicas=1
 # Wait for rollout; allow decisions return.
@@ -892,7 +905,7 @@ The Istio-recommended path. After Stage 2: add an `extensionProvider` entry in t
 
 1. **Opt-in label key.** The demo uses `workspace.io/ext-authz: enabled`. The same string appears in five places (three Deployment Pod templates, two EnvoyFilter `workloadSelector` blocks, plus verification commands). Align with the team's standard label vocabulary before implementation; the Stage 2 migration will reuse this label.
 2. **Demo cluster name.** Default `ext-authz-demo`. If another demo already uses that name on the machine, `setup.sh` reuses the existing cluster; `teardown.sh` removes it cleanly.
-3. **Hostnames for external curl.** Defaults `documents.local`, `wiki.local`. If either collides with anything in `/etc/hosts`, swap for less-common names. Note that `wiki.local` is reached on host port `8081` (not 80) because two distinct ingressgateways cannot share the same host port.
+3. **Hostnames for external curl.** Defaults `documents.local` (port `8080`) and `wiki.local` (port `8081`). Primary path: add `127.0.0.1 documents.local wiki.local` to `/etc/hosts` once for clean URLs. Alternative: use `curl --resolve <host>:<port>:127.0.0.1` — no `/etc/hosts` edit required. Two distinct ingressgateways cannot share the same host port; that is why documents uses `8080` and wiki uses `8081`.
 4. **PCS namespace ownership confirmed for the demo.** PCS lives in `documents` ns, owned by the documents (main product) team — not in a separate platform-owned namespace. Stage 2's `istio-system` EnvoyFilter would still call `pcs.documents.svc.cluster.local:8080`; PCS itself does not move.
 5. **Whether to also expose `documents-search` via its own Gateway/VirtualService.** Current spec keeps `documents-search` internal-only. It can be added with a third Gateway/VirtualService inside `documents` namespace if the demo audience wants to curl all three workloads from the host.
 
@@ -901,11 +914,12 @@ The Istio-recommended path. After Stage 2: add an `extensionProvider` entry in t
 The harness is considered successful when, on a fresh checkout of `~/ashwini-repos/workspace/`:
 
 1. `./kind/setup.sh` runs to completion in ≤ 3 minutes on a 16 GB MacBook with Docker Desktop allocated ≥ 6 GB.
-2. After adding `127.0.0.1 documents.local wiki.local` to `/etc/hosts`:
-   - `curl -H "x-workspace-user-id: alice@workspace.test" http://documents.local/hello` returns `200`.
-   - `curl -H "x-workspace-user-id: mallory@workspace.test" http://documents.local/hello` returns `403`.
+2. External curl (primary path — with `/etc/hosts` entry `127.0.0.1 documents.local wiki.local`):
+   - `curl -H "x-workspace-user-id: alice@workspace.test" http://documents.local:8080/hello` returns `200`.
+   - `curl -H "x-workspace-user-id: mallory@workspace.test" http://documents.local:8080/hello` returns `403`.
    - `curl -H "x-workspace-user-id: alice@workspace.test" http://wiki.local:8081/hello` returns `200`.
    - `curl -H "x-workspace-user-id: mallory@workspace.test" http://wiki.local:8081/hello` returns `403`.
+   - Alternative (no `/etc/hosts` edit): same commands prefixed with `--resolve documents.local:8080:127.0.0.1` or `--resolve wiki.local:8081:127.0.0.1` respectively.
 3. `kubectl -n documents logs deploy/dashboard-client -f` shows the 6-call cycle from §3.3 with the expected status codes.
 4. `kubectl -n documents logs deploy/pcs -c pcs -f` shows 3 allow + 3 deny decision lines per dashboard-client cycle.
 5. For each of `documents-api`, `documents-search`, `wiki-api`: `kubectl logs ... | grep -c mallory` returns `0`; the equivalent grep for `alice` returns a positive number.

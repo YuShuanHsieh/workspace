@@ -389,8 +389,11 @@ has affirmatively allowed.
   kubectl config current-context
   # Expected: kind-ext-authz-demo
   ```
-- Confirm `/etc/hosts` has `127.0.0.1  documents.local wiki.local`. If not, add
-  it before starting — you'll need it for Step 6.
+- For the cleanest demo URLs, add one line to `/etc/hosts` once (requires sudo):
+  ```bash
+  echo '127.0.0.1  documents.local wiki.local' | sudo tee -a /etc/hosts
+  ```
+  If you can't or prefer not to, the `--resolve` alternative in the troubleshooting section works without any system edits.
 - Open 4 terminal windows and pre-position them. Suggested layout:
   - Terminal 1 (top-left): kubectl commands you'll type live
   - Terminal 2 (top-right): `dashboard-client` log (follow mode, pre-running)
@@ -571,9 +574,10 @@ into the request, and the app received them as first-class request headers.
 kubectl -n documents logs deploy/documents-api -c documents-api --tail=3
 # See injected_user_id, injected_role in the log
 
-curl -s --resolve documents.local:80:127.0.0.1 \
-  -H "x-workspace-user-id: alice@workspace.test" \
-  http://documents.local/hello
+# Primary (with /etc/hosts):
+curl -s -H "x-workspace-user-id: alice@workspace.test" http://documents.local:8080/hello
+# Alternative (no /etc/hosts):
+curl -s --resolve documents.local:8080:127.0.0.1 -H "x-workspace-user-id: alice@workspace.test" http://documents.local:8080/hello
 ```
 
 **Expected:** `hello from documents-api-... (uid=alice-uid-001 role=editor)`
@@ -590,9 +594,8 @@ in the infrastructure layer."
 **Say:** "The enriched body is visible from outside the cluster too."
 
 ```bash
-curl -s --resolve documents.local:80:127.0.0.1 \
-  -H "x-workspace-user-id: alice@workspace.test" \
-  http://documents.local/hello
+# Primary (with /etc/hosts):
+curl -s -H "x-workspace-user-id: alice@workspace.test" http://documents.local:8080/hello
 ```
 
 **Expected:** `hello from documents-api-... (uid=alice-uid-001 role=editor)`
@@ -600,9 +603,8 @@ curl -s --resolve documents.local:80:127.0.0.1 \
 **Say:** "Try mallory — no mutation, just a bare 403."
 
 ```bash
-curl -s --resolve documents.local:80:127.0.0.1 \
-  -H "x-workspace-user-id: mallory@workspace.test" \
-  http://documents.local/hello
+# Primary (with /etc/hosts):
+curl -s -H "x-workspace-user-id: mallory@workspace.test" http://documents.local:8080/hello
 ```
 
 **Expected:** `403`, empty body — mallory never reached the app.
@@ -615,19 +617,31 @@ curl -s --resolve documents.local:80:127.0.0.1 \
 the per-namespace ingressgateways."
 
 ```bash
-# documents namespace — port 80
-curl -H "x-workspace-user-id: alice@workspace.test"   http://documents.local/hello
-curl -H "x-workspace-user-id: mallory@workspace.test" http://documents.local/hello
+# Primary: add to /etc/hosts once (if not already done):
+#   echo '127.0.0.1  documents.local wiki.local' | sudo tee -a /etc/hosts
+
+# documents namespace — port 8080
+curl -H "x-workspace-user-id: alice@workspace.test"   http://documents.local:8080/hello
+curl -H "x-workspace-user-id: mallory@workspace.test" http://documents.local:8080/hello
 
 # wiki namespace — port 8081
 curl -H "x-workspace-user-id: alice@workspace.test"   http://wiki.local:8081/hello
 curl -H "x-workspace-user-id: mallory@workspace.test" http://wiki.local:8081/hello
 ```
 
+Alternative (no `/etc/hosts` edit needed):
+
+```bash
+curl --resolve documents.local:8080:127.0.0.1 -H "x-workspace-user-id: alice@workspace.test"   http://documents.local:8080/hello
+curl --resolve documents.local:8080:127.0.0.1 -H "x-workspace-user-id: mallory@workspace.test" http://documents.local:8080/hello
+curl --resolve wiki.local:8081:127.0.0.1      -H "x-workspace-user-id: alice@workspace.test"   http://wiki.local:8081/hello
+curl --resolve wiki.local:8081:127.0.0.1      -H "x-workspace-user-id: mallory@workspace.test" http://wiki.local:8081/hello
+```
+
 **Point at:**
 - alice returning `200 hello from documents-api-...` and `200 hello from wiki-api-...`
 - mallory returning `403` (empty body) for both
-- The port difference: documents uses port 80, wiki uses port 8081 — each
+- The port difference: documents uses port 8080, wiki uses port 8081 — each
   namespace runs its own ingressgateway with its own NodePort
 
 **Note:** `documents-search` is not exposed externally — it is an internal-only
@@ -648,7 +662,10 @@ kubectl -n documents scale deploy/pcs --replicas=0
 Wait about 8 seconds for the sidecar config to propagate, then:
 
 ```bash
-curl -H "x-workspace-user-id: alice@workspace.test" http://documents.local/hello
+# Primary (with /etc/hosts):
+curl -H "x-workspace-user-id: alice@workspace.test" http://documents.local:8080/hello
+# Alternative:
+curl --resolve documents.local:8080:127.0.0.1 -H "x-workspace-user-id: alice@workspace.test" http://documents.local:8080/hello
 ```
 
 **Expected:** `503` or `403` — even alice is denied because PCS is unreachable
@@ -828,8 +845,10 @@ a future migration path to `AuthorizationPolicy action: CUSTOM`.
 **Problem: Getting `404` instead of `200` or `403`**
 
 The workload responded but Envoy could not route to it. Most likely causes:
-(1) The `VirtualService` or `Gateway` host name does not match — verify
-`/etc/hosts` has `127.0.0.1 documents.local wiki.local`. (2) PCS is not ready
+(1) The `VirtualService` or `Gateway` host name does not match — verify you are
+using the correct hostname and port in your curl command (e.g. `http://documents.local:8080/hello`
+with `/etc/hosts` containing `127.0.0.1 documents.local wiki.local`, or using
+`--resolve documents.local:8080:127.0.0.1` as the alternative). (2) PCS is not ready
 and Envoy's upstream cluster for PCS is in a bad state — check
 `kubectl -n documents get pod -l app=pcs`. (3) The EnvoyFilter was applied before
 istiod pushed config to the sidecar — wait 15 seconds and retry.
@@ -862,15 +881,17 @@ kubectl config use-context kind-ext-authz-demo
 
 **Problem: External curl times out or `connection refused`**
 
-Check (1) `/etc/hosts` has the required entries. (2) The ingressgateway pods are
-running:
+Check (1) You are using the correct port — documents gateway is on `8080`, wiki
+gateway is on `8081`. Use `--resolve <host>:<port>:127.0.0.1` so curl sends the
+right `Host` header, or add `127.0.0.1 documents.local wiki.local` to `/etc/hosts`.
+(2) The ingressgateway pods are running:
 ```bash
 kubectl -n documents get pod -l istio=documents-ingressgateway
 kubectl -n wiki      get pod -l istio=wiki-ingressgateway
 ```
-(3) Docker Desktop's port forwarding is active — kind maps `localhost:80` to
-`NodePort 30080` and `localhost:8081` to `NodePort 30081`. If you have another
-process bound to port 80, the curl will fail. Check with `lsof -i :80`.
+(3) Docker Desktop's port forwarding is active — kind maps `localhost:8080` to
+`NodePort 30080` and `localhost:8081` to `NodePort 30081`. Because both ports are
+unprivileged (≥ 1024), no `sudo` is needed on macOS or Linux.
 
 **Problem: Sidecars not injected (pods show `1/1` instead of `2/2`)**
 
