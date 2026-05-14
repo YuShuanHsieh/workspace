@@ -221,7 +221,7 @@ Key configuration decisions, common to both `documents-ext-authz` and `wiki-ext-
 - **Resource lives in the team's own namespace** — never in `istio-system` for Stage 1. Cross-namespace reach is achieved by copying the file, not by relying on root-namespace mechanics.
 - **`workloadSelector.labels: { workspace.io/ext-authz: enabled }`** — opt-in marker. Workloads inside the namespace either carry the label and get gated, or don't and are unaffected. The same label name is used across all namespaces for consistency with Stage 2.
 - **`context: SIDECAR_INBOUND`** — the filter intercepts traffic entering each matched Pod, not outbound traffic.
-- **`applyTo: HTTP_FILTER` + `operation: INSERT_BEFORE`** — the ext_authz filter is inserted into the HTTP filter chain ahead of the router filter.
+- **`applyTo: HTTP_FILTER` + `operation: INSERT_BEFORE`** — the ext_authz filter is inserted into the HTTP filter chain ahead of the router filter. A `subFilter.name: envoy.filters.http.router` inside the `match.listener.filterChain.filter` block anchors the insertion point; without it, `INSERT_BEFORE` would place ext_authz at the front of the filter chain (before routing context is available), causing `path_prefix` forwarding to PCS to misbehave.
 - **`http_service` (not gRPC)** — Envoy talks to `pcs` via plain HTTP `POST /check`. Both EnvoyFilter copies point at the same FQDN `pcs.documents.svc.cluster.local:8080`; the FQDN resolves identically from any namespace.
 - **`allowed_headers`** — forwards `x-workspace-user-id` and `authorization` to `pcs`.
 - **`failure_mode_allow: false`** — fail-closed.
@@ -330,6 +330,8 @@ spec:
         filterChain:
           filter:
             name: envoy.filters.network.http_connection_manager
+            subFilter:
+              name: envoy.filters.http.router
     patch:
       operation: INSERT_BEFORE
       value:
@@ -373,6 +375,8 @@ spec:
         filterChain:
           filter:
             name: envoy.filters.network.http_connection_manager
+            subFilter:
+              name: envoy.filters.http.router
     patch:
       operation: INSERT_BEFORE
       value:
@@ -405,8 +409,8 @@ This file is the documents-ext-authz copy with two field changes: `metadata.name
 | Files | `main.go`, `go.mod`, `deploy/Dockerfile` |
 | Image | `workspace/pcs:dev` |
 | Listen port | 8080 |
-| Endpoints | `POST /check` |
-| Decision policy | Hard-coded allow-list `{"alice@workspace.test", "bob@workspace.test"}`. Header value in list → `200`. Otherwise → `403`. Missing header → `403`. |
+| Endpoints | `POST /check` (exact) + Gin `NoRoute` catch-all |
+| Decision policy | Hard-coded allow-list `{"alice@workspace.test", "bob@workspace.test"}`. Header value in list → `200`. Otherwise → `403`. Missing header → `403`. Envoy's `path_prefix: /check` prepends `/check` to the original request path (e.g. a request for `/hello` becomes `POST /check/hello`), so PCS registers both an exact `POST /check` route and a `NoRoute` handler that routes all unmatched paths through the same `checkHandler` function. |
 | Logging | `log/slog` JSON; one line per decision (`{"user":"...","decision":"allow|deny","ts":"..."}`) |
 | Namespace | **`documents`** (PCS is part of the documents product offering — owned by the documents team, deployed in their namespace, reached from other namespaces via cluster DNS) |
 | Sidecar | Envoy (auto-injected) |
