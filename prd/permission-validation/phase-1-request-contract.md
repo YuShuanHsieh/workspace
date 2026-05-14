@@ -96,16 +96,18 @@ The `X-Requested-Action` header is treated as **user intent**, not proof of perm
 
 Concretely, a client that sets `X-Requested-Action: admin-delete` does **not** thereby gain admin-delete; PCS will deny if the user does not have it. The only way the action header can matter is by checking a permission the user *does* have, which is harmless.
 
-`objectId` and `objectType` come **only** from the decrypted authorization context. They are never read from the URL, query string, or body. This is what makes the decision tamper-resistant — see [phase-1-encrypted-context-format.md](./phase-1-encrypted-context-format.md).
+`objectId` and `objectType` come **only** from the decrypted authorization context. They are never read from the URL, query string, or body. This is what makes the decision tamper-resistant: the encrypted context uses authenticated encryption that binds `objectId` and `objectType` into the ciphertext, so a client cannot substitute them. See [phase-1-encrypted-context-format.md](./phase-1-encrypted-context-format.md) for the format.
 
 ## 6. Rejection cases
 
 | Condition | Sidecar response | Reach backend? | Metric |
 |---|---|---|---|
-| Missing `Authorization` | `401 Unauthorized` | no | `header_invalid_total{reason="missing_authz"}` |
+| Missing `Authorization` | `403 Forbidden` | no | `header_invalid_total{reason="missing_authz"}` |
 | Missing `X-Auth-Context` | `403 Forbidden` | no | `header_invalid_total{reason="missing_ctx"}` |
 | Missing `X-Requested-Action` | `403 Forbidden` | no | `header_invalid_total{reason="missing_action"}` |
-| `X-Auth-Context` undecryptable, tampered, expired, or wrong `appId` | `403 Forbidden` | no | `decrypt_failure_total{reason=...}` |
+| Malformed `Authorization` (not a well-formed `Bearer <token>` value) | `403 Forbidden` | no | `header_invalid_total{reason="malformed_authz"}` |
+| Malformed `X-Requested-Action` (empty after trimming whitespace) | `403 Forbidden` | no | `header_invalid_total{reason="malformed_action"}` |
+| `X-Auth-Context` undecryptable, tampered, expired, or wrong audience (`appId` mismatch) | `403 Forbidden` | no | `decrypt_failure_total{reason=...}` |
 | PCS returns deny | `403 Forbidden` | no | `decisions_total{outcome="deny"}` |
 | PCS times out or 5xx | `403 Forbidden` (fail-closed) | no | `decisions_total{outcome="error"}` |
 
