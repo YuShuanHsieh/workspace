@@ -4,7 +4,7 @@ This document captures the Phase 1 sidecar **software architecture** and **data 
 
 ## 1. Software Architecture
 
-This section documents Phase 1 under the **custom proxy sidecar** topology (Option A). PV1-001 is evaluating an alternative topology that places Envoy in the request path and runs the sidecar as an `ext_proc` gRPC handler (Option B) — see [§1, Alternative Topology — Envoy `ext_proc` Filter](#alternative-topology--envoy-ext_proc-filter) at the end of this section. The data flow (§2) and invariants (§3) apply to both topologies.
+This section documents Phase 1 under both candidate topologies; PV1-001 is decided in favor of **Option B (Envoy `ext_proc` + sidecar)** — see [phase-1-topology-decision.md](./phase-1-topology-decision.md). The data flow (§2) and invariants (§3) apply to both topologies; the Option A diagram is preserved below for reference because the validator-level component responsibilities are identical.
 
 ```mermaid
 flowchart LR
@@ -140,7 +140,7 @@ flowchart LR
 - **Forward-compatibility with Phase 1.5.** The Response Tap and "client receives `2xx` only after WAL is durable" behavior described in [phase-1-5-metadata-sync-design.md](./phase-1-5-metadata-sync-design.md) require response-phase participation. `ext_proc` supports this by enabling `response_header_mode: SEND` and `response_body_mode: BUFFERED` on create/delete routes via `ExtProcPerRoute`. The closely related `ext_authz` filter is request-only and cannot satisfy the Phase 1.5 §3.2 invariant on its own; this is why Option B uses `ext_proc` rather than `ext_authz`.
 - **gRPC streaming complexity.** The sidecar maintains one bidirectional stream per HTTP transaction. Ordering of `request_headers`, `response_headers`, `response_body`, and `ImmediateResponse` messages is on the sidecar.
 
-PV1-001 evaluates whether Option A or Option B is the right Phase 1 topology.
+PV1-001 selected Option B as the Phase 1 topology — see [phase-1-topology-decision.md](./phase-1-topology-decision.md).
 
 ## 2. Data Flow — Protected Request
 

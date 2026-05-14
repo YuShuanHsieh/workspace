@@ -33,6 +33,8 @@ Phase 1 delivers the minimum production validation flow:
 
 The evaluation should cover implementation complexity, latency, Kubernetes deployment model, request and response forwarding, encrypted context handling, route skip/protect configuration, SRE metrics support, and forward-compatibility with the Phase 1.5 Response Tap.
 
+**Decision doc:** [phase-1-topology-decision.md](./phase-1-topology-decision.md)
+
 **Acceptance Criteria:**
 
 - All three options (custom proxy sidecar, Envoy `ext_authz`, Envoy `ext_proc`) are compared using the Phase 1 flow.
@@ -48,6 +50,8 @@ The evaluation should cover implementation complexity, latency, Kubernetes deplo
 **Background/Goal:** The client, sidecar, Access Management API, and Permission Checking Service need a shared contract before implementation starts.
 
 **Description:** Define the Phase 1 request and response contract. The client receives an encrypted authorization context and plain permissions from Access Management API. The client sends the encrypted context, requested action, and user's SSO token to the application request. The sidecar uses decrypted context plus requested action to call Permission Checking Service.
+
+**Decision doc:** [phase-1-request-contract.md](./phase-1-request-contract.md)
 
 **Acceptance Criteria:**
 
@@ -66,6 +70,8 @@ The evaluation should cover implementation complexity, latency, Kubernetes deplo
 
 **Description:** Define the encrypted payload format and encryption requirements. The payload should be encrypted with symmetric app credentials provisioned during app registration and should use authenticated encryption so the sidecar can detect tampering.
 
+**Decision doc:** [phase-1-encrypted-context-format.md](./phase-1-encrypted-context-format.md)
+
 **Acceptance Criteria:**
 
 - Encrypted payload includes `appId`, `objectId`, `objectType`, `issuedAt`, `expiresAt`, and `keyId`.
@@ -81,6 +87,8 @@ The evaluation should cover implementation complexity, latency, Kubernetes deplo
 **Background/Goal:** Application developers need a simple way to declare which application paths require permission validation and which paths should be skipped.
 
 **Description:** Define a minimal path configuration schema for Phase 1. The schema should support protected routes and skipped routes using HTTP method and path matching. Advanced extraction rules, body parsing, fail-open behavior, and cache controls are out of Phase 1 scope.
+
+**Decision doc:** [phase-1-route-config-schema.md](./phase-1-route-config-schema.md)
 
 **Acceptance Criteria:**
 
