@@ -1,13 +1,11 @@
-FROM golang:1.25-alpine AS builder
-WORKDIR /src
+FROM golang:1.25.8-alpine AS builder
+WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/echo-server .
+RUN CGO_ENABLED=0 go build -o /echo-server .
 
 FROM alpine:3.21
-RUN adduser -D -u 10001 app
-USER app
-COPY --from=builder /out/echo-server /usr/local/bin/echo-server
-EXPOSE 8080
-ENTRYPOINT ["/usr/local/bin/echo-server"]
+RUN apk add --no-cache ca-certificates
+COPY --from=builder /echo-server /echo-server
+ENTRYPOINT ["/echo-server"]

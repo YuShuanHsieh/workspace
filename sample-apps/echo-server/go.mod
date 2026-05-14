@@ -1,6 +1,6 @@
 module workspace.io/echo-server
 
-go 1.25
+go 1.25.8
 
 require (
 	github.com/gin-gonic/gin v1.10.0

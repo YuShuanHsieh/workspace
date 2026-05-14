@@ -1,12 +1,11 @@
-FROM golang:1.25-alpine AS builder
-WORKDIR /src
+FROM golang:1.25.8-alpine AS builder
+WORKDIR /app
 COPY go.mod ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/dashboard-client .
+RUN CGO_ENABLED=0 go build -o /dashboard-client .
 
 FROM alpine:3.21
-RUN adduser -D -u 10001 app
-USER app
-COPY --from=builder /out/dashboard-client /usr/local/bin/dashboard-client
-ENTRYPOINT ["/usr/local/bin/dashboard-client"]
+RUN apk add --no-cache ca-certificates
+COPY --from=builder /dashboard-client /dashboard-client
+ENTRYPOINT ["/dashboard-client"]

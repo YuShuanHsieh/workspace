@@ -1,3 +1,3 @@
 module workspace.io/dashboard-client
 
-go 1.25
+go 1.25.8
