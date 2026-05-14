@@ -32,7 +32,7 @@ routes:                               # required; list. First match wins.
 
 - `version` must equal `v1`.
 - `appId` must match the sidecar's provisioned `appId`.
-- `defaultBehavior` is `deny` or `skipped`. `protected` is not a valid default because it would require validation context the request cannot supply.
+- `defaultBehavior` is `deny` or `skipped`. `protected` is not a valid default because requiring a validated encrypted context for unenumerated routes would block traffic on first deploy — teams that want everything protected must list their routes explicitly (see §4).
 - `routes` is a non-empty list.
 - Each `method` is one of `GET`, `POST`, `PUT`, `DELETE`, `PATCH`, or `*` (any).
 - Each `path` is a non-empty pattern (§2.1).
@@ -44,7 +44,7 @@ Path patterns are gitignore-style globs:
 
 - A literal segment matches itself (`/orders`).
 - `*` matches exactly one path segment (no `/`).
-- `**` matches one or more path segments (greedy).
+- `**` matches zero or more path segments (so `/path/**` matches `/path`, `/path/`, and `/path/anything/deep`).
 - Patterns must start with `/`.
 - Trailing-slash handling: a pattern with a trailing slash matches only paths with a trailing slash. `/orders` does not match `/orders/`.
 
@@ -110,7 +110,7 @@ routes:
 
 | Value | Meaning | When to use |
 |---|---|---|
-| `deny` (recommended) | Reject with `403`. | The safe default. New routes are protected by default until explicitly listed. |
+| `deny` (recommended) | Reject with `403`. | The safe default. New routes are blocked by default until explicitly listed. |
 | `skipped` | Forward without validation. | Only for apps that do not handle sensitive data and want to opt out of route-by-route enumeration. |
 
 There is no `protected` default in Phase 1. Protected requests require an encrypted context, and requiring it for unenumerated routes would block the app's first traffic the day it deploys. Teams that want everything protected must list their routes explicitly.
