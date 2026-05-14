@@ -1,0 +1,25 @@
+# Helm values for wiki-ingressgateway.
+name: wiki-ingressgateway
+labels:
+  istio: wiki-ingressgateway
+
+service:
+  type: NodePort
+  ports:
+  - name: status-port
+    port: 15021
+    targetPort: 15021
+  - name: http2
+    port: 80
+    targetPort: 80
+    nodePort: 30081
+  - name: https
+    port: 443
+    targetPort: 443
+
+resources:
+  requests: { cpu: 50m,  memory: 128Mi }
+  limits:   { cpu: 500m, memory: 256Mi }
+
+autoscaling:
+  enabled: false
