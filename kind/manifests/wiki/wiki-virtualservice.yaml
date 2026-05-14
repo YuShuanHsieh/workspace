@@ -1,0 +1,16 @@
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: wiki-vs
+  namespace: wiki
+spec:
+  hosts:
+  - wiki.local
+  gateways:
+  - wiki-gateway
+  http:
+  - route:
+    - destination:
+        host: wiki-api.wiki.svc.cluster.local
+        port:
+          number: 8080
