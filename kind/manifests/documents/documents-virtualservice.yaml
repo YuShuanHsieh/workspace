@@ -1,0 +1,16 @@
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: documents-vs
+  namespace: documents
+spec:
+  hosts:
+  - documents.local
+  gateways:
+  - documents-gateway
+  http:
+  - route:
+    - destination:
+        host: documents-api.documents.svc.cluster.local
+        port:
+          number: 8080
