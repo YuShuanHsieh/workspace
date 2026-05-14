@@ -42,3 +42,45 @@ log "Loading images into kind"
 kind load docker-image workspace/echo-server:dev      --name "${CLUSTER_NAME}"
 kind load docker-image workspace/pcs:dev              --name "${CLUSTER_NAME}"
 kind load docker-image workspace/dashboard-client:dev --name "${CLUSTER_NAME}"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase B — Documents product-team actions
+# ─────────────────────────────────────────────────────────────────────────────
+
+# 4. documents namespace
+log "Applying documents namespace (istio-injection: enabled)"
+kubectl apply -f "${MANIFESTS}/documents/namespace-documents.yaml"
+
+# 5. documents ingressgateway (Helm release in documents ns)
+log "Installing documents-ingressgateway (chart: gateway-1.24.2.tgz)"
+helm upgrade --install documents-ingressgateway "${CHARTS}/gateway-1.24.2.tgz" \
+  -n documents --wait --skip-schema-validation \
+  -f "${MANIFESTS}/documents/istio-gateway-values.yaml"
+
+# 6. PCS (owned by documents team)
+log "Deploying PCS in documents namespace"
+kubectl apply -f "${MANIFESTS}/documents/pcs-deployment.yaml"
+kubectl apply -f "${MANIFESTS}/documents/pcs-service.yaml"
+kubectl -n documents wait --for=condition=Available deploy/pcs --timeout=120s
+
+# 7. documents-api and documents-search
+log "Deploying documents-api and documents-search"
+kubectl apply -f "${MANIFESTS}/documents/documents-api-deployment.yaml"
+kubectl apply -f "${MANIFESTS}/documents/documents-api-service.yaml"
+kubectl apply -f "${MANIFESTS}/documents/documents-search-deployment.yaml"
+kubectl apply -f "${MANIFESTS}/documents/documents-search-service.yaml"
+kubectl -n documents wait --for=condition=Available deploy/documents-api    --timeout=180s
+kubectl -n documents wait --for=condition=Available deploy/documents-search --timeout=180s
+
+# 8. documents EnvoyFilter
+log "Applying documents-ext-authz EnvoyFilter"
+kubectl apply -f "${MANIFESTS}/documents/documents-ext-authz.yaml"
+
+# 9. documents Gateway + VirtualService
+log "Applying documents Gateway + VirtualService"
+kubectl apply -f "${MANIFESTS}/documents/documents-gateway.yaml"
+kubectl apply -f "${MANIFESTS}/documents/documents-virtualservice.yaml"
+
+# 10. dashboard-client
+log "Deploying dashboard-client"
+kubectl apply -f "${MANIFESTS}/documents/dashboard-client-deployment.yaml"
