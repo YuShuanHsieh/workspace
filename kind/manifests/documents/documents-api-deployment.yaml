@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: documents-api
+  namespace: documents
+  labels:
+    app: documents-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: documents-api
+  template:
+    metadata:
+      labels:
+        app: documents-api
+        workspace.io/ext-authz: enabled
+    spec:
+      containers:
+      - name: documents-api
+        image: workspace/echo-server:dev
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+        env:
+        - name: PORT
+          value: "8080"
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        resources:
+          requests: { cpu: 50m, memory: 64Mi }
+          limits:   { cpu: 200m, memory: 128Mi }
+        readinessProbe:
+          tcpSocket:
+            port: 8080
+          periodSeconds: 5
