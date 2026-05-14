@@ -2251,3 +2251,31 @@ git push
 1. **Opt-in label key.** Plan uses `workspace.io/ext-authz: enabled` per the spec. If the platform team's standard label vocabulary differs, search-replace before running setup.
 2. **Demo cluster name.** Plan uses `ext-authz-demo`. Change in `kind-config.yaml` and `setup.sh`/`teardown.sh` if conflicting.
 3. **Hostnames.** Defaults `documents.local`, `wiki.local`. Change in setup.sh banner, README, Gateway resources, and `/etc/hosts` if conflicting.
+
+---
+
+## Post-implementation: umbrella chart refactor
+
+After Tasks 1-32 completed the initial implementation (all per-resource manifests under `kind/manifests/`, plain `kubectl apply` steps in `setup.sh`), a follow-on refactor consolidated all 12 app-side Kubernetes resources into a thin umbrella Helm chart at `kind/demo/`. This work is complete and verified end-to-end.
+
+### What changed
+
+| Before (Tasks 1-32) | After (umbrella refactor) |
+|---|---|
+| `setup.sh` applied ~20 `kubectl apply -f kind/manifests/...` commands | `setup.sh` runs `helm upgrade --install demo kind/demo/ -n istio-system --wait` |
+| Image refs scattered across individual YAML files in `kind/manifests/` | All image refs in a single `kind/demo/values.yaml` under `images.*` |
+| Istio installed as subcharts of an umbrella (attempted) | Istio (`istio-base`, `istiod`, gateways) installed as separate top-level Helm releases |
+| `kind/manifests/` was the live source of truth | `kind/demo/templates/` is the live source of truth; `kind/manifests/` is reference only |
+
+### Why Istio stays as separate releases
+
+Three Helm behaviours made bundling Istio as subcharts unworkable (see `kind/demo/README.md` for full details): dependency-update tarball semantics, resource-ownership conflicts between `istio-base` and `istiod`, and Helm's auto-pickup of any `charts/*.tgz` file. The same separated pattern is what Istio's own install docs recommend.
+
+### Commit refs
+
+- **`da2299c`** — Initial umbrella chart drop (`kind/demo/` created, all 12 templates, `values.yaml`, `Chart.yaml`).
+- **`6b44d14`** — Fixes: `setup.sh` rewritten to use the umbrella; `Chart.yaml` subchart deps removed; `values.yaml` comments updated; `kind/demo/README.md` aligned with actual behaviour.
+
+### Registry swap — verified workflow
+
+Edit `kind/demo/values.yaml`, update `images.echoServer.repository`, `images.pcs.repository`, `images.dashboardClient.repository` (and optionally `images.istio.hub`), then re-run `./kind/setup.sh`. No other file changes required.

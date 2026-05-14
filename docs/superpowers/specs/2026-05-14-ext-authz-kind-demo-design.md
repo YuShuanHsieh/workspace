@@ -530,45 +530,49 @@ All Istio charts are vendored as `.tgz` under `kind/charts/`. `setup.sh` referen
 
 The `.tgz` files are downloaded once during initial repo setup (`helm pull --repo https://istio-release.storage.googleapis.com/charts --version 1.24.2 base istiod gateway --destination kind/charts/`) and committed to the repo.
 
+### 4.12 Umbrella chart (`kind/demo/`)
+
+After the initial implementation (Tasks 1-32 in the plan), all 12 app-side Kubernetes resources were consolidated into a thin umbrella Helm chart at `kind/demo/`. The chart owns everything except Istio itself.
+
+**Single registry/tag override point.** Edit `kind/demo/values.yaml` — the `images.*` block controls the repository and tag for `echo-server`, `pcs`, and `dashboard-client`. For a company-internal private registry, change these three entries and re-run `./kind/setup.sh`; no other files need editing.
+
+**No subchart dependencies.** The chart's `Chart.yaml` declares no `dependencies:` block. Istio (`istio-base`, `istiod`) and the two per-namespace ingressgateways are installed by `setup.sh` as separate top-level Helm releases. This is the shape Istio's own install docs recommend; bundling them as subcharts causes resource-ownership conflicts between `istio-base` and `istiod` and prevents per-namespace gateway installs from working. See `kind/demo/README.md` for the full rationale.
+
+**Other tunables in `values.yaml`:** resource sizing for app pods and sidecars, the opt-in label key/value, the PCS service FQDN/port/path, and gateway NodePort/hostname settings.
+
 ## 5. Bring-up Flow (`kind/setup.sh`)
 
 Idempotent — re-runs pick up where they left off. Steps grouped by owner:
 
-### Phase A — Cluster bootstrap
+> **Post-implementation note:** After Tasks 1-32, all app k8s resources were consolidated into the umbrella chart at `kind/demo/` (see §4.12). The current `setup.sh` installs Istio as separate releases and then runs `helm upgrade --install demo kind/demo/ -n istio-system` for the app side. The phase groupings below reflect the logical ownership split; the actual commands are in `kind/setup.sh`.
+
+### Phase A — Cluster bootstrap + image build/load
 
 1. **Create kind cluster.** If `kind get clusters` already contains `ext-authz-demo`, reuse; else `kind create cluster --name ext-authz-demo --config kind-config.yaml`. Switch kubectl context to `kind-ext-authz-demo`.
-2. **Install Istio control plane from vendored charts.**
-   - `helm upgrade --install istio-base kind/charts/base-1.24.2.tgz -n istio-system --create-namespace --wait`
-   - `helm upgrade --install istiod kind/charts/istiod-1.24.2.tgz -n istio-system --wait`
-3. **Build local images.** From the repo root:
+2. **Build local images.** From the repo root:
    - `(cd sample-apps/echo-server && docker build -t workspace/echo-server:dev -f deploy/Dockerfile .)`
    - `(cd sample-apps/pcs && docker build -t workspace/pcs:dev -f deploy/Dockerfile .)`
    - `(cd sample-apps/dashboard-client && docker build -t workspace/dashboard-client:dev -f deploy/Dockerfile .)`
-4. **Load images into kind.**
+3. **Load images into kind.**
    - `kind load docker-image workspace/echo-server:dev --name ext-authz-demo`
    - `kind load docker-image workspace/pcs:dev --name ext-authz-demo`
    - `kind load docker-image workspace/dashboard-client:dev --name ext-authz-demo`
 
-### Phase B — Documents product-team actions (main product + PCS, both same-namespace)
+### Phase B — Istio control plane + umbrella chart for app resources
 
-5. **Create the documents namespace.** Apply `kind/manifests/documents/namespace-documents.yaml`.
-6. **Install the per-namespace ingressgateway from the vendored chart.**
-   - `helm upgrade --install documents-ingressgateway kind/charts/gateway-1.24.2.tgz -n documents -f kind/manifests/documents/istio-gateway-values.yaml --skip-schema-validation --wait`
-7. **Deploy `pcs`** (lives in `documents` ns — owned by the documents team). Apply `pcs-deployment.yaml` and `pcs-service.yaml`. Wait for `Available`.
-8. **Deploy `documents-api` + `documents-search`.** Apply their Deployments and Services in `documents` namespace. Wait for `Available`.
-9. **Apply `documents-ext-authz` EnvoyFilter.** In `documents` namespace. Calls `pcs.documents.svc.cluster.local:8080`.
-10. **Apply Gateway + VirtualService.** In `documents` namespace.
-11. **Deploy `dashboard-client`.** In `documents` namespace.
+4. **Install Istio control plane from vendored charts (separate releases — see §4.12 for why).**
+   - `helm upgrade --install istio-base kind/charts/base-1.24.2.tgz -n istio-system --create-namespace --wait`
+   - `helm upgrade --install istiod kind/charts/istiod-1.24.2.tgz -n istio-system --wait`
+5. **Install the umbrella chart for all app resources.** The chart creates both namespaces, deploys `pcs`, `documents-api`, `documents-search`, `dashboard-client`, `wiki-api`, both EnvoyFilters, both Gateway+VirtualService pairs, and all Services.
+   - `helm upgrade --install demo kind/demo/ -n istio-system --wait`
+6. **Wait for app Deployments to be `Available`** (pcs, documents-api, documents-search, dashboard-client, wiki-api).
 
-### Phase C — Wiki team actions (cross-namespace pattern)
+### Phase C — Per-namespace ingressgateways (separate Helm releases)
 
-12. **Create the wiki namespace.** Apply `kind/manifests/wiki/namespace-wiki.yaml`.
-13. **Install the per-namespace ingressgateway in `wiki` from the vendored chart.**
-    - `helm upgrade --install wiki-ingressgateway kind/charts/gateway-1.24.2.tgz -n wiki -f kind/manifests/wiki/istio-gateway-values.yaml --skip-schema-validation --wait`
-14. **Apply the copied `wiki-ext-authz` EnvoyFilter.** In `wiki` namespace. Calls `pcs.documents.svc.cluster.local:8080` — cross-namespace into the documents team's PCS.
-15. **Deploy `wiki-api`.** Apply Deployment and Service in `wiki` namespace.
-16. **Apply Gateway + VirtualService for wiki.** Apply `wiki-gateway.yaml` and `wiki-virtualservice.yaml` in `wiki` namespace.
-17. **Print verification commands and `/etc/hosts` lines** (see §6).
+7. **Install the per-namespace ingressgateways from the vendored chart.** Installed as separate releases because a single Helm release cannot span namespaces.
+   - `helm upgrade --install documents-ingressgateway kind/charts/gateway-1.24.2.tgz -n documents --skip-schema-validation --wait` (with NodePort 30080 settings)
+   - `helm upgrade --install wiki-ingressgateway kind/charts/gateway-1.24.2.tgz -n wiki --skip-schema-validation --wait` (with NodePort 30081 settings)
+8. **Print verification commands and `/etc/hosts` lines** (see §6).
 
 Total wall-clock on a warm Docker cache should be ≤ 3 minutes on a 16 GB MacBook.
 
@@ -705,6 +709,22 @@ kubectl -n documents scale deploy/pcs --replicas=1
     │   ├── istiod-values.yaml                   (docker.io/istio/pilot:1.24.2 + MacBook sizing)
     │   ├── documents-ingressgateway-values.yaml (proxyv2:1.24.2 noted; NodePort 30080/30443)
     │   └── wiki-ingressgateway-values.yaml      (proxyv2:1.24.2 noted; NodePort 30081)
+    ├── demo/                                    ← umbrella Helm chart (app k8s manifests)
+    │   ├── Chart.yaml                           (no subchart deps — see kind/demo/README.md)
+    │   ├── values.yaml                          ← single swap point for registry/tag/resources
+    │   └── templates/
+    │       ├── _helpers.tpl
+    │       ├── namespace-documents.yaml
+    │       ├── namespace-wiki.yaml
+    │       ├── pcs.yaml
+    │       ├── documents-api.yaml
+    │       ├── documents-search.yaml
+    │       ├── documents-ext-authz.yaml
+    │       ├── documents-gateway.yaml
+    │       ├── dashboard-client.yaml
+    │       ├── wiki-api.yaml
+    │       ├── wiki-ext-authz.yaml
+    │       └── wiki-gateway.yaml
     └── manifests/
         ├── documents/                           ← documents product-team-owned (includes PCS)
         │   ├── namespace-documents.yaml
@@ -728,6 +748,8 @@ kubectl -n documents scale deploy/pcs --replicas=1
 ```
 
 The `manifests/platform/`, `manifests/documents/`, and `manifests/wiki/` split mirrors the ownership boundary documented in §3.2.
+
+> **Note:** `kind/manifests/` is the original per-resource manifest set and is retained as a reference. The active bring-up path (`setup.sh`) uses the umbrella chart at `kind/demo/` — see §4.12 and §5.
 
 ## 8. Stage 2 Evolution — Move EnvoyFilter to `istio-system` with label opt-in
 
