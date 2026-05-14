@@ -115,11 +115,13 @@ A single-node `kind` cluster with `extraPortMappings` exposing the per-namespace
                        │    Service "documents-api", "documents-search"           │
                        │                                                          │
                        │  ns: wiki                    (injection: enabled)        │
+                       │    wiki-ingressgateway Pod                               │
+                       │      └─ istio-proxy (NodePort 30081 → host 8081)         │
+                       │                                                          │
                        │    wiki-api Pod   labels: {workspace.io/ext-authz=       │
                        │                            enabled, app=wiki-api}        │
                        │      ├─ wiki-api (same Go echo server image)             │
                        │      └─ istio-proxy ← patched by wiki-ext-authz          │
-                       │    Service "wiki-api"                                    │
                        │                                                          │
                        │    EnvoyFilter "wiki-ext-authz"                          │
                        │      workloadSelector: { workspace.io/ext-authz: enabled}│
@@ -127,6 +129,11 @@ A single-node `kind` cluster with `extraPortMappings` exposing the per-namespace
                        │      (identical config to documents-ext-authz except     │
                        │       for metadata.namespace and metadata.name —         │
                        │       this is the Stage 1 cross-namespace copy)          │
+                       │                                                          │
+                       │    Gateway "wiki-gateway" (host: wiki.local)             │
+                       │    VirtualService "wiki-vs"                              │
+                       │    Service "wiki-api"                                    │
+   curl from host ─8081┤                                                          │
                        └──────────────────────────────────────────────────────────┘
 ```
 
@@ -134,22 +141,25 @@ A single-node `kind` cluster with `extraPortMappings` exposing the per-namespace
 
 | Host port | Container port | Purpose |
 |---|---|---|
-| 80 | 30080 | Plain HTTP to `documents-ingressgateway` |
+| 80 | 30080 | Plain HTTP to `documents-ingressgateway` (main product) |
+| 8081 | 30081 | Plain HTTP to `wiki-ingressgateway` (cross-namespace example) |
 | 443 | 30443 | HTTPS reserved for future TLS upgrade (see §10.5) |
 
-**Required `/etc/hosts` addition** (printed at the end of `setup.sh`):
+**Required `/etc/hosts` additions** (printed at the end of `setup.sh`):
 
 ```text
-127.0.0.1  documents.local
+127.0.0.1  documents.local wiki.local
 ```
+
+Each app namespace has its own ingressgateway with a dedicated NodePort, mirroring the production convention where every app namespace operates its own ingress. The infra namespace (`pcs`) deliberately does not — `pcs` is reached only via cluster DNS from the protected workloads' EnvoyFilters.
 
 ### 3.2 Ownership Split (Stage 1)
 
 | Resource | Lives in | Production owner |
 |---|---|---|
-| `pcs` Deployment + Service + `pcs` namespace | `pcs` | **Platform team** — PCS is shared infrastructure. |
-| `documents-api`, `documents-search`, `dashboard-client`, `documents-ingressgateway`, `documents-gateway`, `documents-vs`, `documents-ext-authz` EnvoyFilter, all Services in `documents` ns | `documents` | **Documents product team** — owns everything in their own namespace, including the EnvoyFilter that wires ext_authz into their workloads. |
-| `wiki-api`, `wiki-ext-authz` EnvoyFilter, `wiki-api` Service | `wiki` | **Wiki team** — copied the EnvoyFilter shape from the documents team's example. |
+| `pcs` Deployment + Service + `pcs` namespace | `pcs` | **Platform team** — PCS is shared infrastructure. No ingressgateway here (`pcs` is reached only via cluster DNS). |
+| `documents-api`, `documents-search`, `dashboard-client`, `documents-ingressgateway`, `documents-gateway`, `documents-vs`, `documents-ext-authz` EnvoyFilter, all Services in `documents` ns | `documents` | **Documents product team** — owns everything in their own namespace, including the per-namespace ingressgateway and the EnvoyFilter that wires ext_authz into their workloads. |
+| `wiki-api`, `wiki-ingressgateway`, `wiki-gateway`, `wiki-vs`, `wiki-ext-authz` EnvoyFilter, `wiki-api` Service | `wiki` | **Wiki team** — owns everything in their own namespace, including their own ingressgateway and a copied EnvoyFilter that follows the same shape as `documents-ext-authz`. |
 
 The product team does **not** write into `istio-system`. The wiki team does **not** write into `documents` or `istio-system`. Each team owns their own namespace end-to-end.
 
@@ -200,7 +210,7 @@ Per dashboard-client iteration:
 
 A 2-second sleep separates each call, giving a 12-second cycle.
 
-The **external path** is identical for `documents-api` (gateway-terminated traffic arrives at `documents-api`'s sidecar where the same ext_authz filter fires); `documents-search` and `wiki-api` are not exposed externally in this demo (they could be by adding their own `Gateway`/`VirtualService`, but it is not required to prove the headline claim).
+**External paths** exist for both `documents-api` (via `documents-ingressgateway` on host port 80, hostname `documents.local`) and `wiki-api` (via `wiki-ingressgateway` on host port 8081, hostname `wiki.local`). `documents-search` stays internal-only (no Gateway/VirtualService) — it represents a sibling service that's only reachable from inside the cluster. In every case the ext_authz filter on the workload's own sidecar fires identically, regardless of whether the request came in via cluster DNS or via that namespace's ingressgateway.
 
 ### 3.4 ext_authz Wiring: per-namespace EnvoyFilter with label opt-in (Stage 1)
 
@@ -404,9 +414,11 @@ This file is the documents-ext-authz copy with two field changes: `metadata.name
 
 Response body is intentionally empty — `ext_authz` looks only at the HTTP status code.
 
-### 4.9 Per-namespace Ingressgateway (`documents-ingressgateway`)
+### 4.9 Per-namespace Ingressgateways
 
-A dedicated Istio ingressgateway Pod lives in the `documents` namespace, deployed via the upstream `istio/gateway` Helm chart (version `1.24.2`) vendored under `kind/charts/`.
+Every app namespace runs its own ingressgateway Pod (deployed via the `istio/gateway` Helm chart vendored under `kind/charts/`). Same shape per namespace; only the namespace, release name, pod label, and NodePort differ.
+
+**`documents-ingressgateway`** (in `documents` namespace):
 
 | Field | Value |
 |---|---|
@@ -415,12 +427,28 @@ A dedicated Istio ingressgateway Pod lives in the `documents` namespace, deploye
 | Namespace | `documents` |
 | Pod labels | `istio: documents-ingressgateway` |
 | Service type | `NodePort` |
-| Ports | `80 → nodePort 30080`, `443 → nodePort 30443` |
+| Ports | `80 → nodePort 30080` |
 | Resources | 50m / 128Mi CPU/memory request |
 
-The gateway Pod's label is `istio: documents-ingressgateway`, **not** `workspace.io/ext-authz: enabled`, so the `documents-ext-authz` filter does **not** patch it. The ext_authz check fires one hop later on the actual receiver workload's sidecar.
+**`wiki-ingressgateway`** (in `wiki` namespace):
 
-### 4.10 Gateway + VirtualService (for `documents-api` external exposure)
+| Field | Value |
+|---|---|
+| Chart | `kind/charts/gateway-1.24.2.tgz` (same vendored file) |
+| Release name | `wiki-ingressgateway` |
+| Namespace | `wiki` |
+| Pod labels | `istio: wiki-ingressgateway` |
+| Service type | `NodePort` |
+| Ports | `80 → nodePort 30081` |
+| Resources | 50m / 128Mi CPU/memory request |
+
+Neither gateway pod carries the `workspace.io/ext-authz: enabled` label, so the corresponding EnvoyFilters do **not** patch them. The ext_authz check fires one hop later on the actual receiver workload's sidecar. The `pcs` namespace has **no** ingressgateway — `pcs` is reached only via cluster DNS from the protected workloads' EnvoyFilters.
+
+### 4.10 Gateway + VirtualService pairs
+
+Each app namespace exposes its main protected workload via its own Gateway + VirtualService pair, attached to that namespace's ingressgateway.
+
+**`documents` namespace — exposes `documents-api` on `documents.local`:**
 
 ```yaml
 apiVersion: networking.istio.io/v1
@@ -450,17 +478,48 @@ spec:
         port: { number: 8080 }
 ```
 
-Only `documents-api` is exposed externally. `documents-search` and `wiki-api` are reachable only from inside the cluster via the dashboard-client loop.
+**`wiki` namespace — exposes `wiki-api` on `wiki.local`:**
+
+```yaml
+apiVersion: networking.istio.io/v1
+kind: Gateway
+metadata:
+  name: wiki-gateway
+  namespace: wiki
+spec:
+  selector:
+    istio: wiki-ingressgateway
+  servers:
+  - port: { number: 80, name: http, protocol: HTTP }
+    hosts: [ wiki.local ]
+---
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: wiki-vs
+  namespace: wiki
+spec:
+  hosts: [ wiki.local ]
+  gateways: [ wiki-gateway ]
+  http:
+  - route:
+    - destination:
+        host: wiki-api.wiki.svc.cluster.local
+        port: { number: 8080 }
+```
+
+`documents-search` is **not** exposed externally — it represents a sibling internal-only service. A team could add a third Gateway/VirtualService for it inside `documents` namespace if they wanted, but it's not required to prove the headline claim.
 
 ### 4.11 Istio Install Surface
 
 All Istio charts are vendored as `.tgz` under `kind/charts/`. `setup.sh` references the local files; nothing is pulled from the internet at runtime.
 
-| Component | Vendored file | Namespace |
-|---|---|---|
-| istio-base | `kind/charts/base-1.24.2.tgz` | `istio-system` |
-| istiod | `kind/charts/istiod-1.24.2.tgz` | `istio-system` |
-| Per-namespace ingressgateway | `kind/charts/gateway-1.24.2.tgz` (release `documents-ingressgateway`) | `documents` |
+| Component | Vendored file | Helm release name | Namespace |
+|---|---|---|---|
+| istio-base | `kind/charts/base-1.24.2.tgz` | `istio-base` | `istio-system` |
+| istiod | `kind/charts/istiod-1.24.2.tgz` | `istiod` | `istio-system` |
+| Documents ingressgateway | `kind/charts/gateway-1.24.2.tgz` | `documents-ingressgateway` | `documents` |
+| Wiki ingressgateway | `kind/charts/gateway-1.24.2.tgz` (same file, second release) | `wiki-ingressgateway` | `wiki` |
 
 The `.tgz` files are downloaded once during initial repo setup (`helm pull --repo https://istio-release.storage.googleapis.com/charts --version 1.24.2 base istiod gateway --destination kind/charts/`) and committed to the repo.
 
@@ -497,9 +556,12 @@ Idempotent — re-runs pick up where they left off. Steps grouped by owner:
 ### Phase C — Wiki team actions (cross-namespace pattern)
 
 12. **Create the wiki namespace.** Apply `kind/manifests/wiki/namespace-wiki.yaml`.
-13. **Apply the copied `wiki-ext-authz` EnvoyFilter.** In `wiki` namespace.
-14. **Deploy `wiki-api`.** Apply Deployment and Service in `wiki` namespace.
-15. **Print verification commands and `/etc/hosts` line** (see §6).
+13. **Install the per-namespace ingressgateway in `wiki` from the vendored chart.**
+    - `helm upgrade --install wiki-ingressgateway kind/charts/gateway-1.24.2.tgz -n wiki -f kind/manifests/wiki/istio-gateway-values.yaml --skip-schema-validation --wait`
+14. **Apply the copied `wiki-ext-authz` EnvoyFilter.** In `wiki` namespace.
+15. **Deploy `wiki-api`.** Apply Deployment and Service in `wiki` namespace.
+16. **Apply Gateway + VirtualService for wiki.** Apply `wiki-gateway.yaml` and `wiki-virtualservice.yaml` in `wiki` namespace.
+17. **Print verification commands and `/etc/hosts` lines** (see §6).
 
 Total wall-clock on a warm Docker cache should be ≤ 3 minutes on a 16 GB MacBook.
 
@@ -522,11 +584,16 @@ kubectl -n documents logs deploy/dashboard-client -c dashboard-client -f
 #   wiki-api         mallory@workspace.test → 403
 ```
 
-**External-path demo — curl from host (documents-api only):**
+**External-path demo — curl from host through each namespace's own ingressgateway:**
 
 ```bash
-curl -H "x-workspace-user-id: alice@workspace.test"   http://documents.local/hello   # 200
-curl -H "x-workspace-user-id: mallory@workspace.test" http://documents.local/hello   # 403
+# Via documents-ingressgateway (host port 80)
+curl -H "x-workspace-user-id: alice@workspace.test"   http://documents.local/hello       # 200
+curl -H "x-workspace-user-id: mallory@workspace.test" http://documents.local/hello       # 403
+
+# Via wiki-ingressgateway (host port 8081)
+curl -H "x-workspace-user-id: alice@workspace.test"   http://wiki.local:8081/hello       # 200
+curl -H "x-workspace-user-id: mallory@workspace.test" http://wiki.local:8081/hello       # 403
 ```
 
 **PCS sees all three workloads' decisions:**
@@ -641,9 +708,12 @@ kubectl -n pcs scale deploy/pcs --replicas=1
         │   └── dashboard-client-deployment.yaml
         └── wiki/                                ← wiki team-owned (cross-ns copy pattern)
             ├── namespace-wiki.yaml
+            ├── istio-gateway-values.yaml        (Helm values for wiki-ingressgateway)
             ├── wiki-api-deployment.yaml         (carries opt-in label)
             ├── wiki-api-service.yaml
-            └── wiki-ext-authz.yaml              ← copied EnvoyFilter (same shape, wiki ns)
+            ├── wiki-ext-authz.yaml              ← copied EnvoyFilter (same shape, wiki ns)
+            ├── wiki-gateway.yaml
+            └── wiki-virtualservice.yaml
 ```
 
 The `manifests/platform/`, `manifests/documents/`, and `manifests/wiki/` split mirrors the ownership boundary documented in §3.2.
@@ -752,18 +822,20 @@ The Istio-recommended path. After Stage 2: add an `extensionProvider` entry in t
 
 1. **Opt-in label key.** The demo uses `workspace.io/ext-authz: enabled`. The same string appears in five places (three Deployment Pod templates, two EnvoyFilter `workloadSelector` blocks, plus verification commands). Align with the team's standard label vocabulary before implementation; the Stage 2 migration will reuse this label.
 2. **Demo cluster name.** Default `ext-authz-demo`. If another demo already uses that name on the machine, `setup.sh` reuses the existing cluster; `teardown.sh` removes it cleanly.
-3. **Hostname for external curl.** Default `documents.local`. If it collides with anything in `/etc/hosts`, swap for a less-common name.
+3. **Hostnames for external curl.** Defaults `documents.local`, `wiki.local`. If either collides with anything in `/etc/hosts`, swap for less-common names. Note that `wiki.local` is reached on host port `8081` (not 80) because two distinct ingressgateways cannot share the same host port.
 4. **PCS namespace owner in production.** Is `pcs` namespace owned by the same platform team that would later own the `istio-system` EnvoyFilter in Stage 2? If different teams own `pcs` and `istio-system`, two approvals are needed for Stage 2.
-5. **Whether to also expose `documents-search` and `wiki-api` via the ingressgateway.** Current spec exposes only `documents-api`. Adding the other two would require additional `Gateway`/`VirtualService` entries (or extra route rules). Not required for the headline claim; can be added if the demo audience wants to curl all three from the host.
+5. **Whether to also expose `documents-search` via its own Gateway/VirtualService.** Current spec keeps `documents-search` internal-only. It can be added with a third Gateway/VirtualService inside `documents` namespace if the demo audience wants to curl all three workloads from the host.
 
 ## 12. Success Criteria
 
 The harness is considered successful when, on a fresh checkout of `~/ashwini-repos/workspace/`:
 
 1. `./kind/setup.sh` runs to completion in ≤ 3 minutes on a 16 GB MacBook with Docker Desktop allocated ≥ 6 GB.
-2. After adding `127.0.0.1 documents.local` to `/etc/hosts`:
+2. After adding `127.0.0.1 documents.local wiki.local` to `/etc/hosts`:
    - `curl -H "x-workspace-user-id: alice@workspace.test" http://documents.local/hello` returns `200`.
    - `curl -H "x-workspace-user-id: mallory@workspace.test" http://documents.local/hello` returns `403`.
+   - `curl -H "x-workspace-user-id: alice@workspace.test" http://wiki.local:8081/hello` returns `200`.
+   - `curl -H "x-workspace-user-id: mallory@workspace.test" http://wiki.local:8081/hello` returns `403`.
 3. `kubectl -n documents logs deploy/dashboard-client -f` shows the 6-call cycle from §3.3 with the expected status codes.
 4. `kubectl -n pcs logs deploy/pcs -c pcs -f` shows 3 allow + 3 deny decision lines per dashboard-client cycle.
 5. For each of `documents-api`, `documents-search`, `wiki-api`: `kubectl logs ... | grep -c mallory` returns `0`; the equivalent grep for `alice` returns a positive number.
