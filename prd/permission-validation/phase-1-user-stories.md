@@ -21,16 +21,23 @@ Phase 1 delivers the minimum production validation flow:
 6. The sidecar sends a permission check request to Permission Checking Service with `objectId`, `objectType`, and requested `permission`; the user's SSO token is forwarded in HTTP headers.
 7. The sidecar forwards granted requests to the application backend and rejects denied requests.
 
-## PV1-001: Compare Envoy And Custom Sidecar
+## PV1-001: Compare Validation Topology Options
 
-**Background/Goal:** The platform needs to decide whether Phase 1 should use Envoy `ext_authz` with an authorization service or a custom sidecar. This decision affects routing, decryption, header extraction, metrics, deployment, and future extensibility.
+**Background/Goal:** The platform needs to decide which topology Phase 1 should use to intercept and validate requests. Three options are on the table: a custom HTTP-proxy sidecar in the request path, Envoy `ext_authz` calling a request-only authorization service, and Envoy `ext_proc` calling a processor that participates in both request and response phases. The decision affects routing configuration, decryption, header extraction, metrics, deployment, request and response forwarding, and forward-compatibility with the [Phase 1.5 metadata sync design](./phase-1-5-metadata-sync-design.md).
 
-**Description:** Evaluate Envoy-based and custom-sidecar-based approaches against the Phase 1 validation flow. The evaluation should focus on implementation complexity, latency, Kubernetes deployment model, request forwarding behavior, encrypted context handling, route skip/protect configuration, and SRE metrics support.
+**Description:** Evaluate the three topology options against the Phase 1 validation flow:
+
+- **Custom proxy sidecar.** Sidecar implements HTTP forwarding; route matching, decryption, PCS call, and enforcement all live in sidecar code.
+- **Envoy `ext_authz` + sidecar.** Envoy stays in the data path; sidecar exposes a request-only `Check` API. Route matching moves to Envoy; sidecar never sees the response.
+- **Envoy `ext_proc` + sidecar.** Envoy stays in the data path; sidecar implements the `ExternalProcessor` bidirectional gRPC stream and can participate in both request and response phases.
+
+The evaluation should cover implementation complexity, latency, Kubernetes deployment model, request and response forwarding, encrypted context handling, route skip/protect configuration, SRE metrics support, and forward-compatibility with the Phase 1.5 Response Tap.
 
 **Acceptance Criteria:**
 
-- Envoy `ext_authz` and custom sidecar options are compared using the Phase 1 flow.
-- The comparison covers latency impact, operational complexity, development effort, debugging experience, and fit for future Phase 2 needs.
+- All three options (custom proxy sidecar, Envoy `ext_authz`, Envoy `ext_proc`) are compared using the Phase 1 flow.
+- The comparison covers latency impact, operational complexity, development effort, debugging experience, and fit for future Phase 2 caching/invalidation.
+- The comparison explicitly addresses Phase 1.5 forward-compatibility: `ext_authz` is request-only and cannot satisfy the Phase 1.5 §3.2 invariant ("client receives `2xx` only after the event has been durably WAL-appended") without an additional response-side mechanism.
 - Recommendation is documented with trade-offs and known risks.
 - Any required proof-of-concept or benchmark scope is identified.
 

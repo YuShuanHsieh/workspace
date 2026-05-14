@@ -4,6 +4,8 @@ This document captures the Phase 1 sidecar **software architecture** and **data 
 
 ## 1. Software Architecture
 
+This section documents Phase 1 under the **custom proxy sidecar** topology (Option A). PV1-001 is evaluating an alternative topology that places Envoy in the request path and runs the sidecar as an `ext_proc` gRPC handler (Option B) — see [§1, Alternative Topology — Envoy `ext_proc` Filter](#alternative-topology--envoy-ext_proc-filter) at the end of this section. The data flow (§2) and invariants (§3) apply to both topologies.
+
 ```mermaid
 flowchart LR
     subgraph Client["Client (Browser / App)"]
@@ -65,7 +67,84 @@ flowchart LR
 | Route Config | PV1-004 | Declarative list of protected and skipped routes (method + path). |
 | App Credential Store | PV1-003 | Source of symmetric keys, keyed by `keyId`, provisioned at app registration. |
 
+### Alternative Topology — Envoy `ext_proc` Filter
+
+The same Phase 1 flow can be implemented with Envoy in the request path and the sidecar acting as an `envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor` gRPC handler. The functional components (PV1-006 … PV1-010) are unchanged; route matching (PV1-005) and request forwarding move out of the sidecar and into Envoy.
+
+```mermaid
+flowchart LR
+    subgraph Client["Client (Browser / App)"]
+        UI[UI Layer]
+    end
+
+    subgraph Platform["Platform Services"]
+        AM[Access Management API]
+        PCS[Permission Checking Service]
+        CRED[(App Credential Store<br/>symmetric keys by keyId)]
+    end
+
+    subgraph AppPod["Application Pod (K8s)"]
+        direction TB
+        ENVOY[Envoy Proxy<br/>route match + ext_proc filter<br/>PV1-004, PV1-005]
+        subgraph Sidecar["Sidecar (ext_proc handler)"]
+            direction TB
+            EP[ExternalProcessor gRPC stream]
+            HX[Header Extractor<br/>PV1-006]
+            DEC[Context Decryptor<br/>PV1-007]
+            BLD[Permission Request Builder<br/>PV1-008]
+            ENF[Decision Enforcer<br/>PV1-009]
+            MET[SRE Metrics<br/>PV1-010]
+        end
+        BE[Application Backend]
+    end
+
+    UI -- "objectId, objectType" --> AM
+    AM -- "encryptedContext + plainPermissions" --> UI
+
+    UI -- "request + headers<br/>(SSO, encCtx, action)" --> ENVOY
+    ENVOY -. "ext_proc: request_headers" .-> EP
+    EP --> HX --> DEC
+    DEC -. "fetch key by keyId" .-> CRED
+    DEC --> BLD --> ENF
+    BLD -- "objectId, objectType, permission<br/>+ SSO header" --> PCS
+    PCS -- "allow / deny" --> ENF
+    ENF -. "CONTINUE (allow)" .-> ENVOY
+    ENF -. "ImmediateResponse 403 (deny / error)" .-> ENVOY
+    ENVOY -- "allow → forward" --> BE
+    ENVOY -- "skipped route → forward directly" --> BE
+    ENVOY -- "deny / error → 403" --> UI
+    BE -- "response" --> ENVOY --> UI
+
+    EP -. emits .-> MET
+    DEC -. emits .-> MET
+    ENF -. emits .-> MET
+    PCS -. latency .-> MET
+```
+
+#### Component placement under `ext_proc`
+
+| Option A (custom proxy sidecar) | Option B (Envoy `ext_proc`) |
+|---|---|
+| Route Matcher (sidecar code, PV1-005) | Envoy route configuration |
+| Route Config (sidecar config, PV1-004) | Envoy `RouteConfiguration` + per-route `ExtProcPerRoute` overrides |
+| HTTP request forwarding to backend | Envoy upstream cluster |
+| Fail-closed on sidecar error (PV1-009) | Envoy `failure_mode_allow: false` |
+| Header Extractor / Decryptor / Builder / Enforcer | Sidecar `ExternalProcessor` gRPC handler, unchanged |
+| SRE Metrics (PV1-010) | Split — outcome and decryption metrics in sidecar; filter latency, deny rate, and upstream RTT from Envoy |
+
+#### Notable trade-offs
+
+- **Smaller sidecar surface.** No HTTP proxy code, no upstream connection pool, no route matcher. Sidecar is a pure validator.
+- **Envoy becomes a platform dependency.** Every protected pod runs Envoy; operational ownership, version pinning, and config delivery (xDS or static) must be settled before adoption.
+- **Skipped routes bypass the sidecar process entirely.** PV1-004 skipped paths are expressed as `ExtProcPerRoute.disabled: true` and never enter the sidecar.
+- **Forward-compatibility with Phase 1.5.** The Response Tap and "client receives `2xx` only after WAL is durable" behavior described in [phase-1-5-metadata-sync-design.md](./phase-1-5-metadata-sync-design.md) require response-phase participation. `ext_proc` supports this by enabling `response_header_mode: SEND` and `response_body_mode: BUFFERED` on create/delete routes via `ExtProcPerRoute`. The closely related `ext_authz` filter is request-only and cannot satisfy the Phase 1.5 §3.2 invariant on its own; this is why Option B uses `ext_proc` rather than `ext_authz`.
+- **gRPC streaming complexity.** The sidecar maintains one bidirectional stream per HTTP transaction. Ordering of `request_headers`, `response_headers`, `response_body`, and `ImmediateResponse` messages is on the sidecar.
+
+PV1-001 evaluates whether Option A or Option B is the right Phase 1 topology.
+
 ## 2. Data Flow — Protected Request
+
+The logical decisions, ordering, and fail-closed semantics below are identical under both topologies. Under Option B, the `Sidecar` lane represents the sidecar's `ext_proc` handler and Envoy sits transparently between the client and the sidecar in the request path; the sidecar's `forward` action becomes a `CONTINUE` response that releases Envoy to call the backend.
 
 ```mermaid
 sequenceDiagram
