@@ -67,3 +67,30 @@ func TestCheckHandler_EmptyHeader_Returns403(t *testing.T) {
 
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }
+
+// Envoy's ext_authz_http with `path_prefix: /check` appends the original
+// request path to the prefix — e.g. a request for /hello becomes a POST
+// to /check/hello on PCS. Verify the NoRoute catch-all handles this.
+func TestCheckHandler_CatchAllPathPrefix_AllowedUser_Returns200(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := newRouter()
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/check/hello", nil)
+	req.Header.Set("x-workspace-user-id", "alice@workspace.test")
+
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestCheckHandler_CatchAllPathPrefix_DeniedUser_Returns403(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := newRouter()
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/check/some/nested/path", nil)
+	req.Header.Set("x-workspace-user-id", "mallory@workspace.test")
+
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
