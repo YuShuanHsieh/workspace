@@ -84,3 +84,63 @@ kubectl apply -f "${MANIFESTS}/documents/documents-virtualservice.yaml"
 # 10. dashboard-client
 log "Deploying dashboard-client"
 kubectl apply -f "${MANIFESTS}/documents/dashboard-client-deployment.yaml"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase C — Wiki team actions (cross-namespace pattern)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# 11. wiki namespace
+log "Applying wiki namespace (istio-injection: enabled)"
+kubectl apply -f "${MANIFESTS}/wiki/namespace-wiki.yaml"
+
+# 12. wiki ingressgateway
+log "Installing wiki-ingressgateway (chart: gateway-1.24.2.tgz)"
+helm upgrade --install wiki-ingressgateway "${CHARTS}/gateway-1.24.2.tgz" \
+  -n wiki --wait --skip-schema-validation \
+  -f "${MANIFESTS}/wiki/istio-gateway-values.yaml"
+
+# 13. wiki EnvoyFilter (cross-ns copy)
+log "Applying wiki-ext-authz EnvoyFilter (cross-ns copy)"
+kubectl apply -f "${MANIFESTS}/wiki/wiki-ext-authz.yaml"
+
+# 14. wiki-api
+log "Deploying wiki-api"
+kubectl apply -f "${MANIFESTS}/wiki/wiki-api-deployment.yaml"
+kubectl apply -f "${MANIFESTS}/wiki/wiki-api-service.yaml"
+kubectl -n wiki wait --for=condition=Available deploy/wiki-api --timeout=180s
+
+# 15. wiki Gateway + VirtualService
+log "Applying wiki Gateway + VirtualService"
+kubectl apply -f "${MANIFESTS}/wiki/wiki-gateway.yaml"
+kubectl apply -f "${MANIFESTS}/wiki/wiki-virtualservice.yaml"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Verification banner
+# ─────────────────────────────────────────────────────────────────────────────
+
+cat <<EOF
+
+─────────────────────────────────────────────────────────────
+✓ kind ext-authz demo is up
+
+Add to /etc/hosts (one line):
+  127.0.0.1  documents.local wiki.local
+
+Watch the dashboard-client cycle:
+  kubectl -n documents logs deploy/dashboard-client -c dashboard-client -f
+
+Watch PCS decisions:
+  kubectl -n documents logs deploy/pcs -c pcs -f
+
+Curl from host (after /etc/hosts):
+  curl -H "x-workspace-user-id: alice@workspace.test"   http://documents.local/hello       # 200
+  curl -H "x-workspace-user-id: mallory@workspace.test" http://documents.local/hello       # 403
+  curl -H "x-workspace-user-id: alice@workspace.test"   http://wiki.local:8081/hello       # 200
+  curl -H "x-workspace-user-id: mallory@workspace.test" http://wiki.local:8081/hello       # 403
+
+EnvoyFilters in app namespaces (none in istio-system):
+  kubectl get envoyfilter -A
+
+Teardown:
+  ${KIND_DIR}/teardown.sh
+EOF
