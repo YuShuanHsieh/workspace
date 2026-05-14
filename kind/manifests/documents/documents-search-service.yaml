@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: documents-search
+  namespace: documents
+  labels:
+    app: documents-search
+spec:
+  type: ClusterIP
+  selector:
+    app: documents-search
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
