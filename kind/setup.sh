@@ -1,21 +1,23 @@
 #!/usr/bin/env bash
 # One-shot bring-up for the ext-authz kind demo. Idempotent.
 # Run from the repo root: ./kind/setup.sh
+#
+# This version uses the umbrella Helm chart at kind/demo/. To swap container
+# registries (e.g. for company-internal use), edit kind/demo/values.yaml.
 set -euo pipefail
 
 CLUSTER_NAME="ext-authz-demo"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 KIND_DIR="${ROOT}/kind"
 CHARTS="${KIND_DIR}/charts"
-MANIFESTS="${KIND_DIR}/manifests"
+DEMO="${KIND_DIR}/demo"
 
 log() { printf "\n\033[1;32m▶ %s\033[0m\n" "$*"; }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Phase A — Cluster bootstrap (cluster admin actions)
+# Phase A — Cluster bootstrap + image build/load
 # ─────────────────────────────────────────────────────────────────────────────
 
-# 1. kind cluster
 if kind get clusters | grep -qx "${CLUSTER_NAME}"; then
   log "kind cluster '${CLUSTER_NAME}' already exists, reusing"
 else
@@ -24,17 +26,6 @@ else
 fi
 kubectl config use-context "kind-${CLUSTER_NAME}"
 
-# 2. Istio control plane from vendored charts
-log "Installing istio-base from ${CHARTS}/base-1.24.2.tgz"
-kubectl create namespace istio-system --dry-run=client -o yaml | kubectl apply -f -
-helm upgrade --install istio-base "${CHARTS}/base-1.24.2.tgz" -n istio-system --wait \
-  -f "${KIND_DIR}/chart-values/istio-base-values.yaml"
-
-log "Installing istiod from ${CHARTS}/istiod-1.24.2.tgz"
-helm upgrade --install istiod "${CHARTS}/istiod-1.24.2.tgz" -n istio-system --wait \
-  -f "${KIND_DIR}/chart-values/istiod-values.yaml"
-
-# 3. Build and load local images
 log "Building local images (echo-server, pcs, dashboard-client)"
 (cd "${ROOT}/sample-apps/echo-server"      && docker build -t workspace/echo-server:dev      -f deploy/Dockerfile .)
 (cd "${ROOT}/sample-apps/pcs"              && docker build -t workspace/pcs:dev              -f deploy/Dockerfile .)
@@ -46,75 +37,55 @@ kind load docker-image workspace/pcs:dev              --name "${CLUSTER_NAME}"
 kind load docker-image workspace/dashboard-client:dev --name "${CLUSTER_NAME}"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Phase B — Documents product-team actions
+# Phase B — Install the umbrella chart (Istio control plane + all app
+# k8s manifests via templates/)
 # ─────────────────────────────────────────────────────────────────────────────
 
-# 4. documents namespace
-log "Applying documents namespace (istio-injection: enabled)"
-kubectl apply -f "${MANIFESTS}/documents/namespace-documents.yaml"
+log "Resolving Helm subchart dependencies for kind/demo"
+helm dependency update "${DEMO}" --skip-refresh
 
-# 5. documents ingressgateway (Helm release in documents ns)
+log "Installing umbrella chart 'demo' into istio-system"
+helm upgrade --install demo "${DEMO}" -n istio-system --create-namespace --wait
+
+# Wait for the app workloads applied by the umbrella to be Available
+log "Waiting for documents-team Deployments to be Available"
+kubectl -n documents wait --for=condition=Available deploy/pcs              --timeout=120s
+kubectl -n documents wait --for=condition=Available deploy/documents-api    --timeout=180s
+kubectl -n documents wait --for=condition=Available deploy/documents-search --timeout=180s
+kubectl -n documents wait --for=condition=Available deploy/dashboard-client --timeout=120s
+
+log "Waiting for wiki-team Deployment to be Available"
+kubectl -n wiki wait --for=condition=Available deploy/wiki-api --timeout=180s
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase C — Per-namespace ingressgateways (separate Helm releases because
+# subchart deps can't span namespaces; values match the umbrella's
+# values.yaml)
+# ─────────────────────────────────────────────────────────────────────────────
+
 log "Installing documents-ingressgateway (chart: gateway-1.24.2.tgz)"
 helm upgrade --install documents-ingressgateway "${CHARTS}/gateway-1.24.2.tgz" \
   -n documents --wait --skip-schema-validation \
-  -f "${KIND_DIR}/chart-values/documents-ingressgateway-values.yaml"
+  --set name=documents-ingressgateway \
+  --set labels.istio=documents-ingressgateway \
+  --set service.type=NodePort \
+  --set 'service.ports[0].name=status-port,service.ports[0].port=15021,service.ports[0].targetPort=15021' \
+  --set 'service.ports[1].name=http2,service.ports[1].port=80,service.ports[1].targetPort=80,service.ports[1].nodePort=30080' \
+  --set 'service.ports[2].name=https,service.ports[2].port=443,service.ports[2].targetPort=443,service.ports[2].nodePort=30443' \
+  --set autoscaling.enabled=false \
+  --set 'resources.requests.cpu=20m,resources.requests.memory=64Mi,resources.limits.cpu=200m,resources.limits.memory=128Mi'
 
-# 6. PCS (owned by documents team)
-log "Deploying PCS in documents namespace"
-kubectl apply -f "${MANIFESTS}/documents/pcs-deployment.yaml"
-kubectl apply -f "${MANIFESTS}/documents/pcs-service.yaml"
-kubectl -n documents wait --for=condition=Available deploy/pcs --timeout=120s
-
-# 7. documents-api and documents-search
-log "Deploying documents-api and documents-search"
-kubectl apply -f "${MANIFESTS}/documents/documents-api-deployment.yaml"
-kubectl apply -f "${MANIFESTS}/documents/documents-api-service.yaml"
-kubectl apply -f "${MANIFESTS}/documents/documents-search-deployment.yaml"
-kubectl apply -f "${MANIFESTS}/documents/documents-search-service.yaml"
-kubectl -n documents wait --for=condition=Available deploy/documents-api    --timeout=180s
-kubectl -n documents wait --for=condition=Available deploy/documents-search --timeout=180s
-
-# 8. documents EnvoyFilter
-log "Applying documents-ext-authz EnvoyFilter"
-kubectl apply -f "${MANIFESTS}/documents/documents-ext-authz.yaml"
-
-# 9. documents Gateway + VirtualService
-log "Applying documents Gateway + VirtualService"
-kubectl apply -f "${MANIFESTS}/documents/documents-gateway.yaml"
-kubectl apply -f "${MANIFESTS}/documents/documents-virtualservice.yaml"
-
-# 10. dashboard-client
-log "Deploying dashboard-client"
-kubectl apply -f "${MANIFESTS}/documents/dashboard-client-deployment.yaml"
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Phase C — Wiki team actions (cross-namespace pattern)
-# ─────────────────────────────────────────────────────────────────────────────
-
-# 11. wiki namespace
-log "Applying wiki namespace (istio-injection: enabled)"
-kubectl apply -f "${MANIFESTS}/wiki/namespace-wiki.yaml"
-
-# 12. wiki ingressgateway
-log "Installing wiki-ingressgateway (chart: gateway-1.24.2.tgz)"
+log "Installing wiki-ingressgateway"
 helm upgrade --install wiki-ingressgateway "${CHARTS}/gateway-1.24.2.tgz" \
   -n wiki --wait --skip-schema-validation \
-  -f "${KIND_DIR}/chart-values/wiki-ingressgateway-values.yaml"
-
-# 13. wiki EnvoyFilter (cross-ns copy)
-log "Applying wiki-ext-authz EnvoyFilter (cross-ns copy)"
-kubectl apply -f "${MANIFESTS}/wiki/wiki-ext-authz.yaml"
-
-# 14. wiki-api
-log "Deploying wiki-api"
-kubectl apply -f "${MANIFESTS}/wiki/wiki-api-deployment.yaml"
-kubectl apply -f "${MANIFESTS}/wiki/wiki-api-service.yaml"
-kubectl -n wiki wait --for=condition=Available deploy/wiki-api --timeout=180s
-
-# 15. wiki Gateway + VirtualService
-log "Applying wiki Gateway + VirtualService"
-kubectl apply -f "${MANIFESTS}/wiki/wiki-gateway.yaml"
-kubectl apply -f "${MANIFESTS}/wiki/wiki-virtualservice.yaml"
+  --set name=wiki-ingressgateway \
+  --set labels.istio=wiki-ingressgateway \
+  --set service.type=NodePort \
+  --set 'service.ports[0].name=status-port,service.ports[0].port=15021,service.ports[0].targetPort=15021' \
+  --set 'service.ports[1].name=http2,service.ports[1].port=80,service.ports[1].targetPort=80,service.ports[1].nodePort=30081' \
+  --set 'service.ports[2].name=https,service.ports[2].port=443,service.ports[2].targetPort=443' \
+  --set autoscaling.enabled=false \
+  --set 'resources.requests.cpu=20m,resources.requests.memory=64Mi,resources.limits.cpu=200m,resources.limits.memory=128Mi'
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Verification banner
@@ -123,7 +94,7 @@ kubectl apply -f "${MANIFESTS}/wiki/wiki-virtualservice.yaml"
 cat <<EOF
 
 ─────────────────────────────────────────────────────────────
-✓ kind ext-authz demo is up
+✓ kind ext-authz demo is up (via umbrella chart kind/demo/)
 
 Add to /etc/hosts (one line):
   127.0.0.1  documents.local wiki.local
@@ -142,6 +113,9 @@ Curl from host (after /etc/hosts):
 
 EnvoyFilters in app namespaces (none in istio-system):
   kubectl get envoyfilter -A
+
+Swap container registry for company use:
+  Edit kind/demo/values.yaml under images.*
 
 Teardown:
   ${KIND_DIR}/teardown.sh

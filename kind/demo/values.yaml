@@ -1,0 +1,87 @@
+# ===========================================================================
+# IMAGE OVERRIDES — swap these for a private registry (e.g. company mirror).
+# Every container image used by the demo is referenced from this section.
+# ===========================================================================
+images:
+  echoServer:
+    repository: workspace/echo-server
+    tag: dev
+    pullPolicy: IfNotPresent
+  pcs:
+    repository: workspace/pcs
+    tag: dev
+    pullPolicy: IfNotPresent
+  dashboardClient:
+    repository: workspace/dashboard-client
+    tag: dev
+    pullPolicy: IfNotPresent
+  # Istio component images. Used by the umbrella's base/istiod subchart deps
+  # and by the gateway installs performed separately by setup.sh.
+  istio:
+    hub: docker.io/istio
+    tag: 1.24.2
+
+# ===========================================================================
+# RESOURCE FOOTPRINT — sized for a MacBook (every value can be raised in prod).
+# ===========================================================================
+resources:
+  app:
+    requests: { cpu: 10m,  memory: 32Mi }
+    limits:   { cpu: 100m, memory: 64Mi }
+  caller:
+    requests: { cpu: 5m,   memory: 16Mi }
+    limits:   { cpu: 50m,  memory: 32Mi }
+  ingressgateway:
+    requests: { cpu: 20m,  memory: 64Mi }
+    limits:   { cpu: 200m, memory: 128Mi }
+  sidecar:
+    proxyCPU: "10m"
+    proxyMemory: "64Mi"
+    proxyCPULimit: "200m"
+    proxyMemoryLimit: "128Mi"
+
+# ===========================================================================
+# EXT-AUTHZ WIRING — both EnvoyFilters call this PCS service.
+# ===========================================================================
+extAuthz:
+  optInLabel:
+    key: workspace.io/ext-authz
+    value: enabled
+  pcsService:
+    host: pcs.documents.svc.cluster.local
+    port: 8080
+    pathPrefix: /check
+
+# ===========================================================================
+# INGRESS GATEWAYS — installed separately by setup.sh (subchart-namespace
+# limitation; see README.md). Settings are sourced from here for single-file
+# config.
+# ===========================================================================
+gateways:
+  documents:
+    namespace: documents
+    name: documents-ingressgateway
+    nodePort: 30080
+    host: documents.local
+  wiki:
+    namespace: wiki
+    name: wiki-ingressgateway
+    nodePort: 30081
+    host: wiki.local
+
+# ===========================================================================
+# SUBCHART VALUES (passed to base / istiod via Helm dependency mechanism).
+# ===========================================================================
+base:
+  defaultRevision: default
+
+istiod:
+  global:
+    hub: docker.io/istio
+    tag: 1.24.2
+  pilot:
+    resources:
+      requests: { cpu: 50m, memory: 128Mi }
+      limits:   { cpu: 1000m, memory: 512Mi }
+    autoscaleEnabled: false
+    replicaCount: 1

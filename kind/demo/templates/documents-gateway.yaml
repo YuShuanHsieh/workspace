@@ -1,0 +1,32 @@
+apiVersion: networking.istio.io/v1
+kind: Gateway
+metadata:
+  name: documents-gateway
+  namespace: documents
+spec:
+  selector:
+    istio: {{ .Values.gateways.documents.name }}
+  servers:
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    - {{ .Values.gateways.documents.host }}
+---
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: documents-vs
+  namespace: documents
+spec:
+  hosts:
+  - {{ .Values.gateways.documents.host }}
+  gateways:
+  - documents-gateway
+  http:
+  - route:
+    - destination:
+        host: documents-api.documents.svc.cluster.local
+        port:
+          number: 8080

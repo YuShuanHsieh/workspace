@@ -1,0 +1,13 @@
+apiVersion: v2
+name: ext-authz-demo
+description: Umbrella chart for the ext-authz kind demo (per-namespace EnvoyFilter pattern). Single point to swap container registry / tag for private-registry deployments — see values.yaml.
+type: application
+version: 0.1.0
+appVersion: "1.24.2"
+dependencies:
+- name: base
+  version: 1.24.2
+  repository: file://charts
+- name: istiod
+  version: 1.24.2
+  repository: file://charts

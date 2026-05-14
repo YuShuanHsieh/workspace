@@ -1,0 +1,32 @@
+apiVersion: networking.istio.io/v1
+kind: Gateway
+metadata:
+  name: wiki-gateway
+  namespace: wiki
+spec:
+  selector:
+    istio: {{ .Values.gateways.wiki.name }}
+  servers:
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    - {{ .Values.gateways.wiki.host }}
+---
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: wiki-vs
+  namespace: wiki
+spec:
+  hosts:
+  - {{ .Values.gateways.wiki.host }}
+  gateways:
+  - wiki-gateway
+  http:
+  - route:
+    - destination:
+        host: wiki-api.wiki.svc.cluster.local
+        port:
+          number: 8080

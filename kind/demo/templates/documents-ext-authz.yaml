@@ -1,0 +1,38 @@
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: documents-ext-authz
+  namespace: documents
+spec:
+  workloadSelector:
+    labels:
+      {{ include "extAuthz.optInLabel" . }}
+  configPatches:
+  - applyTo: HTTP_FILTER
+    match:
+      context: SIDECAR_INBOUND
+      listener:
+        filterChain:
+          filter:
+            name: envoy.filters.network.http_connection_manager
+            subFilter:
+              name: envoy.filters.http.router
+    patch:
+      operation: INSERT_BEFORE
+      value:
+        name: envoy.filters.http.ext_authz
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
+          transport_api_version: V3
+          http_service:
+            server_uri:
+              uri: http://{{ .Values.extAuthz.pcsService.host }}:{{ .Values.extAuthz.pcsService.port }}
+              cluster: outbound|{{ .Values.extAuthz.pcsService.port }}||{{ .Values.extAuthz.pcsService.host }}
+              timeout: 1s
+            path_prefix: {{ .Values.extAuthz.pcsService.pathPrefix }}
+            authorization_request:
+              allowed_headers:
+                patterns:
+                - exact: x-workspace-user-id
+                - exact: authorization
+          failure_mode_allow: false
