@@ -27,10 +27,12 @@ kubectl config use-context "kind-${CLUSTER_NAME}"
 # 2. Istio control plane from vendored charts
 log "Installing istio-base from ${CHARTS}/base-1.24.2.tgz"
 kubectl create namespace istio-system --dry-run=client -o yaml | kubectl apply -f -
-helm upgrade --install istio-base "${CHARTS}/base-1.24.2.tgz" -n istio-system --wait
+helm upgrade --install istio-base "${CHARTS}/base-1.24.2.tgz" -n istio-system --wait \
+  -f "${KIND_DIR}/chart-values/istio-base-values.yaml"
 
 log "Installing istiod from ${CHARTS}/istiod-1.24.2.tgz"
-helm upgrade --install istiod "${CHARTS}/istiod-1.24.2.tgz" -n istio-system --wait
+helm upgrade --install istiod "${CHARTS}/istiod-1.24.2.tgz" -n istio-system --wait \
+  -f "${KIND_DIR}/chart-values/istiod-values.yaml"
 
 # 3. Build and load local images
 log "Building local images (echo-server, pcs, dashboard-client)"
@@ -55,7 +57,7 @@ kubectl apply -f "${MANIFESTS}/documents/namespace-documents.yaml"
 log "Installing documents-ingressgateway (chart: gateway-1.24.2.tgz)"
 helm upgrade --install documents-ingressgateway "${CHARTS}/gateway-1.24.2.tgz" \
   -n documents --wait --skip-schema-validation \
-  -f "${MANIFESTS}/documents/istio-gateway-values.yaml"
+  -f "${KIND_DIR}/chart-values/documents-ingressgateway-values.yaml"
 
 # 6. PCS (owned by documents team)
 log "Deploying PCS in documents namespace"
@@ -97,7 +99,7 @@ kubectl apply -f "${MANIFESTS}/wiki/namespace-wiki.yaml"
 log "Installing wiki-ingressgateway (chart: gateway-1.24.2.tgz)"
 helm upgrade --install wiki-ingressgateway "${CHARTS}/gateway-1.24.2.tgz" \
   -n wiki --wait --skip-schema-validation \
-  -f "${MANIFESTS}/wiki/istio-gateway-values.yaml"
+  -f "${KIND_DIR}/chart-values/wiki-ingressgateway-values.yaml"
 
 # 13. wiki EnvoyFilter (cross-ns copy)
 log "Applying wiki-ext-authz EnvoyFilter (cross-ns copy)"

@@ -696,10 +696,14 @@ kubectl -n documents scale deploy/pcs --replicas=1
     │   ├── base-1.24.2.tgz
     │   ├── istiod-1.24.2.tgz
     │   └── gateway-1.24.2.tgz
+    ├── chart-values/                            ← explicit Helm values (one file per install)
+    │   ├── istio-base-values.yaml               (CRDs only — no images; documents that)
+    │   ├── istiod-values.yaml                   (docker.io/istio/pilot:1.24.2 + MacBook sizing)
+    │   ├── documents-ingressgateway-values.yaml (proxyv2:1.24.2 noted; NodePort 30080/30443)
+    │   └── wiki-ingressgateway-values.yaml      (proxyv2:1.24.2 noted; NodePort 30081)
     └── manifests/
         ├── documents/                           ← documents product-team-owned (includes PCS)
         │   ├── namespace-documents.yaml
-        │   ├── istio-gateway-values.yaml        (Helm values for documents-ingressgateway)
         │   ├── pcs-deployment.yaml              ← PCS owned by documents team
         │   ├── pcs-service.yaml                 ← PCS Service in documents ns
         │   ├── documents-api-deployment.yaml    (carries opt-in label)
@@ -712,7 +716,6 @@ kubectl -n documents scale deploy/pcs --replicas=1
         │   └── dashboard-client-deployment.yaml
         └── wiki/                                ← wiki team-owned (cross-ns copy pattern)
             ├── namespace-wiki.yaml
-            ├── istio-gateway-values.yaml        (Helm values for wiki-ingressgateway)
             ├── wiki-api-deployment.yaml         (carries opt-in label)
             ├── wiki-api-service.yaml
             ├── wiki-ext-authz.yaml              ← copied EnvoyFilter; calls pcs.documents.svc

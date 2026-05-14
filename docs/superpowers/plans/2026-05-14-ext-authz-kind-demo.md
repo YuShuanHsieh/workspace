@@ -76,10 +76,14 @@ This plan creates the following new files (none are modified — the spec was ju
     │   ├── base-1.24.2.tgz              (vendored, ~70 KB)
     │   ├── istiod-1.24.2.tgz            (vendored, ~32 KB)
     │   └── gateway-1.24.2.tgz           (vendored, ~11 KB)
+    ├── chart-values/
+    │   ├── istio-base-values.yaml       (CRDs only — no images; documents that)
+    │   ├── istiod-values.yaml           (docker.io/istio/pilot:1.24.2 + MacBook sizing)
+    │   ├── documents-ingressgateway-values.yaml
+    │   └── wiki-ingressgateway-values.yaml
     └── manifests/
         ├── documents/
         │   ├── namespace-documents.yaml
-        │   ├── istio-gateway-values.yaml
         │   ├── pcs-deployment.yaml
         │   ├── pcs-service.yaml
         │   ├── documents-api-deployment.yaml
@@ -92,7 +96,6 @@ This plan creates the following new files (none are modified — the spec was ju
         │   └── dashboard-client-deployment.yaml
         └── wiki/
             ├── namespace-wiki.yaml
-            ├── istio-gateway-values.yaml
             ├── wiki-api-deployment.yaml
             ├── wiki-api-service.yaml
             ├── wiki-ext-authz.yaml

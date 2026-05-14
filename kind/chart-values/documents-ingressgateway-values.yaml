@@ -1,0 +1,39 @@
+# documents-ingressgateway — per-namespace Istio ingressgateway for documents.local
+# Vendored at: kind/charts/gateway-1.24.2.tgz
+# Chart name:    gateway
+# Chart version: 1.24.2
+#
+# Container images deployed by this chart:
+#   - docker.io/istio/proxyv2:1.24.2  (Envoy proxy, injected as the gateway container)
+#
+# The gateway chart deploys a Pod whose container image is injected by the Istio
+# sidecar injector (podAnnotations: sidecar.istio.io/inject: "true"). The image
+# (proxyv2) and its tag are controlled by istiod's global.hub / global.tag — see
+# kind/chart-values/istiod-values.yaml. There is no image field in this chart's
+# values.yaml to override; image selection happens via istiod, not here.
+
+name: documents-ingressgateway
+labels:
+  istio: documents-ingressgateway
+
+service:
+  type: NodePort
+  ports:
+  - name: status-port
+    port: 15021
+    targetPort: 15021
+  - name: http2
+    port: 80
+    targetPort: 80
+    nodePort: 30080
+  - name: https
+    port: 443
+    targetPort: 443
+    nodePort: 30443
+
+resources:
+  requests: { cpu: 20m,  memory: 64Mi }
+  limits:   { cpu: 200m, memory: 128Mi }
+
+autoscaling:
+  enabled: false
