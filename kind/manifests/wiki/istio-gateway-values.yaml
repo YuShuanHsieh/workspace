@@ -18,8 +18,8 @@ service:
     targetPort: 443
 
 resources:
-  requests: { cpu: 50m,  memory: 128Mi }
-  limits:   { cpu: 500m, memory: 256Mi }
+  requests: { cpu: 20m,  memory: 64Mi }
+  limits:   { cpu: 200m, memory: 128Mi }
 
 autoscaling:
   enabled: false
