@@ -1,1 +1,6 @@
 .DS_Store
+
+# Local Go build outputs (each sample-app's `go build` produces a binary named after the module)
+sample-apps/echo-server/echo-server
+sample-apps/pcs/pcs
+sample-apps/dashboard-client/dashboard-client
