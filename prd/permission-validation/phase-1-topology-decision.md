@@ -76,7 +76,7 @@ All three options can carry a request-side decision cache inside the sidecar. Th
 
 ### 3.6 Phase 1.5 forward-compatibility (the tiebreaker)
 
-[phase-1-5-metadata-sync-design.md §3.2](./phase-1-5-metadata-sync-design.md) requires that "the client receives `2xx` only after the event has been durably WAL-appended." That invariant requires the sidecar to participate in the **response** phase: it must observe the backend's response, durably append, and only then release the `2xx` to the client.
+[phase-1-5-metadata-sync-design.md §3.2](./phase-1-5-metadata-sync-design.md#32-new-invariants-introduced) requires that "the client receives `2xx` only after the event has been durably WAL-appended." That invariant requires the sidecar to participate in the **response** phase: it must observe the backend's response, durably append, and only then release the `2xx` to the client.
 
 - **A** is in the response path natively; the sidecar already proxies the response. Adding a Response Tap is straightforward.
 - **B** supports response-phase participation: enabling `response_header_mode: SEND` and `response_body_mode: BUFFERED` on the relevant routes gives the sidecar exactly the lever it needs. The streaming complexity is bounded — one stream per HTTP transaction.
@@ -88,7 +88,7 @@ All three options can carry a request-side decision cache inside the sidecar. Th
 
 Reasoning:
 
-1. **Forward-compatibility with Phase 1.5.** B provides a native response-phase hook; C does not, and A would have to be re-architected if Envoy is later introduced for other reasons.
+1. **Forward-compatibility with Phase 1.5.** B provides a native response-phase hook; C is request-only and cannot satisfy the §3.2 invariant on its own. A also satisfies Phase 1.5 on its own (the sidecar is already in the response path), but adopting A now would require re-architecting if Envoy is introduced later for other reasons.
 2. **Smaller sidecar surface than A.** No HTTP proxy code, no upstream connection pool, no route matcher — the sidecar is a pure validator. Less surface to harden, fewer attack vectors on the data path.
 3. **Standard Envoy filter contract.** `ext_proc` is a documented, versioned extension; the sidecar's contract is stable and language-agnostic.
 4. **Skipped routes bypass the sidecar entirely.** `ExtProcPerRoute.disabled: true` keeps health checks and public assets off the sidecar's critical path.
@@ -118,6 +118,6 @@ The POC is a single user-story-sized effort (estimated M). It does **not** imple
 |---|---|
 | All three options compared using the Phase 1 flow | §2, §3 |
 | Comparison covers latency, ops complexity, dev effort, debugging, Phase 2 fit | §3.1, §3.2, §3.3, §3.4, §3.5 |
-| Phase 1.5 forward-compatibility addressed; `ext_authz` cannot satisfy §3.2 alone | §3.6 |
+| Phase 1.5 forward-compatibility addressed; `ext_authz` cannot satisfy `phase-1-5-metadata-sync-design.md` §3.2 alone | §3.6 |
 | Recommendation documented with trade-offs and risks | §4, §5 |
 | POC / benchmark scope identified | §6 |
