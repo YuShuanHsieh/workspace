@@ -68,24 +68,26 @@ The sidecar parses by splitting on `.`, requiring exactly three parts and a lead
 
 - One active key per app. No automatic rotation (out of scope per `phase-1-user-stories.md` "Out Of Scope" list).
 - Manual rotation is supported (issue a new `keyId`, update sidecar config) but expected to be rare in Phase 1.
-- Keys never leave the App Credential Store except through authenticated mTLS reads.
+- Keys are retrieved only via authenticated reads from the App Credential Store; the specific transport security between the store and the sidecar is a platform concern outside Phase 1 scope.
 
 ## 6. Validation rules and rejection
 
+This section covers context-validation rejections only. Header-presence and header-format rejections (missing `Authorization`, malformed `Bearer` token, empty `X-Requested-Action`, etc.) are listed in [phase-1-request-contract.md §6](./phase-1-request-contract.md#6-rejection-cases) and use a separate `header_invalid_total` metric.
+
 The sidecar rejects a context — returning `403 Forbidden` — if any of the following hold:
 
-| Check | Failure cause |
+| Failure condition | Reason label |
 |---|---|
-| Envelope is well-formed (`v1.<keyId>.<base64url>`) | Malformed envelope. |
-| `keyId` is known to this sidecar | Unknown key (likely wrong app or rotated-out). |
-| AEAD decryption succeeds (tag verifies under key + AAD `phase1-auth-ctx-v1|<keyId>`) | Tampered or wrong-key context. |
-| Cleartext parses as JSON with the §2 fields and no unknown fields | Malformed payload. |
-| Payload `keyId` equals envelope `keyId` | Downgrade / substitution attempt. |
-| Payload `appId` equals the sidecar's configured `appId` | Wrong audience. |
-| `expiresAt > now` (with a small clock-skew tolerance, e.g. ±30s) | Expired context. |
-| `issuedAt <= now + skew` | Future-dated context (likely clock skew or replay). |
+| Envelope is not `v1.<keyId>.<base64url>` (wrong part count, missing version prefix, non-base64url payload) | `malformed_envelope` |
+| `keyId` in the envelope is unknown to this sidecar | `unknown_key` |
+| AEAD tag verification fails (tampered, wrong key, or wrong AAD `phase1-auth-ctx-v1\|<keyId>`) | `tampered` |
+| Cleartext does not parse as JSON, is missing a §2 field, or contains an unrecognized field | `malformed_payload` |
+| Payload `keyId` does not equal envelope `keyId` (downgrade / substitution attempt) | `key_downgrade` |
+| Payload `appId` does not equal the sidecar's configured `appId` | `wrong_audience` |
+| `expiresAt <= now - skew` (skew tolerance ±30s) | `expired` |
+| `issuedAt > now + skew` (future-dated; likely clock skew or replay) | `future_dated` |
 
-Every rejection increments a `decrypt_failure_total{reason=...}` counter (per [PV1-010](./phase-1-user-stories.md#pv1-010-add-minimal-sre-metrics)).
+Every rejection increments `decrypt_failure_total{reason="<label>"}` using the **Reason label** from the table above (per [PV1-010](./phase-1-user-stories.md#pv1-010-add-minimal-sre-metrics)). The same set of labels is referenced from [phase-1-request-contract.md §6](./phase-1-request-contract.md#6-rejection-cases), which defers to this section for the canonical enumeration.
 
 ## 7. Plain permission list
 
@@ -110,7 +112,7 @@ Documenting this explicitly is important: it prevents future implementers from "
 | Acceptance criterion | Section |
 |---|---|
 | Payload includes `appId`, `objectId`, `objectType`, `issuedAt`, `expiresAt`, `keyId` | §2 |
-| AEAD or equivalent tamper-proof envelope | §3, §4 |
+| AEAD authenticated encryption (Phase 1 locks to AEAD; non-AEAD constructions out of scope per §3) | §3, §4 |
 | App credential ownership and provisioning documented | §5 |
 | Expired / undecryptable / malformed / wrong-audience rejected | §6 |
 | Plain permissions are UI display only | §7 |
