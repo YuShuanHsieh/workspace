@@ -12,7 +12,7 @@
 
 ## 1. Background and Motivation
 
-The Permission Validation Phase 1 design (sibling spec) describes a per-request authorization gate that sits in front of application services. App teams onboard their services to that gate, and the gate calls a central **Permission Checking Service (PCS)** for an allow/deny decision on every inbound request. Before that flow is wired into production app charts, the platform engineer (Ashwini) needs a local, single-file-to-run demo that proves the wiring end-to-end against the team's current production cluster conventions.
+The Permission Validation Phase 1 design (sibling spec) describes a per-request authorization gate that sits in front of application services. Workloads onboard their services to that gate, and the gate calls a **Permission Checking Service (PCS)** for an allow/deny decision on every inbound request. In this team's architecture the **main product team (documents) owns and operates PCS as part of their product offering** — it is deployed in the `documents` namespace alongside the documents product's own workloads, not in a separate platform-owned namespace. Other product teams (e.g. wiki) that want to plug into the same authorization decision call the documents-owned PCS across namespace boundaries via cluster DNS. Before this flow is wired into production app charts, Ashwini needs a local, single-file-to-run demo that proves the wiring end-to-end against the team's current production cluster conventions.
 
 The demo is split into two **stages** that match a realistic rollout:
 
@@ -42,7 +42,7 @@ Concretely the harness must produce these observable outcomes on a fresh checkou
 1. `documents-api` runs in namespace `documents` with sidecar injection enabled and label `workspace.io/ext-authz: enabled` on its Pod template. The `documents-ext-authz` EnvoyFilter in the same `documents` namespace matches this label and patches the Pod's sidecar with the `ext_authz` filter.
 2. `documents-search` runs in the same `documents` namespace, also carrying `workspace.io/ext-authz: enabled`. The same `documents-ext-authz` EnvoyFilter (no second filter needed) patches it via the shared label.
 3. `wiki-api` runs in namespace `wiki` with sidecar injection enabled and the same opt-in label. A **copied** EnvoyFilter (`wiki-ext-authz`) in the `wiki` namespace matches this label and patches its sidecar. The copy is identical to `documents-ext-authz` except for `metadata.namespace` and `metadata.name`.
-4. `pcs` runs in namespace `pcs` with sidecar injection enabled and returns `200` for users in its allow-list, `403` otherwise.
+4. `pcs` runs in the **same `documents` namespace** as the documents product, owned by the documents team. It is sidecar-injected and returns `200` for users in its allow-list, `403` otherwise. Both `documents-ext-authz` and `wiki-ext-authz` point at `pcs.documents.svc.cluster.local:8080` — the same PCS service.
 5. `dashboard-client` runs in the `documents` namespace and issues calls in a loop to all three protected workloads (`documents-api`, `documents-search`, `wiki-api`) with alternating `x-workspace-user-id` headers (`alice@workspace.test` and `mallory@workspace.test`). Its log shows the pattern of `200`s and `403`s.
 6. Each protected workload's app container sees **only `alice`'s traffic**; `mallory`'s requests never reach the app container — the deny decision is enforced in the workload's own Envoy sidecar.
 7. `pcs` logs show three allow + three deny decisions per dashboard-client iteration cycle.
@@ -71,7 +71,7 @@ Concretely the harness must produce these observable outcomes on a fresh checkou
 
 ### 3.1 Cluster Layout
 
-A single-node `kind` cluster with `extraPortMappings` exposing the per-namespace ingressgateway on host ports 80/443. Three app-relevant namespaces (`documents`, `wiki`, `pcs`) plus the standard `istio-system`:
+A single-node `kind` cluster with `extraPortMappings` exposing per-namespace ingressgateways on host ports. Two app-relevant namespaces (`documents`, `wiki`) plus the standard `istio-system`. **No separate `pcs` namespace** — PCS is part of the documents product and lives in `documents` ns.
 
 ```text
                        ┌──────────────────────────────────────────────────────────┐
@@ -81,12 +81,6 @@ A single-node `kind` cluster with `extraPortMappings` exposing the per-namespace
                        │    istio-base                                            │
                        │    istiod                                                │
                        │    (NO EnvoyFilter — Stage 1 does not write here)        │
-                       │                                                          │
-                       │  ns: pcs                     (injection: enabled)        │
-                       │    pcs Pod                                               │
-                       │      ├─ pcs (Go decision server)                         │
-                       │      └─ istio-proxy (sidecar)                            │
-                       │    Service "pcs"                                         │
                        │                                                          │
                        │  ns: documents               (injection: enabled)        │
                        │    documents-ingressgateway Pod                          │
@@ -106,13 +100,18 @@ A single-node `kind` cluster with `extraPortMappings` exposing the per-namespace
                        │      ├─ dashboard-client (Go HTTP loop)                  │
                        │      └─ istio-proxy (sidecar)                            │
                        │                                                          │
+                       │    pcs Pod   (no opt-in label — it IS the decisioner)    │
+                       │      ├─ pcs (Go decision server)                         │
+                       │      └─ istio-proxy (sidecar)                            │
+                       │                                                          │
                        │    EnvoyFilter "documents-ext-authz"                     │
                        │      workloadSelector: { workspace.io/ext-authz: enabled}│
                        │      → matches both docs-api and docs-search             │
+                       │      → calls pcs.documents.svc:8080                      │
                        │                                                          │
                        │    Gateway "documents-gateway" (host: documents.local)   │
                        │    VirtualService "documents-vs"                         │
-                       │    Service "documents-api", "documents-search"           │
+                       │    Services: "documents-api", "documents-search", "pcs"  │
                        │                                                          │
                        │  ns: wiki                    (injection: enabled)        │
                        │    wiki-ingressgateway Pod                               │
@@ -126,6 +125,8 @@ A single-node `kind` cluster with `extraPortMappings` exposing the per-namespace
                        │    EnvoyFilter "wiki-ext-authz"                          │
                        │      workloadSelector: { workspace.io/ext-authz: enabled}│
                        │      → matches wiki-api                                  │
+                       │      → calls pcs.documents.svc:8080 (cross-namespace,    │
+                       │        the documents team's PCS)                         │
                        │      (identical config to documents-ext-authz except     │
                        │       for metadata.namespace and metadata.name —         │
                        │       this is the Stage 1 cross-namespace copy)          │
@@ -151,17 +152,16 @@ A single-node `kind` cluster with `extraPortMappings` exposing the per-namespace
 127.0.0.1  documents.local wiki.local
 ```
 
-Each app namespace has its own ingressgateway with a dedicated NodePort, mirroring the production convention where every app namespace operates its own ingress. The infra namespace (`pcs`) deliberately does not — `pcs` is reached only via cluster DNS from the protected workloads' EnvoyFilters.
+Each app namespace has its own ingressgateway with a dedicated NodePort, mirroring the production convention where every app namespace operates its own ingress.
 
 ### 3.2 Ownership Split (Stage 1)
 
 | Resource | Lives in | Production owner |
 |---|---|---|
-| `pcs` Deployment + Service + `pcs` namespace | `pcs` | **Platform team** — PCS is shared infrastructure. No ingressgateway here (`pcs` is reached only via cluster DNS). |
-| `documents-api`, `documents-search`, `dashboard-client`, `documents-ingressgateway`, `documents-gateway`, `documents-vs`, `documents-ext-authz` EnvoyFilter, all Services in `documents` ns | `documents` | **Documents product team** — owns everything in their own namespace, including the per-namespace ingressgateway and the EnvoyFilter that wires ext_authz into their workloads. |
-| `wiki-api`, `wiki-ingressgateway`, `wiki-gateway`, `wiki-vs`, `wiki-ext-authz` EnvoyFilter, `wiki-api` Service | `wiki` | **Wiki team** — owns everything in their own namespace, including their own ingressgateway and a copied EnvoyFilter that follows the same shape as `documents-ext-authz`. |
+| `documents-api`, `documents-search`, `dashboard-client`, `documents-ingressgateway`, `documents-gateway`, `documents-vs`, `documents-ext-authz` EnvoyFilter, **`pcs` Deployment + Service**, all Services in `documents` ns | `documents` | **Documents product team** — owns everything in their own namespace, including the per-namespace ingressgateway, the EnvoyFilter that wires ext_authz into their workloads, **and PCS itself** (PCS is part of the documents product offering). |
+| `wiki-api`, `wiki-ingressgateway`, `wiki-gateway`, `wiki-vs`, `wiki-ext-authz` EnvoyFilter, `wiki-api` Service | `wiki` | **Wiki team** — owns everything in their own namespace, including their own ingressgateway and a copied EnvoyFilter that follows the same shape as `documents-ext-authz`. The wiki team's `wiki-ext-authz` calls into the documents team's PCS via cluster DNS. |
 
-The product team does **not** write into `istio-system`. The wiki team does **not** write into `documents` or `istio-system`. Each team owns their own namespace end-to-end.
+The documents team does **not** write into `istio-system`. The wiki team does **not** write into `documents` or `istio-system`. Each team owns their own namespace end-to-end. **There is no separate platform-owned namespace in Stage 1** — the documents team plays the role of PCS host because PCS is part of their product.
 
 `setup.sh` applies all of the above for demo convenience, but the manifests are organised by owner (see §7) so the boundary is visible.
 
@@ -178,7 +178,7 @@ The product team does **not** write into `istio-system`. The wiki team does **no
                                                                       │ ext_authz HTTP
                                                                       ▼ POST /check
                                                             ┌────────────────────────┐
-                                                            │ pcs.pcs.svc:8080       │
+                                                            │ pcs.documents.svc:8080 │
                                                             │   alice → 200          │
                                                             │   mallory → 403        │
                                                             └─────────┬──────────────┘
@@ -222,7 +222,7 @@ Key configuration decisions, common to both `documents-ext-authz` and `wiki-ext-
 - **`workloadSelector.labels: { workspace.io/ext-authz: enabled }`** — opt-in marker. Workloads inside the namespace either carry the label and get gated, or don't and are unaffected. The same label name is used across all namespaces for consistency with Stage 2.
 - **`context: SIDECAR_INBOUND`** — the filter intercepts traffic entering each matched Pod, not outbound traffic.
 - **`applyTo: HTTP_FILTER` + `operation: INSERT_BEFORE`** — the ext_authz filter is inserted into the HTTP filter chain ahead of the router filter.
-- **`http_service` (not gRPC)** — Envoy talks to `pcs` via plain HTTP `POST /check`. Both EnvoyFilter copies point at the same FQDN `pcs.pcs.svc.cluster.local:8080`; the FQDN resolves identically from any namespace.
+- **`http_service` (not gRPC)** — Envoy talks to `pcs` via plain HTTP `POST /check`. Both EnvoyFilter copies point at the same FQDN `pcs.documents.svc.cluster.local:8080`; the FQDN resolves identically from any namespace.
 - **`allowed_headers`** — forwards `x-workspace-user-id` and `authorization` to `pcs`.
 - **`failure_mode_allow: false`** — fail-closed.
 
@@ -230,11 +230,11 @@ The complete EnvoyFilter resources are in §4.6 (documents) and §4.7 (wiki). Th
 
 ### 3.5 All-namespace Istio Injection
 
-All three app-relevant namespaces (`documents`, `wiki`, `pcs`) carry the `istio-injection: enabled` label. This mirrors the production cluster's posture (every namespace defaults to sidecar-injected). Concrete consequences:
+Both app namespaces (`documents`, `wiki`) carry the `istio-injection: enabled` label. This mirrors the production cluster's posture (every namespace defaults to sidecar-injected). Concrete consequences:
 
 - Traffic between any two pods is mesh-mTLS (Istio `PERMISSIVE` mode). Falls out for free; not separately asserted.
 - The `ext_authz` check happens **on the receiver side** regardless of the caller's identity. The decision input is the `x-workspace-user-id` header.
-- The `pcs` Pod has a sidecar; outbound calls from the protected workloads' ext_authz filters to `pcs.pcs.svc.cluster.local:8080` are mesh-managed.
+- The `pcs` Pod (in `documents` ns) has a sidecar; outbound calls from both `documents-ext-authz` (same-ns call) and `wiki-ext-authz` (cross-ns call) to `pcs.documents.svc.cluster.local:8080` are mesh-managed.
 
 ## 4. Component Specifications
 
@@ -339,8 +339,8 @@ spec:
           transport_api_version: V3
           http_service:
             server_uri:
-              uri: http://pcs.pcs.svc.cluster.local:8080
-              cluster: outbound|8080||pcs.pcs.svc.cluster.local
+              uri: http://pcs.documents.svc.cluster.local:8080
+              cluster: outbound|8080||pcs.documents.svc.cluster.local
               timeout: 1s
             path_prefix: /check
             authorization_request:
@@ -382,8 +382,8 @@ spec:
           transport_api_version: V3
           http_service:
             server_uri:
-              uri: http://pcs.pcs.svc.cluster.local:8080      # same PCS as documents
-              cluster: outbound|8080||pcs.pcs.svc.cluster.local
+              uri: http://pcs.documents.svc.cluster.local:8080      # same PCS as documents
+              cluster: outbound|8080||pcs.documents.svc.cluster.local
               timeout: 1s
             path_prefix: /check
             authorization_request:
@@ -396,7 +396,7 @@ spec:
 
 This file is the documents-ext-authz copy with two field changes: `metadata.namespace: wiki` and `metadata.name: wiki-ext-authz`. Everything else is identical, including the PCS service URL. **This duplication is the Stage 1 cost — Stage 2 (§8) eliminates it by collapsing both copies into a single resource in `istio-system`.**
 
-### 4.8 `pcs` — Permission Checking Service
+### 4.8 `pcs` — Permission Checking Service (owned by documents team)
 
 | Field | Value |
 |---|---|
@@ -408,8 +408,11 @@ This file is the documents-ext-authz copy with two field changes: `metadata.name
 | Endpoints | `POST /check` |
 | Decision policy | Hard-coded allow-list `{"alice@workspace.test", "bob@workspace.test"}`. Header value in list → `200`. Otherwise → `403`. Missing header → `403`. |
 | Logging | `log/slog` JSON; one line per decision (`{"user":"...","decision":"allow|deny","ts":"..."}`) |
-| Namespace | `pcs` |
+| Namespace | **`documents`** (PCS is part of the documents product offering — owned by the documents team, deployed in their namespace, reached from other namespaces via cluster DNS) |
 | Sidecar | Envoy (auto-injected) |
+| Opt-in label | **Not set** — PCS is the decision service itself; gating it would create a loop. |
+| Pod container name | `pcs` |
+| Service name + FQDN | `pcs` (in `documents` ns) → `pcs.documents.svc.cluster.local:8080` |
 | Estimated LOC | ~40 |
 
 Response body is intentionally empty — `ext_authz` looks only at the HTTP status code.
@@ -442,7 +445,7 @@ Every app namespace runs its own ingressgateway Pod (deployed via the `istio/gat
 | Ports | `80 → nodePort 30081` |
 | Resources | 50m / 128Mi CPU/memory request |
 
-Neither gateway pod carries the `workspace.io/ext-authz: enabled` label, so the corresponding EnvoyFilters do **not** patch them. The ext_authz check fires one hop later on the actual receiver workload's sidecar. The `pcs` namespace has **no** ingressgateway — `pcs` is reached only via cluster DNS from the protected workloads' EnvoyFilters.
+Neither gateway pod carries the `workspace.io/ext-authz: enabled` label, so the corresponding EnvoyFilters do **not** patch them. The ext_authz check fires one hop later on the actual receiver workload's sidecar. PCS itself (the `pcs` Pod in `documents` ns) is reached only via cluster DNS from the protected workloads' EnvoyFilters; it is not exposed via any gateway.
 
 ### 4.10 Gateway + VirtualService pairs
 
@@ -527,29 +530,29 @@ The `.tgz` files are downloaded once during initial repo setup (`helm pull --rep
 
 Idempotent — re-runs pick up where they left off. Steps grouped by owner:
 
-### Phase A — Platform-team actions
+### Phase A — Cluster bootstrap
 
 1. **Create kind cluster.** If `kind get clusters` already contains `ext-authz-demo`, reuse; else `kind create cluster --name ext-authz-demo --config kind-config.yaml`. Switch kubectl context to `kind-ext-authz-demo`.
 2. **Install Istio control plane from vendored charts.**
    - `helm upgrade --install istio-base kind/charts/base-1.24.2.tgz -n istio-system --create-namespace --wait`
    - `helm upgrade --install istiod kind/charts/istiod-1.24.2.tgz -n istio-system --wait`
-3. **Deploy PCS.** Apply `kind/manifests/platform/namespace-pcs.yaml`, then `pcs-deployment.yaml` and `pcs-service.yaml`. Wait for `Available`.
-
-### Phase B — Documents product-team actions (same namespace pattern)
-
-4. **Create the documents namespace.** Apply `kind/manifests/documents/namespace-documents.yaml`.
-5. **Install the per-namespace ingressgateway from the vendored chart.**
-   - `helm upgrade --install documents-ingressgateway kind/charts/gateway-1.24.2.tgz -n documents -f kind/manifests/documents/istio-gateway-values.yaml --skip-schema-validation --wait`
-6. **Build local images.** From the repo root:
+3. **Build local images.** From the repo root:
    - `(cd sample-apps/echo-server && docker build -t workspace/echo-server:dev -f deploy/Dockerfile .)`
    - `(cd sample-apps/pcs && docker build -t workspace/pcs:dev -f deploy/Dockerfile .)`
    - `(cd sample-apps/dashboard-client && docker build -t workspace/dashboard-client:dev -f deploy/Dockerfile .)`
-7. **Load images into kind.**
+4. **Load images into kind.**
    - `kind load docker-image workspace/echo-server:dev --name ext-authz-demo`
    - `kind load docker-image workspace/pcs:dev --name ext-authz-demo`
    - `kind load docker-image workspace/dashboard-client:dev --name ext-authz-demo`
+
+### Phase B — Documents product-team actions (main product + PCS, both same-namespace)
+
+5. **Create the documents namespace.** Apply `kind/manifests/documents/namespace-documents.yaml`.
+6. **Install the per-namespace ingressgateway from the vendored chart.**
+   - `helm upgrade --install documents-ingressgateway kind/charts/gateway-1.24.2.tgz -n documents -f kind/manifests/documents/istio-gateway-values.yaml --skip-schema-validation --wait`
+7. **Deploy `pcs`** (lives in `documents` ns — owned by the documents team). Apply `pcs-deployment.yaml` and `pcs-service.yaml`. Wait for `Available`.
 8. **Deploy `documents-api` + `documents-search`.** Apply their Deployments and Services in `documents` namespace. Wait for `Available`.
-9. **Apply `documents-ext-authz` EnvoyFilter.** In `documents` namespace.
+9. **Apply `documents-ext-authz` EnvoyFilter.** In `documents` namespace. Calls `pcs.documents.svc.cluster.local:8080`.
 10. **Apply Gateway + VirtualService.** In `documents` namespace.
 11. **Deploy `dashboard-client`.** In `documents` namespace.
 
@@ -558,7 +561,7 @@ Idempotent — re-runs pick up where they left off. Steps grouped by owner:
 12. **Create the wiki namespace.** Apply `kind/manifests/wiki/namespace-wiki.yaml`.
 13. **Install the per-namespace ingressgateway in `wiki` from the vendored chart.**
     - `helm upgrade --install wiki-ingressgateway kind/charts/gateway-1.24.2.tgz -n wiki -f kind/manifests/wiki/istio-gateway-values.yaml --skip-schema-validation --wait`
-14. **Apply the copied `wiki-ext-authz` EnvoyFilter.** In `wiki` namespace.
+14. **Apply the copied `wiki-ext-authz` EnvoyFilter.** In `wiki` namespace. Calls `pcs.documents.svc.cluster.local:8080` — cross-namespace into the documents team's PCS.
 15. **Deploy `wiki-api`.** Apply Deployment and Service in `wiki` namespace.
 16. **Apply Gateway + VirtualService for wiki.** Apply `wiki-gateway.yaml` and `wiki-virtualservice.yaml` in `wiki` namespace.
 17. **Print verification commands and `/etc/hosts` lines** (see §6).
@@ -596,13 +599,14 @@ curl -H "x-workspace-user-id: alice@workspace.test"   http://wiki.local:8081/hel
 curl -H "x-workspace-user-id: mallory@workspace.test" http://wiki.local:8081/hello       # 403
 ```
 
-**PCS sees all three workloads' decisions:**
+**PCS (in `documents` ns) sees all three workloads' decisions:**
 
 ```bash
-kubectl -n pcs logs deploy/pcs -c pcs -f
-# Expected (rolling, 3 allow + 3 deny per dashboard-client cycle):
-#   {"user":"alice@workspace.test","decision":"allow",...}    (x3 per cycle)
-#   {"user":"mallory@workspace.test","decision":"deny",...}   (x3 per cycle)
+kubectl -n documents logs deploy/pcs -c pcs -f
+# Expected (rolling, 3 allow + 3 deny per dashboard-client cycle —
+# one pair from documents-api, one pair from documents-search, one pair from wiki-api):
+#   {"user":"alice@workspace.test","decision":"allow",...}
+#   {"user":"mallory@workspace.test","decision":"deny",...}
 ```
 
 **EnvoyFilters are in app namespaces, NOT in `istio-system`:**
@@ -639,7 +643,7 @@ done
 **Envoy sidecars are present everywhere they should be:**
 
 ```bash
-for ns in documents wiki pcs; do
+for ns in documents wiki; do
   echo "=== $ns ==="
   kubectl -n $ns get pod -o jsonpath='{range .items[*]}{.metadata.name}{": "}{.spec.containers[*].name}{"\n"}{end}'
 done
@@ -649,14 +653,16 @@ done
 **Fail-closed proof:**
 
 ```bash
-kubectl -n pcs scale deploy/pcs --replicas=0
+kubectl -n documents scale deploy/pcs --replicas=0
 sleep 5
 kubectl -n documents logs deploy/dashboard-client --tail=20
-# Expected: every status code in the last 20 lines is 403 — across all three target workloads.
+# Expected: every status code in the last 20 lines is 403 — across all three target workloads,
+# including wiki-api (cross-ns call to documents' PCS fails when PCS is down).
 
 curl -H "x-workspace-user-id: alice@workspace.test" http://documents.local/hello   # 403
+curl -H "x-workspace-user-id: alice@workspace.test" http://wiki.local:8081/hello   # 403
 
-kubectl -n pcs scale deploy/pcs --replicas=1
+kubectl -n documents scale deploy/pcs --replicas=1
 # Wait for rollout; allow decisions return.
 ```
 
@@ -691,13 +697,11 @@ kubectl -n pcs scale deploy/pcs --replicas=1
     │   ├── istiod-1.24.2.tgz
     │   └── gateway-1.24.2.tgz
     └── manifests/
-        ├── platform/                            ← platform-team-owned
-        │   ├── namespace-pcs.yaml
-        │   ├── pcs-deployment.yaml
-        │   └── pcs-service.yaml
-        ├── documents/                           ← documents product-team-owned
+        ├── documents/                           ← documents product-team-owned (includes PCS)
         │   ├── namespace-documents.yaml
         │   ├── istio-gateway-values.yaml        (Helm values for documents-ingressgateway)
+        │   ├── pcs-deployment.yaml              ← PCS owned by documents team
+        │   ├── pcs-service.yaml                 ← PCS Service in documents ns
         │   ├── documents-api-deployment.yaml    (carries opt-in label)
         │   ├── documents-api-service.yaml
         │   ├── documents-search-deployment.yaml (carries opt-in label)
@@ -711,7 +715,7 @@ kubectl -n pcs scale deploy/pcs --replicas=1
             ├── istio-gateway-values.yaml        (Helm values for wiki-ingressgateway)
             ├── wiki-api-deployment.yaml         (carries opt-in label)
             ├── wiki-api-service.yaml
-            ├── wiki-ext-authz.yaml              ← copied EnvoyFilter (same shape, wiki ns)
+            ├── wiki-ext-authz.yaml              ← copied EnvoyFilter; calls pcs.documents.svc
             ├── wiki-gateway.yaml
             └── wiki-virtualservice.yaml
 ```
@@ -823,7 +827,7 @@ The Istio-recommended path. After Stage 2: add an `extensionProvider` entry in t
 1. **Opt-in label key.** The demo uses `workspace.io/ext-authz: enabled`. The same string appears in five places (three Deployment Pod templates, two EnvoyFilter `workloadSelector` blocks, plus verification commands). Align with the team's standard label vocabulary before implementation; the Stage 2 migration will reuse this label.
 2. **Demo cluster name.** Default `ext-authz-demo`. If another demo already uses that name on the machine, `setup.sh` reuses the existing cluster; `teardown.sh` removes it cleanly.
 3. **Hostnames for external curl.** Defaults `documents.local`, `wiki.local`. If either collides with anything in `/etc/hosts`, swap for less-common names. Note that `wiki.local` is reached on host port `8081` (not 80) because two distinct ingressgateways cannot share the same host port.
-4. **PCS namespace owner in production.** Is `pcs` namespace owned by the same platform team that would later own the `istio-system` EnvoyFilter in Stage 2? If different teams own `pcs` and `istio-system`, two approvals are needed for Stage 2.
+4. **PCS namespace ownership confirmed for the demo.** PCS lives in `documents` ns, owned by the documents (main product) team — not in a separate platform-owned namespace. Stage 2's `istio-system` EnvoyFilter would still call `pcs.documents.svc.cluster.local:8080`; PCS itself does not move.
 5. **Whether to also expose `documents-search` via its own Gateway/VirtualService.** Current spec keeps `documents-search` internal-only. It can be added with a third Gateway/VirtualService inside `documents` namespace if the demo audience wants to curl all three workloads from the host.
 
 ## 12. Success Criteria
@@ -837,10 +841,10 @@ The harness is considered successful when, on a fresh checkout of `~/ashwini-rep
    - `curl -H "x-workspace-user-id: alice@workspace.test" http://wiki.local:8081/hello` returns `200`.
    - `curl -H "x-workspace-user-id: mallory@workspace.test" http://wiki.local:8081/hello` returns `403`.
 3. `kubectl -n documents logs deploy/dashboard-client -f` shows the 6-call cycle from §3.3 with the expected status codes.
-4. `kubectl -n pcs logs deploy/pcs -c pcs -f` shows 3 allow + 3 deny decision lines per dashboard-client cycle.
+4. `kubectl -n documents logs deploy/pcs -c pcs -f` shows 3 allow + 3 deny decision lines per dashboard-client cycle.
 5. For each of `documents-api`, `documents-search`, `wiki-api`: `kubectl logs ... | grep -c mallory` returns `0`; the equivalent grep for `alice` returns a positive number.
 6. `kubectl get envoyfilter -A` shows exactly two EnvoyFilters — `documents-ext-authz` in `documents` namespace and `wiki-ext-authz` in `wiki` namespace. Nothing in `istio-system`.
-7. `kubectl -n pcs scale deploy/pcs --replicas=0` causes all calls (internal and external, all three workloads) to return `403`; restoring the replica brings allow decisions back.
+7. `kubectl -n documents scale deploy/pcs --replicas=0` causes all calls (internal and external, all three workloads — including the wiki-api cross-ns path) to return `403`; restoring the replica brings allow decisions back.
 8. `./kind/teardown.sh` removes the cluster cleanly.
 
 The harness deliberately does not target throughput, latency, or any production-grade SLO. It is a correctness and teaching harness for the Stage 1 per-namespace EnvoyFilter pattern, with all three onboarding cases (main product, sibling-in-same-ns, cross-namespace) exercised end-to-end.
