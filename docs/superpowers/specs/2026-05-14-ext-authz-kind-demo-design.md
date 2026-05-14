@@ -1,7 +1,7 @@
 # Ext-Authz Kind Demo — Minimal Harness Design
 
 > **Status:** Draft for review
-> **Audience:** Platform team members learning the Envoy `ext_authz` pattern; app teams onboarding to the Permission Checking Service via label-based opt-in.
+> **Audience:** Platform team members learning the Envoy `ext_authz` pattern; app teams onboarding to the Permission Checking Service.
 > **Owner:** Ashwini (platform)
 > **Related documents:**
 > - [`2026-05-13-workspace-kind-harness-design.md`](2026-05-13-workspace-kind-harness-design.md) — broader workspace platform kind harness (NATS-based; this demo is intentionally narrower and unrelated to that NATS flow).
@@ -12,103 +12,130 @@
 
 ## 1. Background and Motivation
 
-The Permission Validation Phase 1 design (sibling spec) describes a per-request authorization gate that sits in front of application services. App teams onboard their services to that gate, and the gate calls a central **Permission Checking Service (PCS)** for an allow/deny decision on every inbound request. Before that flow is wired into production app charts, the platform engineer (Ashwini) needs a local, single-file-to-run demo that proves the wiring end-to-end in a realistic deployment pattern.
+The Permission Validation Phase 1 design (sibling spec) describes a per-request authorization gate that sits in front of application services. App teams onboard their services to that gate, and the gate calls a central **Permission Checking Service (PCS)** for an allow/deny decision on every inbound request. Before that flow is wired into production app charts, the platform engineer (Ashwini) needs a local, single-file-to-run demo that proves the wiring end-to-end against the team's current production cluster conventions.
 
-The demo also serves as a teaching artifact for the **platform-vs-app-team ownership split** that this pattern depends on:
+The demo is split into two **stages** that match a realistic rollout:
 
-- The platform team owns one `EnvoyFilter` resource in the Istio root namespace (`istio-system`). That filter is mesh-wide-reachable; it lives in one place; it is configured once.
-- App teams opt in to the ext_authz check by adding a single label to their Deployment's Pod template. No app team writes or copies `EnvoyFilter` YAML. Teams that do not opt in are unaffected.
+- **Stage 1 (this demo's scope).** Each app namespace that wants the gate carries **its own copy** of the `EnvoyFilter` resource. The filter inside each namespace uses a `workloadSelector` keyed on an opt-in Pod label (`workspace.io/ext-authz: enabled`). This matches the team's existing pattern of per-namespace Istio filters such as the `gateway-connection-limit` EnvoyFilter in the `chat` namespace. **No writes to `istio-system` are required**, which is important because the product team may not have access to that namespace in production.
+- **Stage 2 (future, documented in §8).** After the platform team agrees to host a shared filter, the per-namespace `EnvoyFilter` copies collapse into one resource in `istio-system`. The opt-in label stays exactly the same. App teams' Deployment YAML does not change. The migration is YAML-only.
 
-The ECK Elasticsearch kind harness is the structural template — pulled-from-internet (or vendored) Istio charts, a single idempotent `setup.sh`, plain-YAML manifests, a clear verification path, and a per-namespace ingressgateway that mirrors the production cluster's ingress posture. This demo is deliberately narrower than the ECK harness (no Vault, no NATS, no Elasticsearch) but uses the same kind cluster shape so the demo "feels like" the production cluster.
+Both stages share the same PCS contract, the same per-namespace ingressgateway pattern, the same opt-in label, and the same `kind/setup.sh` skeleton. Stage 2 is a contained YAML migration, not a redesign.
+
+The Stage 1 demo exercises **three onboarding cases** end-to-end so the pattern is provable for every realistic team setup:
+
+1. **The product's own workload** — `documents-api` in the product's namespace, with the opt-in label.
+2. **A sister workload in the same namespace** — `documents-search` in the same `documents` namespace, also carrying the opt-in label. Same EnvoyFilter (in `documents` ns) matches it via the label, no copy needed within the namespace.
+3. **A workload in a different namespace** — `wiki-api` in `wiki` namespace. The wiki team **copies** the `documents-ext-authz` EnvoyFilter shape into their own namespace as `wiki-ext-authz`, with the same `workloadSelector` label, and `wiki-api` carries the opt-in label.
+
+These three cases are what Stage 2 would unify under a single `istio-system` EnvoyFilter. Demonstrating them in Stage 1 makes the upgrade story concrete.
+
+The ECK Elasticsearch kind harness is the structural template — vendored Istio charts, a single idempotent `setup.sh`, plain-YAML manifests, a clear verification path.
 
 ## 2. Goal and Non-Goals
 
-### 2.1 Goal
+### 2.1 Goal (Stage 1)
 
-Stand up a single-node `kind` cluster that demonstrates per-request authorization via Envoy's `ext_authz` HTTP filter, with the filter wired via **one mesh-wide `EnvoyFilter` in `istio-system` that targets a workload-selector label**. App teams opt in by adding that label to their Deployment. The cluster mirrors the production deployment posture: every app namespace has Istio sidecar injection enabled, and external traffic enters through a per-namespace ingressgateway.
+Stand up a single-node `kind` cluster that demonstrates per-request authorization via Envoy's `ext_authz` HTTP filter, with the filter wired via **per-namespace `EnvoyFilter` resources scoped by an opt-in label** (`workspace.io/ext-authz: enabled`). The cluster mirrors the production deployment posture: every namespace involved has Istio sidecar injection enabled, and external traffic enters through a per-namespace ingressgateway in the product namespace.
 
 Concretely the harness must produce these observable outcomes on a fresh checkout, in any order:
 
-1. `documents-api` runs in namespace `documents` with sidecar injection enabled and the opt-in label `workspace.io/ext-authz: enabled` on its Pod template. The injected Envoy sidecar carries an `ext_authz` HTTP filter (patched in via the mesh-wide `EnvoyFilter` in `istio-system`) that calls the PCS on every inbound request.
-2. `wiki-api` runs in namespace `wiki` with sidecar injection enabled but **no opt-in label**. The same `EnvoyFilter` does not match it; its sidecar is unpatched. Requests reach `wiki-api` without any authz check.
-3. `pcs` (the Permission Checking Service) runs in namespace `pcs` with sidecar injection enabled. It returns `200` for users in its allow-list, `403` otherwise.
-4. `dashboard-client` runs in namespace `dashboard` with sidecar injection enabled. A `curl` loop alternates calls between `documents-api` and `wiki-api`, alternating the `x-workspace-user-id` header between an allow-listed user (`alice@workspace.test`) and a not-allow-listed user (`mallory@workspace.test`).
-5. `dashboard-client`'s log shows: every call to `documents-api` is gated (`alice` returns `200`, `mallory` returns `403`); every call to `wiki-api` returns `200` regardless of which user header was sent.
-6. `documents-api`'s container log shows only `alice`'s requests; `mallory`'s never reach the app container.
-7. `wiki-api`'s container log shows **both** `alice`'s and `mallory`'s requests — no authz gate fires for the opted-out workload.
-8. Scaling `pcs` to zero causes all `documents-api`-bound traffic to receive `403` (fail-closed). `wiki-api` traffic is unaffected.
-9. The same allow/deny behaviour is observable from outside the cluster via the per-namespace ingressgateway in `documents` ns: `curl -H "x-workspace-user-id: alice@workspace.test" http://documents.local/hello` returns `200`; the same call with `mallory@workspace.test` returns `403`.
+1. `documents-api` runs in namespace `documents` with sidecar injection enabled and label `workspace.io/ext-authz: enabled` on its Pod template. The `documents-ext-authz` EnvoyFilter in the same `documents` namespace matches this label and patches the Pod's sidecar with the `ext_authz` filter.
+2. `documents-search` runs in the same `documents` namespace, also carrying `workspace.io/ext-authz: enabled`. The same `documents-ext-authz` EnvoyFilter (no second filter needed) patches it via the shared label.
+3. `wiki-api` runs in namespace `wiki` with sidecar injection enabled and the same opt-in label. A **copied** EnvoyFilter (`wiki-ext-authz`) in the `wiki` namespace matches this label and patches its sidecar. The copy is identical to `documents-ext-authz` except for `metadata.namespace` and `metadata.name`.
+4. `pcs` runs in namespace `pcs` with sidecar injection enabled and returns `200` for users in its allow-list, `403` otherwise.
+5. `dashboard-client` runs in the `documents` namespace and issues calls in a loop to all three protected workloads (`documents-api`, `documents-search`, `wiki-api`) with alternating `x-workspace-user-id` headers (`alice@workspace.test` and `mallory@workspace.test`). Its log shows the pattern of `200`s and `403`s.
+6. Each protected workload's app container sees **only `alice`'s traffic**; `mallory`'s requests never reach the app container — the deny decision is enforced in the workload's own Envoy sidecar.
+7. `pcs` logs show three allow + three deny decisions per dashboard-client iteration cycle.
+8. The same allow/deny behaviour is observable from outside the cluster via the per-namespace ingressgateway: `curl -H "x-workspace-user-id: alice@workspace.test" http://documents.local/hello` returns `200`; the same call with `mallory@workspace.test` returns `403`.
+9. Scaling `pcs` to zero causes all gated traffic to receive `403` (fail-closed); restoring the replica brings allow decisions back.
+10. `kubectl get envoyfilter -A` shows exactly **two** EnvoyFilters — `documents-ext-authz` in `documents` namespace and `wiki-ext-authz` in `wiki` namespace. **Nothing in `istio-system`** (proving the Stage 1 no-istio-system-writes property).
 
-### 2.2 Non-Goals
+### 2.2 Non-Goals (Stage 1)
 
-| Capability | Status | Reason for deferral |
+| Capability | Status | Reason |
 |---|---|---|
-| Mesh-level `extensionProvider` + `AuthorizationPolicy` (action: CUSTOM) wiring | Out | Demo is scoped to the `EnvoyFilter`-only approach. The mesh-level provider pattern is documented in §9 as a future enhancement. |
-| HTTPS / TLS termination on the ingressgateway | Out | Plain HTTP keeps the curl-from-host verification simple. TLS is a small follow-up if needed (see §9.5). |
-| Real auth tokens (JWT, OIDC) | Out | Header-based allow/deny is sufficient to demonstrate the ext_authz decision flow. |
+| Mesh-wide `EnvoyFilter` in `istio-system` with label opt-in | **Out — moved to Stage 2 (§8)** | Requires platform-team approval and `istio-system` write access. Documented as the target evolution but not implemented in this demo. |
+| `extensionProvider` + `AuthorizationPolicy` (action: CUSTOM) wiring | Out | Documented as a future migration (§10.7). |
+| HTTPS / TLS termination on the ingressgateway | Out | Plain HTTP keeps the curl-from-host verification simple. TLS is a small follow-up (§10.5). |
+| Real auth tokens (JWT, OIDC) | Out | Header-based allow/deny is sufficient. |
 | Dynamic policy registry / database for `pcs` | Out | A hard-coded in-process allow-list of usernames is sufficient. |
-| Cluster-level baseline `AuthorizationPolicy` resources (`allow-ip`, `allow-metrics`, `allow-specific-namespace`) | Out | Orthogonal concern — those operate at Istio L4/L7 mesh layer, not at the ext_authz call. Adding them now dilutes the headline claim. |
-| Performance / latency / load testing | Out | This is a correctness harness, not a benchmark. |
-| Explicit mTLS verification | Out | All app namespaces are injected, so mesh-mTLS happens by default. The demo does not separately assert this. |
-| Vendored `.tgz` Istio charts | Out (default) | `setup.sh` pulls Istio charts from the public Helm repo. Vendoring is an easy follow-up if offline operation is required (see §9). |
+| Cluster-level baseline `AuthorizationPolicy` resources | Out | Orthogonal concern; would dilute the headline claim. |
+| Performance / latency / load testing | Out | Correctness harness, not a benchmark. |
+| Explicit mTLS verification | Out | All namespaces are injected, so mesh-mTLS happens by default; not separately asserted. |
 | Multi-cluster / cross-cluster federation | Out | Single kind cluster only. |
-| Helm chart for the demo workloads | Out | Four Deployments, one EnvoyFilter, one Gateway/VirtualService pair — not enough variation to justify templating. Plain YAML stays. |
-| Mutating admission webhook for label auto-injection | Out | Apps add the opt-in label explicitly in their Deployment YAML. Auto-injection is a Phase 2 ergonomics improvement (see §9.6). |
+| Helm chart for the demo workloads | Out | Few resources, plain YAML stays. |
+| Mutating admission webhook for label auto-injection | Out | Post-Stage-2; tracked under §10.6. |
+| Explicit opt-out negative example | Out | Opt-out is implicit (a Pod without the label is unpatched). A dedicated opted-out workload would add a namespace and a Deployment that the headline claims do not depend on. Cross-namespace copy pattern (case 3 above) is enough for readers to see the boundary. |
 
 ## 3. Architecture
 
 ### 3.1 Cluster Layout
 
-A single-node `kind` cluster with `extraPortMappings` exposing the per-namespace ingressgateway on host ports 80/443. Five namespaces:
+A single-node `kind` cluster with `extraPortMappings` exposing the per-namespace ingressgateway on host ports 80/443. Three app-relevant namespaces (`documents`, `wiki`, `pcs`) plus the standard `istio-system`:
 
 ```text
-                         ┌────────────────────────────────────────────────────────┐
-                         │                kind cluster (single node)              │
-   curl from host ──80───┤                                                        │
-                         │  ns: istio-system            (Istio control plane)     │
-                         │    istio-base                                          │
-                         │    istiod                                              │
-                         │    EnvoyFilter "ext-authz-pcs"                         │
-                         │      workloadSelector: workspace.io/ext-authz=enabled  │
-                         │      → patches every matching sidecar in the cluster   │
-                         │                                                        │
-                         │  ns: pcs                     (injection: enabled)      │
-                         │    pcs Pod                                             │
-                         │      ├─ pcs (Go decision server)                       │
-                         │      └─ istio-proxy (sidecar)                          │
-                         │    Service "pcs" (ClusterIP, port 8080)                │
-                         │                                                        │
-                         │  ns: documents               (injection: enabled)      │
-                         │    documents-ingressgateway Pod                        │
-                         │      └─ istio-proxy (NodePort 30080 → host 80)         │
-                         │    documents-api Pod                                   │
-                         │      labels: { workspace.io/ext-authz: enabled }       │
-                         │      ├─ documents-api (Go echo server)                 │
-                         │      └─ istio-proxy (sidecar) ← patched by EnvoyFilter │
-                         │    Gateway "documents-gateway" (host: documents.local) │
-                         │    VirtualService "documents-vs"                       │
-                         │    Service "documents-api" (ClusterIP, port 8080)      │
-                         │                                                        │
-                         │  ns: wiki                    (injection: enabled)      │
-                         │    wiki-api Pod                                        │
-                         │      (NO opt-in label)                                 │
-                         │      ├─ wiki-api (same Go echo server image)           │
-                         │      └─ istio-proxy (sidecar) ← UNPATCHED              │
-                         │    Service "wiki-api" (ClusterIP, port 8080)           │
-                         │                                                        │
-                         │  ns: dashboard               (injection: enabled)      │
-                         │    dashboard-client Pod                                │
-                         │      ├─ dashboard-client (Go HTTP loop)                │
-                         │      └─ istio-proxy (sidecar)                          │
-                         └────────────────────────────────────────────────────────┘
+                       ┌──────────────────────────────────────────────────────────┐
+                       │                kind cluster (single node)                │
+   curl from host ─80──┤                                                          │
+                       │  ns: istio-system            (Istio control plane)       │
+                       │    istio-base                                            │
+                       │    istiod                                                │
+                       │    (NO EnvoyFilter — Stage 1 does not write here)        │
+                       │                                                          │
+                       │  ns: pcs                     (injection: enabled)        │
+                       │    pcs Pod                                               │
+                       │      ├─ pcs (Go decision server)                         │
+                       │      └─ istio-proxy (sidecar)                            │
+                       │    Service "pcs"                                         │
+                       │                                                          │
+                       │  ns: documents               (injection: enabled)        │
+                       │    documents-ingressgateway Pod                          │
+                       │      └─ istio-proxy (NodePort 30080 → host 80)           │
+                       │                                                          │
+                       │    documents-api Pod   labels: {workspace.io/ext-authz=  │
+                       │                                  enabled, app=docs-api}  │
+                       │      ├─ documents-api (Go echo server)                   │
+                       │      └─ istio-proxy ← patched by documents-ext-authz     │
+                       │                                                          │
+                       │    documents-search Pod   labels: {workspace.io/ext-     │
+                       │                                  authz=enabled, app=docs-search}│
+                       │      ├─ documents-search (same Go echo server image)     │
+                       │      └─ istio-proxy ← patched by documents-ext-authz     │
+                       │                                                          │
+                       │    dashboard-client Pod  (no opt-in label — caller only) │
+                       │      ├─ dashboard-client (Go HTTP loop)                  │
+                       │      └─ istio-proxy (sidecar)                            │
+                       │                                                          │
+                       │    EnvoyFilter "documents-ext-authz"                     │
+                       │      workloadSelector: { workspace.io/ext-authz: enabled}│
+                       │      → matches both docs-api and docs-search             │
+                       │                                                          │
+                       │    Gateway "documents-gateway" (host: documents.local)   │
+                       │    VirtualService "documents-vs"                         │
+                       │    Service "documents-api", "documents-search"           │
+                       │                                                          │
+                       │  ns: wiki                    (injection: enabled)        │
+                       │    wiki-api Pod   labels: {workspace.io/ext-authz=       │
+                       │                            enabled, app=wiki-api}        │
+                       │      ├─ wiki-api (same Go echo server image)             │
+                       │      └─ istio-proxy ← patched by wiki-ext-authz          │
+                       │    Service "wiki-api"                                    │
+                       │                                                          │
+                       │    EnvoyFilter "wiki-ext-authz"                          │
+                       │      workloadSelector: { workspace.io/ext-authz: enabled}│
+                       │      → matches wiki-api                                  │
+                       │      (identical config to documents-ext-authz except     │
+                       │       for metadata.namespace and metadata.name —         │
+                       │       this is the Stage 1 cross-namespace copy)          │
+                       └──────────────────────────────────────────────────────────┘
 ```
 
 **Host port mappings** (`extraPortMappings` in `kind-config.yaml`):
 
 | Host port | Container port | Purpose |
 |---|---|---|
-| 80 | 30080 | Plain HTTP to `documents-ingressgateway` (curl path) |
-| 443 | 30443 | HTTPS reserved for future TLS upgrade (see §9.5) |
+| 80 | 30080 | Plain HTTP to `documents-ingressgateway` |
+| 443 | 30443 | HTTPS reserved for future TLS upgrade (see §10.5) |
 
 **Required `/etc/hosts` addition** (printed at the end of `setup.sh`):
 
@@ -116,220 +143,175 @@ A single-node `kind` cluster with `extraPortMappings` exposing the per-namespace
 127.0.0.1  documents.local
 ```
 
-### 3.2 Ownership Split
-
-The harness preserves the production ownership split inside `setup.sh`. One operator runs the script, but the resources are grouped by which team would own each one in production:
+### 3.2 Ownership Split (Stage 1)
 
 | Resource | Lives in | Production owner |
 |---|---|---|
-| `EnvoyFilter ext-authz-pcs` | `istio-system` | **Platform team** — only platform has write access to `istio-system` in production. |
-| `pcs` Deployment + Service | `pcs` namespace | **Platform team** — PCS is shared infrastructure across all app teams. |
-| `documents-api` Deployment + Service + opt-in label + Gateway + VirtualService | `documents` namespace | **Documents team** — owns its workload, its ingress, and the choice to opt in. |
-| `documents-ingressgateway` (Istio gateway chart) | `documents` namespace | Documents team (or platform, depending on org). |
-| `wiki-api` Deployment + Service (no opt-in label) | `wiki` namespace | **Wiki team** — chose not to opt in; no other change required. |
-| `dashboard-client` Deployment | `dashboard` namespace | Dashboard team — represents any upstream caller. |
+| `pcs` Deployment + Service + `pcs` namespace | `pcs` | **Platform team** — PCS is shared infrastructure. |
+| `documents-api`, `documents-search`, `dashboard-client`, `documents-ingressgateway`, `documents-gateway`, `documents-vs`, `documents-ext-authz` EnvoyFilter, all Services in `documents` ns | `documents` | **Documents product team** — owns everything in their own namespace, including the EnvoyFilter that wires ext_authz into their workloads. |
+| `wiki-api`, `wiki-ext-authz` EnvoyFilter, `wiki-api` Service | `wiki` | **Wiki team** — copied the EnvoyFilter shape from the documents team's example. |
 
-`setup.sh` applies all of the above for demo convenience, but the manifests are organised in `kind/manifests/` so the platform-team subset and the per-app-team subsets are visually distinct (see §7).
+The product team does **not** write into `istio-system`. The wiki team does **not** write into `documents` or `istio-system`. Each team owns their own namespace end-to-end.
+
+`setup.sh` applies all of the above for demo convenience, but the manifests are organised by owner (see §7) so the boundary is visible.
 
 ### 3.3 Request Flow
 
-Two entry paths reach `documents-api`'s sidecar; both go through the same `ext_authz` filter that the platform-team `EnvoyFilter` patched in:
-
-**Internal path (in-cluster):**
+`dashboard-client` exercises three protected workloads in a loop. Each gated path goes through the same shape:
 
 ```text
-┌──────────────────┐  HTTP GET /hello                    ┌────────────────────────┐
-│ dashboard-client │ ── x-workspace-user-id: alice@... ─►│ documents-api sidecar  │
-│  (curl loop)     │   via cluster DNS                   │ SIDECAR_INBOUND filter │
-└──────────────────┘   documents-api.documents.svc:8080  │ → ext_authz fires      │
-                                                         └─────────┬──────────────┘
-                                                                   │ ext_authz HTTP
-                                                                   ▼ POST /check
-                                                         ┌────────────────────────┐
-                                                         │ pcs service            │
-                                                         │   alice → 200          │
-                                                         │   mallory → 403        │
-                                                         └─────────┬──────────────┘
-                                                                   ▼
-                                                         ┌────────────────────────┐
-                                                         │ documents-api sidecar  │
-                                                         │   200 → forward        │
-                                                         │   403 → reply 403      │
-                                                         └─────────┬──────────────┘
-                                                                   │ (allow case)
-                                                                   ▼
-                                                         ┌────────────────────────┐
-                                                         │ documents-api container│
-                                                         │  returns "hello"       │
-                                                         └────────────────────────┘
+┌──────────────────┐  HTTP GET /hello                       ┌────────────────────────┐
+│ dashboard-client │ ── x-workspace-user-id: alice@... ────►│  Workload's Envoy      │
+│  (caller, in     │                                        │  sidecar — SIDECAR_    │
+│   documents ns)  │                                        │  INBOUND ext_authz     │
+└──────────────────┘                                        └─────────┬──────────────┘
+                                                                      │ ext_authz HTTP
+                                                                      ▼ POST /check
+                                                            ┌────────────────────────┐
+                                                            │ pcs.pcs.svc:8080       │
+                                                            │   alice → 200          │
+                                                            │   mallory → 403        │
+                                                            └─────────┬──────────────┘
+                                                                      ▼
+                                                            ┌────────────────────────┐
+                                                            │ Workload's Envoy:      │
+                                                            │   200 → forward        │
+                                                            │   403 → reply 403      │
+                                                            └─────────┬──────────────┘
+                                                                      │ (allow case)
+                                                                      ▼
+                                                            ┌────────────────────────┐
+                                                            │ Workload's app cont.   │
+                                                            │  returns "hello from   │
+                                                            │  $POD_NAME"            │
+                                                            └────────────────────────┘
 ```
 
-**External path (from host):**
+Per dashboard-client iteration:
 
-```text
-┌────────────┐  HTTP GET /hello                ┌──────────────────────────┐
-│ host curl  │ ── x-workspace-user-id: alice ─►│ documents-ingressgateway │
-│documents.  │  via host:80 → NodePort 30080   │ (Envoy on gateway pod)   │
-│local       │                                 └─────────┬────────────────┘
-└────────────┘                                           │ Gateway → VirtualService
-                                                         │ routes to documents-api Svc
-                                                         ▼
-                                            ┌────────────────────────┐
-                                            │ documents-api sidecar  │
-                                            │ (same SIDECAR_INBOUND  │
-                                            │  filter — ext_authz)   │
-                                            └─────────┬──────────────┘
-                                                      │ (continues identically
-                                                      │  to the internal path)
-                                                      ▼
-                                                  pcs decision, then forward/reject
-```
+| Step | Target | Header | Expected status |
+|---|---|---|---|
+| 1 | `documents-api.documents.svc.cluster.local:8080/hello` | `alice@workspace.test` | `200` |
+| 2 | `documents-api.documents.svc.cluster.local:8080/hello` | `mallory@workspace.test` | `403` |
+| 3 | `documents-search.documents.svc.cluster.local:8080/hello` | `alice@workspace.test` | `200` |
+| 4 | `documents-search.documents.svc.cluster.local:8080/hello` | `mallory@workspace.test` | `403` |
+| 5 | `wiki-api.wiki.svc.cluster.local:8080/hello` | `alice@workspace.test` | `200` |
+| 6 | `wiki-api.wiki.svc.cluster.local:8080/hello` | `mallory@workspace.test` | `403` |
 
-**Opt-out path (wiki-api):**
+A 2-second sleep separates each call, giving a 12-second cycle.
 
-```text
-┌──────────────────┐  HTTP GET /hello                    ┌────────────────────────┐
-│ dashboard-client │ ── x-workspace-user-id: anyone ────►│ wiki-api sidecar       │
-│  (curl loop)     │                                     │ SIDECAR_INBOUND filter │
-└──────────────────┘                                     │ ← UNPATCHED            │
-                                                         │ (EnvoyFilter selector  │
-                                                         │  did not match this pod│
-                                                         │  — no opt-in label)    │
-                                                         └─────────┬──────────────┘
-                                                                   │
-                                                                   ▼
-                                                         ┌────────────────────────┐
-                                                         │ wiki-api container     │
-                                                         │  returns "hello"       │
-                                                         └────────────────────────┘
-```
+The **external path** is identical for `documents-api` (gateway-terminated traffic arrives at `documents-api`'s sidecar where the same ext_authz filter fires); `documents-search` and `wiki-api` are not exposed externally in this demo (they could be by adding their own `Gateway`/`VirtualService`, but it is not required to prove the headline claim).
 
-The headline observable property holds along both gated paths: the **deny decision is enforced at the `documents-api` Envoy sidecar layer**, not by any application code. The `documents-api` container only sees requests for `alice`. The `wiki-api` container is unaffected — the same request payload reaches it with no authz check, because it never opted in.
+### 3.4 ext_authz Wiring: per-namespace EnvoyFilter with label opt-in (Stage 1)
 
-### 3.4 ext_authz Wiring: Mesh-wide EnvoyFilter with Label Opt-in
+Each namespace that hosts opt-in workloads carries its own `EnvoyFilter` resource. The filter's `workloadSelector` targets the same label (`workspace.io/ext-authz: enabled`) — but because the filter lives in a non-root namespace, the match is restricted to Pods in that same namespace. Adding a new opt-in workload to a namespace that already has its EnvoyFilter is a one-line change (add the label); onboarding a new namespace requires copying the EnvoyFilter into it.
 
-The ext_authz HTTP filter is added to every opted-in workload's sidecar by **one** `EnvoyFilter` resource in `istio-system`. The resource's `workloadSelector` matches a single label, `workspace.io/ext-authz: enabled`. Any Pod across any namespace that carries that label gets the filter patched into its sidecar; everything else is untouched.
+Key configuration decisions, common to both `documents-ext-authz` and `wiki-ext-authz`:
 
-Key configuration decisions:
+- **Resource lives in the team's own namespace** — never in `istio-system` for Stage 1. Cross-namespace reach is achieved by copying the file, not by relying on root-namespace mechanics.
+- **`workloadSelector.labels: { workspace.io/ext-authz: enabled }`** — opt-in marker. Workloads inside the namespace either carry the label and get gated, or don't and are unaffected. The same label name is used across all namespaces for consistency with Stage 2.
+- **`context: SIDECAR_INBOUND`** — the filter intercepts traffic entering each matched Pod, not outbound traffic.
+- **`applyTo: HTTP_FILTER` + `operation: INSERT_BEFORE`** — the ext_authz filter is inserted into the HTTP filter chain ahead of the router filter.
+- **`http_service` (not gRPC)** — Envoy talks to `pcs` via plain HTTP `POST /check`. Both EnvoyFilter copies point at the same FQDN `pcs.pcs.svc.cluster.local:8080`; the FQDN resolves identically from any namespace.
+- **`allowed_headers`** — forwards `x-workspace-user-id` and `authorization` to `pcs`.
+- **`failure_mode_allow: false`** — fail-closed.
 
-- **Resource lives in `istio-system`** — Istio's "root namespace." Only an EnvoyFilter in the root namespace has cross-namespace reach. An EnvoyFilter in any other namespace would match only Pods inside that same namespace, defeating the central-config / opt-in pattern.
-- **`workloadSelector.labels: { workspace.io/ext-authz: enabled }`** — the opt-in marker. App teams add this label to their Deployment's Pod template to receive the filter. No label → no filter.
-- **`context: SIDECAR_INBOUND`** — the filter intercepts traffic entering each matched Pod, not traffic the Pod makes outbound.
-- **`applyTo: HTTP_FILTER` + `operation: INSERT_BEFORE`** — the ext_authz filter is inserted into the HTTP filter chain ahead of the router filter. (Inserting after the router has no effect because the router has already dispatched the request to the upstream.)
-- **`http_service` (not gRPC)** — Envoy talks to `pcs` via plain HTTP `POST /check`. Simpler to debug than the gRPC `CheckRequest` protocol and sufficient for the demo.
-- **`allowed_headers`** — Envoy is told explicitly which inbound headers to forward to `pcs`. The demo forwards `x-workspace-user-id` and `authorization`. Without an allow-list, Envoy forwards none.
-- **`failure_mode_allow: false`** — if `pcs` is unreachable or returns a 5xx, Envoy fails the request (returns 403 to the client). Production-correct default; lets the demo verify fail-closed behavior by scaling `pcs` to zero.
-
-The complete `EnvoyFilter` resource is in §4.4.
-
-**Why pure EnvoyFilter, not mesh-level `extensionProvider`:** the demo is intentionally scoped to the `EnvoyFilter` path. `EnvoyFilter` is verbose but does the job in a single declarative file. The `extensionProvider` + `AuthorizationPolicy (action: CUSTOM)` pattern is the production-recommended migration target and is documented in §9.1 as a future enhancement.
+The complete EnvoyFilter resources are in §4.6 (documents) and §4.7 (wiki). They are byte-for-byte identical except for `metadata.namespace` and `metadata.name`.
 
 ### 3.5 All-namespace Istio Injection
 
-All four app namespaces (`pcs`, `documents`, `wiki`, `dashboard`) carry the `istio-injection: enabled` label. This mirrors the production cluster's posture (every namespace defaults to sidecar-injected) and avoids the artificial split where some namespaces speak mesh-mTLS and others do not.
+All three app-relevant namespaces (`documents`, `wiki`, `pcs`) carry the `istio-injection: enabled` label. This mirrors the production cluster's posture (every namespace defaults to sidecar-injected). Concrete consequences:
 
-Concrete consequences:
-
-- Traffic between any two pods is **mesh-mTLS** by default (Istio's `PERMISSIVE` mTLS mode handles bootstrap). The demo does not separately assert this; it falls out for free.
-- The `ext_authz` check happens **on the receiver side** (`documents-api`'s sidecar) regardless of whether the caller is sidecar-injected. Even with `dashboard-client`'s sidecar in the picture, the authorization input remains the `x-workspace-user-id` header, not Istio's per-workload identity. The demo's authorization decision is intentionally identity-blind at the mesh layer — that responsibility lives in `pcs`.
-- The `pcs` pod has a sidecar too. Outbound calls from `documents-api`'s ext_authz filter to `pcs.pcs.svc.cluster.local:8080` are mesh-managed (mTLS, retries via Envoy defaults). This is the production-realistic shape.
-- The `wiki-api` pod has a sidecar too — but no opt-in label, so the sidecar is unpatched. This is the key teaching point of §3.4.
-
-### 3.6 Opt-in via Pod-template label
-
-App teams onboard to the ext_authz gate by adding one label to their Deployment's `.spec.template.metadata.labels`:
-
-```yaml
-spec:
-  template:
-    metadata:
-      labels:
-        app: documents-api
-        workspace.io/ext-authz: enabled    # ← single line is the entire onboarding step
-```
-
-The label lives on the **Pod template**, not on the Deployment's outer `metadata.labels`. This is the field that controls Pod labels at creation time; `workloadSelector` in Istio matches Pod labels, not Deployment labels.
-
-Apps that do not want the gate (e.g. `wiki-api` in this demo, or any internal-only service in production) simply omit the label. There is no opt-out flag and no separate "exclude" list — the absence of the label is the opt-out.
+- Traffic between any two pods is mesh-mTLS (Istio `PERMISSIVE` mode). Falls out for free; not separately asserted.
+- The `ext_authz` check happens **on the receiver side** regardless of the caller's identity. The decision input is the `x-workspace-user-id` header.
+- The `pcs` Pod has a sidecar; outbound calls from the protected workloads' ext_authz filters to `pcs.pcs.svc.cluster.local:8080` are mesh-managed.
 
 ## 4. Component Specifications
 
-### 4.1 `dashboard-client` — request driver
+### 4.1 `dashboard-client` — request driver (caller, no opt-in)
 
 | Field | Value |
 |---|---|
 | Path on disk | `sample-apps/dashboard-client/` |
 | Language | Go 1.25 |
 | Files | `main.go`, `go.mod`, `deploy/Dockerfile` |
-| Image | `workspace/dashboard-client:dev` (locally built; loaded via `kind load docker-image`) |
-| Listen port | None (pod is a client, not a server) |
-| Behaviour | A `for` loop that issues, in sequence per iteration: <br>1. `GET http://documents-api.documents.svc.cluster.local:8080/hello` with header `x-workspace-user-id: alice@workspace.test` <br>2. Same URL with `x-workspace-user-id: mallory@workspace.test` <br>3. `GET http://wiki-api.wiki.svc.cluster.local:8080/hello` with `x-workspace-user-id: alice@workspace.test` <br>4. Same URL with `x-workspace-user-id: mallory@workspace.test` <br>Sleeps 3s between calls. Each call logs (`log/slog` JSON) the target URL, the header value, and the response HTTP status code. |
-| Sidecar | Envoy (auto-injected; `dashboard` namespace has `istio-injection: enabled`) |
-| Opt-in label | **Not set** — `dashboard-client` is a caller, never a receiver of authz-gated traffic. |
+| Image | `workspace/dashboard-client:dev` |
+| Listen port | None (client) |
+| Behaviour | A `for` loop iterating over the 6 calls in §3.3 with 2-second sleeps; each call logs target URL + header + HTTP status via `log/slog` JSON. |
+| Namespace | `documents` |
+| Sidecar | Envoy (auto-injected) |
+| Opt-in label | **Not set** — caller, not a receiver. |
 | Pod container name | `dashboard-client` |
-| Estimated LOC | ~50 (single `main.go` using `net/http`) |
+| Estimated LOC | ~60 |
 
-### 4.2 `documents-api` — protected echo HTTP server
+### 4.2 `documents-api` — main product workload (opted in)
 
 | Field | Value |
 |---|---|
-| Path on disk | `sample-apps/echo-server/` (shared with `wiki-api` — same image, different Deployment) |
+| Path on disk | `sample-apps/echo-server/` (shared image — see §4.4) |
+| Image | `workspace/echo-server:dev` |
+| Listen port | 8080 |
+| Endpoints | `GET /hello` → `200 "hello from $POD_NAME"` |
+| Logging | `log/slog` JSON; one line per request including `x-workspace-user-id` header |
+| Namespace | `documents` |
+| Sidecar | Envoy (auto-injected); patched by `documents-ext-authz` |
+| Pod labels | `app: documents-api`, **`workspace.io/ext-authz: enabled`** |
+| Pod container name | `documents-api` |
+| `POD_NAME` env | Set from the downward API `metadata.name` so the response identifies the pod |
+
+### 4.3 `documents-search` — sibling workload in same namespace (opted in)
+
+| Field | Value |
+|---|---|
+| Image | `workspace/echo-server:dev` (same image as `documents-api`) |
+| Listen port | 8080 |
+| Endpoints | `GET /hello` → `200 "hello from $POD_NAME"` |
+| Namespace | `documents` |
+| Sidecar | Envoy (auto-injected); patched by `documents-ext-authz` via the shared label |
+| Pod labels | `app: documents-search`, **`workspace.io/ext-authz: enabled`** |
+| Pod container name | `documents-search` |
+
+`documents-search` demonstrates that adding a second opted-in workload **inside the same namespace** requires only the opt-in label on the new Deployment — no new EnvoyFilter is needed.
+
+### 4.4 `echo-server` (shared image for `documents-api`, `documents-search`, `wiki-api`)
+
+| Field | Value |
+|---|---|
+| Path on disk | `sample-apps/echo-server/` |
 | Language | Go 1.25 |
 | Files | `main.go`, `go.mod`, `deploy/Dockerfile` |
-| Image | `workspace/echo-server:dev` (locally built; loaded via `kind load docker-image`) |
-| Listen port | 8080 |
-| Endpoints | `GET /hello` → `200 "hello from $POD_NAME"` (uses the `POD_NAME` env var so the response identifies which workload responded) |
-| Logging | `log/slog` JSON; one line per request including `x-workspace-user-id` header |
-| Sidecar | Envoy (auto-injected; `documents` namespace has `istio-injection: enabled`) |
-| Opt-in label | **`workspace.io/ext-authz: enabled`** on the Pod template — the entire onboarding step. |
-| Pod container name | `documents-api` (referenced explicitly by verification commands; set in `documents-api-deployment.yaml` `containers[0].name`) |
+| Image | `workspace/echo-server:dev` |
+| Source code | Single Gin handler `GET /hello` → `200 "hello from $POD_NAME"`. Reads `POD_NAME` from env at startup. |
 | Estimated LOC | ~30 |
 
-The Go binary is intentionally minimal — a single Gin handler. `documents-api` has no knowledge of `ext_authz` and no awareness that some incoming requests are being denied upstream by its own sidecar.
+One binary, three Deployments (`documents-api`, `documents-search`, `wiki-api`). Each Deployment names its container after itself; `POD_NAME` is set per Pod via the downward API.
 
-### 4.3 `wiki-api` — opt-out negative example
+### 4.5 `wiki-api` — workload in a different namespace (opted in)
 
 | Field | Value |
 |---|---|
-| Path on disk | Reuses the `sample-apps/echo-server/` image. |
-| Image | `workspace/echo-server:dev` (same image as `documents-api`) |
-| Sidecar | Envoy (auto-injected; `wiki` namespace has `istio-injection: enabled`) |
-| Opt-in label | **Not set** — `wiki-api` deliberately stays opted out. Its sidecar receives no ext_authz patch from the mesh-wide EnvoyFilter. |
+| Image | `workspace/echo-server:dev` (same image as documents-*) |
+| Listen port | 8080 |
+| Endpoints | `GET /hello` → `200 "hello from $POD_NAME"` |
+| Namespace | `wiki` |
+| Sidecar | Envoy (auto-injected); patched by `wiki-ext-authz` (the copied EnvoyFilter in `wiki` namespace) |
+| Pod labels | `app: wiki-api`, **`workspace.io/ext-authz: enabled`** |
 | Pod container name | `wiki-api` |
 
-`wiki-api` exists solely to prove that opt-in is truly opt-in: the same `EnvoyFilter` that gates `documents-api` does not touch `wiki-api`, because the latter does not carry the trigger label. This makes the boundary of the design self-evident in `kubectl` output rather than buried in documentation.
+`wiki-api` demonstrates the Stage 1 cross-namespace pattern: a team in a separate namespace copies the EnvoyFilter shape into their own namespace and applies the opt-in label to their workload.
 
-### 4.4 `pcs` — Permission Checking Service
-
-| Field | Value |
-|---|---|
-| Path on disk | `sample-apps/pcs/` |
-| Language | Go 1.25 |
-| Files | `main.go`, `go.mod`, `deploy/Dockerfile` |
-| Image | `workspace/pcs:dev` (locally built; loaded via `kind load docker-image`) |
-| Listen port | 8080 |
-| Endpoints | `POST /check` |
-| Decision policy | Hard-coded allow-list `{"alice@workspace.test", "bob@workspace.test"}`. If the request's `x-workspace-user-id` header value is in the list → `200 OK`. Otherwise → `403 Forbidden`. If header is missing → `403`. |
-| Logging | `log/slog` JSON; one line per decision (`{"user":"...","decision":"allow|deny","ts":"..."}`) |
-| Sidecar | Envoy (auto-injected; `pcs` namespace has `istio-injection: enabled`) |
-| Estimated LOC | ~40 |
-
-Response body is intentionally empty — `ext_authz` looks only at the HTTP status code by default. Envoy maps `200..299` → allow; everything else → deny.
-
-### 4.5 EnvoyFilter (mesh-wide, in `istio-system`)
-
-The full resource, applied to the Istio root namespace:
+### 4.6 EnvoyFilter `documents-ext-authz` (in `documents` namespace)
 
 ```yaml
 apiVersion: networking.istio.io/v1alpha3
 kind: EnvoyFilter
 metadata:
-  name: ext-authz-pcs
-  namespace: istio-system                    # ← root namespace = cross-namespace reach
+  name: documents-ext-authz
+  namespace: documents                              # ← product team's own namespace
 spec:
   workloadSelector:
     labels:
-      workspace.io/ext-authz: enabled        # ← opt-in marker for every onboarded workload
+      workspace.io/ext-authz: enabled               # ← opt-in label for documents ns
   configPatches:
   - applyTo: HTTP_FILTER
     match:
@@ -359,24 +341,86 @@ spec:
           failure_mode_allow: false
 ```
 
-### 4.6 Per-namespace Ingressgateway (`documents-ingressgateway`)
+Matches both `documents-api` and `documents-search` Pods via the shared `workspace.io/ext-authz: enabled` label.
 
-A dedicated Istio ingressgateway pod lives in the `documents` namespace, deployed via the upstream `istio/gateway` Helm chart (version `1.24.2`). This mirrors the production cluster's pattern of per-team / per-namespace ingress gateways rather than a single shared `istio-ingressgateway` in `istio-system`.
+### 4.7 EnvoyFilter `wiki-ext-authz` (in `wiki` namespace — the cross-namespace copy)
+
+```yaml
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: wiki-ext-authz
+  namespace: wiki                                   # ← wiki team's own namespace
+spec:
+  workloadSelector:
+    labels:
+      workspace.io/ext-authz: enabled
+  configPatches:
+  - applyTo: HTTP_FILTER
+    match:
+      context: SIDECAR_INBOUND
+      listener:
+        filterChain:
+          filter:
+            name: envoy.filters.network.http_connection_manager
+    patch:
+      operation: INSERT_BEFORE
+      value:
+        name: envoy.filters.http.ext_authz
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
+          transport_api_version: V3
+          http_service:
+            server_uri:
+              uri: http://pcs.pcs.svc.cluster.local:8080      # same PCS as documents
+              cluster: outbound|8080||pcs.pcs.svc.cluster.local
+              timeout: 1s
+            path_prefix: /check
+            authorization_request:
+              allowed_headers:
+                patterns:
+                - exact: x-workspace-user-id
+                - exact: authorization
+          failure_mode_allow: false
+```
+
+This file is the documents-ext-authz copy with two field changes: `metadata.namespace: wiki` and `metadata.name: wiki-ext-authz`. Everything else is identical, including the PCS service URL. **This duplication is the Stage 1 cost — Stage 2 (§8) eliminates it by collapsing both copies into a single resource in `istio-system`.**
+
+### 4.8 `pcs` — Permission Checking Service
 
 | Field | Value |
 |---|---|
-| Chart | `gateway` from `https://istio-release.storage.googleapis.com/charts`, version `1.24.2` |
+| Path on disk | `sample-apps/pcs/` |
+| Language | Go 1.25 |
+| Files | `main.go`, `go.mod`, `deploy/Dockerfile` |
+| Image | `workspace/pcs:dev` |
+| Listen port | 8080 |
+| Endpoints | `POST /check` |
+| Decision policy | Hard-coded allow-list `{"alice@workspace.test", "bob@workspace.test"}`. Header value in list → `200`. Otherwise → `403`. Missing header → `403`. |
+| Logging | `log/slog` JSON; one line per decision (`{"user":"...","decision":"allow|deny","ts":"..."}`) |
+| Namespace | `pcs` |
+| Sidecar | Envoy (auto-injected) |
+| Estimated LOC | ~40 |
+
+Response body is intentionally empty — `ext_authz` looks only at the HTTP status code.
+
+### 4.9 Per-namespace Ingressgateway (`documents-ingressgateway`)
+
+A dedicated Istio ingressgateway Pod lives in the `documents` namespace, deployed via the upstream `istio/gateway` Helm chart (version `1.24.2`) vendored under `kind/charts/`.
+
+| Field | Value |
+|---|---|
+| Chart | `kind/charts/gateway-1.24.2.tgz` |
 | Release name | `documents-ingressgateway` |
 | Namespace | `documents` |
-| Pod labels | `istio: documents-ingressgateway` (consumed by the `Gateway` resource selector) |
+| Pod labels | `istio: documents-ingressgateway` |
 | Service type | `NodePort` |
-| Ports | `80 → nodePort 30080`, `443 → nodePort 30443` (matching `kind-config.yaml` `extraPortMappings`) |
-| Resources | 50m / 128Mi CPU/memory request (sized for kind) |
-| Opt-in label | **Not set** — the gateway pod routes; the ext_authz check fires one hop later on `documents-api`'s sidecar. Patching the gateway too would either double-check the request or break gateway routing. |
+| Ports | `80 → nodePort 30080`, `443 → nodePort 30443` |
+| Resources | 50m / 128Mi CPU/memory request |
 
-### 4.7 Gateway + VirtualService
+The gateway Pod's label is `istio: documents-ingressgateway`, **not** `workspace.io/ext-authz: enabled`, so the `documents-ext-authz` filter does **not** patch it. The ext_authz check fires one hop later on the actual receiver workload's sidecar.
 
-Two Istio CRDs in the `documents` namespace expose `documents-api` externally on `documents.local`:
+### 4.10 Gateway + VirtualService (for `documents-api` external exposure)
 
 ```yaml
 apiVersion: networking.istio.io/v1
@@ -386,14 +430,10 @@ metadata:
   namespace: documents
 spec:
   selector:
-    istio: documents-ingressgateway        # matches the per-namespace gateway pod
+    istio: documents-ingressgateway
   servers:
-  - port:
-      number: 80
-      name: http
-      protocol: HTTP
-    hosts:
-    - documents.local
+  - port: { number: 80, name: http, protocol: HTTP }
+    hosts: [ documents.local ]
 ---
 apiVersion: networking.istio.io/v1
 kind: VirtualService
@@ -401,62 +441,65 @@ metadata:
   name: documents-vs
   namespace: documents
 spec:
-  hosts:
-  - documents.local
-  gateways:
-  - documents-gateway
+  hosts: [ documents.local ]
+  gateways: [ documents-gateway ]
   http:
   - route:
     - destination:
         host: documents-api.documents.svc.cluster.local
-        port:
-          number: 8080
+        port: { number: 8080 }
 ```
 
-The route sends gateway-terminated traffic to the `documents-api` Service. The Service in turn routes to the `documents-api` Pod, where the workload sidecar's ext_authz filter intercepts the request.
+Only `documents-api` is exposed externally. `documents-search` and `wiki-api` are reachable only from inside the cluster via the dashboard-client loop.
 
-### 4.8 Istio Install Surface
+### 4.11 Istio Install Surface
 
-All Istio charts are **vendored as `.tgz` files** committed to `kind/charts/` (the ECK harness pattern). `setup.sh` references the local files; nothing is pulled from the internet at runtime.
+All Istio charts are vendored as `.tgz` under `kind/charts/`. `setup.sh` references the local files; nothing is pulled from the internet at runtime.
 
 | Component | Vendored file | Namespace |
 |---|---|---|
 | istio-base | `kind/charts/base-1.24.2.tgz` | `istio-system` |
 | istiod | `kind/charts/istiod-1.24.2.tgz` | `istio-system` |
-| Per-namespace ingressgateway | `kind/charts/gateway-1.24.2.tgz` (release name `documents-ingressgateway`) | `documents` |
+| Per-namespace ingressgateway | `kind/charts/gateway-1.24.2.tgz` (release `documents-ingressgateway`) | `documents` |
 
-The shared `istio-ingressgateway` (the cluster-scoped default gateway in `istio-system`) is **not** installed — each app namespace owns its own gateway in this model. The `.tgz` files are downloaded once during initial repo setup (e.g. with `helm pull --repo https://istio-release.storage.googleapis.com/charts --version 1.24.2 base istiod gateway --destination kind/charts/`) and committed to the repo. Subsequent `./kind/setup.sh` runs are fully offline-capable for the Istio install phase.
+The `.tgz` files are downloaded once during initial repo setup (`helm pull --repo https://istio-release.storage.googleapis.com/charts --version 1.24.2 base istiod gateway --destination kind/charts/`) and committed to the repo.
 
 ## 5. Bring-up Flow (`kind/setup.sh`)
 
-The script is idempotent — re-runs pick up where they left off. Steps in order, grouped by ownership to show how the same flow maps to platform vs app teams in production:
+Idempotent — re-runs pick up where they left off. Steps grouped by owner:
 
-### Phase 1 — Platform-team actions
+### Phase A — Platform-team actions
 
-1. **Create kind cluster.** If `kind get clusters` already contains `ext-authz-demo`, reuse; else `kind create cluster --name ext-authz-demo --config kind-config.yaml`. The config carries `extraPortMappings` (host 80/443 → container 30080/30443). Switch kubectl context to `kind-ext-authz-demo`.
+1. **Create kind cluster.** If `kind get clusters` already contains `ext-authz-demo`, reuse; else `kind create cluster --name ext-authz-demo --config kind-config.yaml`. Switch kubectl context to `kind-ext-authz-demo`.
 2. **Install Istio control plane from vendored charts.**
    - `helm upgrade --install istio-base kind/charts/base-1.24.2.tgz -n istio-system --create-namespace --wait`
    - `helm upgrade --install istiod kind/charts/istiod-1.24.2.tgz -n istio-system --wait`
-3. **Apply the mesh-wide EnvoyFilter.** Apply `kind/manifests/platform/envoyfilter-ext-authz-pcs.yaml` into `istio-system`. In production, this step is owned by the platform team's GitOps pipeline; here it is one `kubectl apply`.
-4. **Deploy PCS.** Apply `kind/manifests/platform/namespace-pcs.yaml`, then `pcs-deployment.yaml` and `pcs-service.yaml` into `pcs` namespace. Wait for `Available` condition.
+3. **Deploy PCS.** Apply `kind/manifests/platform/namespace-pcs.yaml`, then `pcs-deployment.yaml` and `pcs-service.yaml`. Wait for `Available`.
 
-### Phase 2 — App-team actions (per team)
+### Phase B — Documents product-team actions (same namespace pattern)
 
-5. **Create app namespaces.** Apply `kind/manifests/apps/namespace-documents.yaml`, `namespace-wiki.yaml`, `namespace-dashboard.yaml`. All three carry `istio-injection: enabled`.
-6. **Install the per-namespace ingressgateway in `documents` from the vendored chart.**
-   - `helm upgrade --install documents-ingressgateway kind/charts/gateway-1.24.2.tgz -n documents -f kind/manifests/apps/documents/istio-gateway-values.yaml --skip-schema-validation --wait`
-7. **Build local images.** From the repo root:
+4. **Create the documents namespace.** Apply `kind/manifests/documents/namespace-documents.yaml`.
+5. **Install the per-namespace ingressgateway from the vendored chart.**
+   - `helm upgrade --install documents-ingressgateway kind/charts/gateway-1.24.2.tgz -n documents -f kind/manifests/documents/istio-gateway-values.yaml --skip-schema-validation --wait`
+6. **Build local images.** From the repo root:
    - `(cd sample-apps/echo-server && docker build -t workspace/echo-server:dev -f deploy/Dockerfile .)`
    - `(cd sample-apps/pcs && docker build -t workspace/pcs:dev -f deploy/Dockerfile .)`
    - `(cd sample-apps/dashboard-client && docker build -t workspace/dashboard-client:dev -f deploy/Dockerfile .)`
-8. **Load images into kind.**
+7. **Load images into kind.**
    - `kind load docker-image workspace/echo-server:dev --name ext-authz-demo`
    - `kind load docker-image workspace/pcs:dev --name ext-authz-demo`
    - `kind load docker-image workspace/dashboard-client:dev --name ext-authz-demo`
-9. **Deploy `documents-api` (with opt-in label) and its routing.** Apply `documents-api-deployment.yaml` (carrying `workspace.io/ext-authz: enabled`), `documents-api-service.yaml`, `documents-gateway.yaml`, and `documents-virtualservice.yaml`. Wait for `Available`.
-10. **Deploy `wiki-api` (without opt-in label).** Apply `wiki-api-deployment.yaml` and `wiki-api-service.yaml` in `wiki` namespace. Wait for `Available`.
-11. **Deploy `dashboard-client`.** Apply `dashboard-client-deployment.yaml` in `dashboard` namespace.
-12. **Print verification commands and `/etc/hosts` line** (see §6).
+8. **Deploy `documents-api` + `documents-search`.** Apply their Deployments and Services in `documents` namespace. Wait for `Available`.
+9. **Apply `documents-ext-authz` EnvoyFilter.** In `documents` namespace.
+10. **Apply Gateway + VirtualService.** In `documents` namespace.
+11. **Deploy `dashboard-client`.** In `documents` namespace.
+
+### Phase C — Wiki team actions (cross-namespace pattern)
+
+12. **Create the wiki namespace.** Apply `kind/manifests/wiki/namespace-wiki.yaml`.
+13. **Apply the copied `wiki-ext-authz` EnvoyFilter.** In `wiki` namespace.
+14. **Deploy `wiki-api`.** Apply Deployment and Service in `wiki` namespace.
+15. **Print verification commands and `/etc/hosts` line** (see §6).
 
 Total wall-clock on a warm Docker cache should be ≤ 3 minutes on a 16 GB MacBook.
 
@@ -466,84 +509,74 @@ Total wall-clock on a warm Docker cache should be ≤ 3 minutes on a 16 GB MacBo
 
 The setup script prints these commands at the end, plus a reminder to add `127.0.0.1 documents.local` to `/etc/hosts`.
 
-**Internal-path demo — dashboard-client alternates targets and users:**
+**Internal-path demo — dashboard-client cycling through all three workloads:**
 
 ```bash
-kubectl -n dashboard logs deploy/dashboard-client -c dashboard-client -f
-# Expected (rolling, every 3s):
-#   documents-api alice@workspace.test → 200
-#   documents-api mallory@workspace.test → 403
-#   wiki-api alice@workspace.test → 200
-#   wiki-api mallory@workspace.test → 200
+kubectl -n documents logs deploy/dashboard-client -c dashboard-client -f
+# Expected (rolling, 2s between calls):
+#   documents-api    alice@workspace.test   → 200  "hello from documents-api-..."
+#   documents-api    mallory@workspace.test → 403
+#   documents-search alice@workspace.test   → 200  "hello from documents-search-..."
+#   documents-search mallory@workspace.test → 403
+#   wiki-api         alice@workspace.test   → 200  "hello from wiki-api-..."
+#   wiki-api         mallory@workspace.test → 403
 ```
 
-Note that `wiki-api` returns `200` for **both** users — the opt-out workload is reachable without authz, exactly as designed.
-
-**External-path demo — curl from the host through the ingressgateway:**
+**External-path demo — curl from host (documents-api only):**
 
 ```bash
-curl -H "x-workspace-user-id: alice@workspace.test"   http://documents.local/hello   # expect: 200
-curl -H "x-workspace-user-id: mallory@workspace.test" http://documents.local/hello   # expect: 403
+curl -H "x-workspace-user-id: alice@workspace.test"   http://documents.local/hello   # 200
+curl -H "x-workspace-user-id: mallory@workspace.test" http://documents.local/hello   # 403
 ```
 
-**PCS sees only the gated traffic (alice + mallory headers), never wiki traffic:**
+**PCS sees all three workloads' decisions:**
 
 ```bash
 kubectl -n pcs logs deploy/pcs -c pcs -f
-# Expected (per dashboard-client iteration):
-#   {"user":"alice@workspace.test","decision":"allow","ts":"..."}
-#   {"user":"mallory@workspace.test","decision":"deny","ts":"..."}
-# (No log lines for wiki-api traffic — it never calls PCS.)
+# Expected (rolling, 3 allow + 3 deny per dashboard-client cycle):
+#   {"user":"alice@workspace.test","decision":"allow",...}    (x3 per cycle)
+#   {"user":"mallory@workspace.test","decision":"deny",...}   (x3 per cycle)
+```
+
+**EnvoyFilters are in app namespaces, NOT in `istio-system`:**
+
+```bash
+kubectl get envoyfilter -A
+# Expected: exactly two rows —
+#   documents   documents-ext-authz   ...
+#   wiki        wiki-ext-authz        ...
+# istio-system: nothing.
+```
+
+**Both EnvoyFilters share the same `workloadSelector` label:**
+
+```bash
+kubectl -n documents get envoyfilter documents-ext-authz -o jsonpath='{.spec.workloadSelector.labels}'
+# Expected: {"workspace.io/ext-authz":"enabled"}
+kubectl -n wiki get envoyfilter wiki-ext-authz -o jsonpath='{.spec.workloadSelector.labels}'
+# Expected: {"workspace.io/ext-authz":"enabled"}
+```
+
+**Headline observable property — denials happen at Envoy, not in app containers:**
+
+```bash
+for tuple in "documents documents-api" "documents documents-search" "wiki wiki-api"; do
+  ns=$(echo $tuple | awk '{print $1}'); app=$(echo $tuple | awk '{print $2}')
+  echo "=== $app (ns=$ns) ==="
+  echo "  mallory hits: $(kubectl -n $ns logs deploy/$app -c $app | grep -c mallory)"
+  echo "  alice hits:   $(kubectl -n $ns logs deploy/$app -c $app | grep -c alice)"
+done
+# Expected: every workload reports mallory=0, alice>0
 ```
 
 **Envoy sidecars are present everywhere they should be:**
 
 ```bash
-for ns in documents wiki dashboard pcs; do
+for ns in documents wiki pcs; do
   echo "=== $ns ==="
   kubectl -n $ns get pod -o jsonpath='{range .items[*]}{.metadata.name}{": "}{.spec.containers[*].name}{"\n"}{end}'
 done
 # Expected: every pod shows two containers (the app + istio-proxy)
-```
-
-**EnvoyFilter is in `istio-system`, not in the app namespace:**
-
-```bash
-kubectl -n istio-system get envoyfilter ext-authz-pcs
-# Expected: returns a row showing the resource
-
-kubectl -n documents get envoyfilter
-# Expected: No resources found in documents namespace.
-```
-
-**Opt-in label is present on `documents-api`, absent on `wiki-api`:**
-
-```bash
-kubectl -n documents get deploy documents-api -o jsonpath='{.spec.template.metadata.labels.workspace\.io/ext-authz}'
-# Expected: enabled
-
-kubectl -n wiki get deploy wiki-api -o jsonpath='{.spec.template.metadata.labels.workspace\.io/ext-authz}'
-# Expected: (empty)
-```
-
-**Headline observable property — denials happen at Envoy, not in `documents-api`:**
-
-```bash
-kubectl -n documents logs deploy/documents-api -c documents-api | grep -c mallory
-# Expected: 0
-
-kubectl -n documents logs deploy/documents-api -c documents-api | grep -c alice
-# Expected: > 0
-```
-
-**Opt-out observable property — `wiki-api` sees both users:**
-
-```bash
-kubectl -n wiki logs deploy/wiki-api -c wiki-api | grep -c mallory
-# Expected: > 0   (mallory reached wiki-api because no ext_authz check fired)
-
-kubectl -n wiki logs deploy/wiki-api -c wiki-api | grep -c alice
-# Expected: > 0
 ```
 
 **Fail-closed proof:**
@@ -551,15 +584,13 @@ kubectl -n wiki logs deploy/wiki-api -c wiki-api | grep -c alice
 ```bash
 kubectl -n pcs scale deploy/pcs --replicas=0
 sleep 5
-kubectl -n dashboard logs deploy/dashboard-client --tail=20
-# Expected: every documents-api call returns 403 (regardless of user);
-# every wiki-api call still returns 200 (opt-out unaffected by PCS health).
+kubectl -n documents logs deploy/dashboard-client --tail=20
+# Expected: every status code in the last 20 lines is 403 — across all three target workloads.
 
-# External path under fail-closed:
-curl -H "x-workspace-user-id: alice@workspace.test" http://documents.local/hello   # expect: 403
+curl -H "x-workspace-user-id: alice@workspace.test" http://documents.local/hello   # 403
 
 kubectl -n pcs scale deploy/pcs --replicas=1
-# Wait for rollout; afterwards alice's documents-api requests return 200 again.
+# Wait for rollout; allow decisions return.
 ```
 
 ## 7. Directory Layout
@@ -571,7 +602,7 @@ kubectl -n pcs scale deploy/pcs --replicas=1
 │   ├── 2026-05-13-permission-validation-phase1-sidecar-design.md (existing — unchanged)
 │   └── 2026-05-14-ext-authz-kind-demo-design.md                (this document)
 ├── sample-apps/
-│   ├── echo-server/                       (shared by documents-api and wiki-api)
+│   ├── echo-server/                       (shared by documents-api, documents-search, wiki-api)
 │   │   ├── main.go
 │   │   ├── go.mod
 │   │   └── deploy/Dockerfile
@@ -593,104 +624,139 @@ kubectl -n pcs scale deploy/pcs --replicas=1
     │   ├── istiod-1.24.2.tgz
     │   └── gateway-1.24.2.tgz
     └── manifests/
-        ├── platform/                                ← platform-team-owned in production
+        ├── platform/                            ← platform-team-owned
         │   ├── namespace-pcs.yaml
-        │   ├── envoyfilter-ext-authz-pcs.yaml       (lives in istio-system)
         │   ├── pcs-deployment.yaml
         │   └── pcs-service.yaml
-        └── apps/                                    ← app-team-owned in production
-            ├── namespace-documents.yaml
+        ├── documents/                           ← documents product-team-owned
+        │   ├── namespace-documents.yaml
+        │   ├── istio-gateway-values.yaml        (Helm values for documents-ingressgateway)
+        │   ├── documents-api-deployment.yaml    (carries opt-in label)
+        │   ├── documents-api-service.yaml
+        │   ├── documents-search-deployment.yaml (carries opt-in label)
+        │   ├── documents-search-service.yaml
+        │   ├── documents-ext-authz.yaml         ← per-ns EnvoyFilter (label-keyed)
+        │   ├── documents-gateway.yaml
+        │   ├── documents-virtualservice.yaml
+        │   └── dashboard-client-deployment.yaml
+        └── wiki/                                ← wiki team-owned (cross-ns copy pattern)
             ├── namespace-wiki.yaml
-            ├── namespace-dashboard.yaml
-            ├── documents/
-            │   ├── istio-gateway-values.yaml        (Helm values for documents-ingressgateway)
-            │   ├── documents-api-deployment.yaml    (carries opt-in label)
-            │   ├── documents-api-service.yaml
-            │   ├── documents-gateway.yaml
-            │   └── documents-virtualservice.yaml
-            ├── wiki/
-            │   ├── wiki-api-deployment.yaml         (no opt-in label)
-            │   └── wiki-api-service.yaml
-            └── dashboard/
-                └── dashboard-client-deployment.yaml
+            ├── wiki-api-deployment.yaml         (carries opt-in label)
+            ├── wiki-api-service.yaml
+            └── wiki-ext-authz.yaml              ← copied EnvoyFilter (same shape, wiki ns)
 ```
 
-The `manifests/platform/` vs `manifests/apps/` split mirrors the ownership boundary documented in §3.2. `setup.sh` applies both for demo convenience; production reality is that the two halves are deployed by different pipelines owned by different teams.
+The `manifests/platform/`, `manifests/documents/`, and `manifests/wiki/` split mirrors the ownership boundary documented in §3.2.
 
-## 8. Trade-offs and Risks
+## 8. Stage 2 Evolution — Move EnvoyFilter to `istio-system` with label opt-in
 
-### 8.1 EnvoyFilter is the "old" pattern
+The intended evolution after the platform team approves hosting a shared filter. Two things change:
 
-Istio documentation recommends `AuthorizationPolicy` with `action: CUSTOM` and a registered `extensionProvider` for new clusters. `EnvoyFilter` patches raw Envoy config and is brittle to Envoy version changes. The demo chooses `EnvoyFilter` deliberately to fit the demo's scope (a single declarative file that platform owns; no `MeshConfig` editing required). Migration to the mesh-level provider pattern is straightforward (see §9.1).
+**Change 1 — Collapse both per-namespace EnvoyFilters into one in `istio-system`:**
 
-### 8.2 Blast radius of the mesh-wide EnvoyFilter
+```yaml
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: ext-authz-pcs
+  namespace: istio-system                       # ← root namespace = cross-namespace reach
+spec:
+  workloadSelector:
+    labels:
+      workspace.io/ext-authz: enabled           # ← SAME opt-in label as Stage 1
+  configPatches:
+  # ... (byte-for-byte identical to the Stage 1 EnvoyFilter configPatches —
+  #      same PCS URL, same allowed_headers, same fail-closed setting)
+```
 
-A misconfigured EnvoyFilter in `istio-system` affects every opted-in workload in the cluster simultaneously. This is a deliberate trade-off — single source of truth versus single point of failure. Mitigations in production: a staged rollout (apply to a canary workload first via a narrowing label, e.g. `workspace.io/ext-authz: canary`, then flip), and standard mesh-level change control (the EnvoyFilter goes through the platform team's GitOps PR review). The demo does not exercise these controls; in the kind harness it is one operator with one `kubectl apply`.
+The platform team writes and owns this file. App teams cannot edit it.
 
-### 8.3 Hard-coded allow-list in `pcs`
+**Change 2 — App teams delete their per-namespace EnvoyFilter copies:**
 
-The decision policy lives in Go code, not in a config file or database. This is fine for a demo where the policy is two usernames. A real policy service would consult a registry. The demo's `POST /check` contract is identical to what a production service would expose, so the dummy is a drop-in replacement target.
+- Documents team deletes `documents-ext-authz` from `documents` namespace.
+- Wiki team deletes `wiki-ext-authz` from `wiki` namespace.
 
-### 8.4 Header-based identity, ignoring Istio mesh identity
+**App teams' Deployments do not change.** The opt-in label is the same; the new `istio-system` EnvoyFilter matches the same label across all namespaces.
 
-All app namespaces are sidecar-injected, so each pod has a SPIFFE identity and traffic is mesh-mTLS by default. The demo's `ext_authz` decision **ignores** this identity and uses only the `x-workspace-user-id` request header. This is intentional: it keeps the authorization input under the test driver's control (just set the header) and reflects the production model where the authorization service trusts upstream-set headers rather than mesh peer identity. A future enhancement could derive identity from a verified JWT instead (see §9.5).
+**Migration ordering (zero-downtime):**
 
-### 8.5 Single-replica everything
+1. Platform team applies the new `EnvoyFilter` in `istio-system`. Workloads are now patched **twice** (once by the per-namespace filter, once by the istio-system filter) — but both filters insert identical ext_authz config, so each request still goes through one effective check per round-trip (Envoy de-duplicates the filter chain when patches collide on identical names). Verify no behaviour change via the same verification commands.
+2. Each app team, when ready, deletes their per-namespace EnvoyFilter. After this, only the `istio-system` filter is in effect.
+3. Verification: `kubectl get envoyfilter -A` shows only the single resource in `istio-system`.
 
-Every Deployment (`documents-api`, `wiki-api`, `pcs`, `dashboard-client`, `documents-ingressgateway`) runs one replica. Multi-replica routing, EnvoyFilter propagation under churn, and pod-restart behavior are not exercised. Acceptable for a correctness demo; load and HA characteristics are out of scope per §2.2.
+**Why this is the better long-term shape:** single source of truth; teams onboard by adding one label, not by copying YAML; platform owns the PCS URL and version, so an upgrade is one PR.
 
-### 8.6 Headers, not body, drive the decision
+**Why it's not Stage 1:** it requires `istio-system` write access and platform-team approval.
 
-Envoy `ext_authz` forwards request **headers** to the authz service by default. The `authorization_request.allowed_headers` allow-list determines what `pcs` sees. Body-based decisions are possible (`with_request_body`) but add buffering, latency, and configuration weight. The demo deliberately restricts the decision input to headers.
+## 9. Trade-offs and Risks
 
-### 8.7 Plain HTTP through the ingressgateway
+### 9.1 Per-namespace EnvoyFilter duplication (Stage 1)
 
-The ingressgateway listens on port 80 with plain HTTP. Adding TLS termination requires a TLS Secret, a `tls.mode: SIMPLE` on the Gateway, and self-signed certs at setup time — the ECK harness's pattern. Out of scope for the MVP demo; a follow-up can layer TLS without touching the ext_authz logic.
+Every namespace that opts in carries its own EnvoyFilter copy. If the PCS URL, allowed-headers list, or fail-mode flag changes, every namespace has to update its copy. Mitigation: ship a templated YAML in a shared platform repo so teams pull from a single canonical source. Stage 2 eliminates the duplication.
 
-### 8.8 Opt-in label is convention, not enforced
+### 9.2 EnvoyFilter is the "old" pattern
 
-A team can forget to add `workspace.io/ext-authz: enabled` to their Deployment and silently run unprotected. The mesh-wide EnvoyFilter does nothing for them. Mitigations in production: a CI check that validates platform-tier Deployments carry the label, or a Phase 2 mutating webhook that adds the label based on namespace classification (see §9.6).
+Istio docs recommend `AuthorizationPolicy` with `action: CUSTOM` and a registered `extensionProvider` for new clusters. `EnvoyFilter` patches raw Envoy config and is brittle to Envoy version changes. The demo chooses `EnvoyFilter` because that is what the team's existing cluster uses (per the `gateway-connection-limit` example). Migration tracked in §10.7.
 
-## 9. Future Enhancements (explicitly not in scope)
+### 9.3 Hard-coded allow-list in `pcs`
 
-These are listed so the design surface stays clear and a follow-up spec can pick any of them up.
+The decision policy lives in Go code. Fine for a demo with two allow-listed users; a real policy service would consult a registry.
 
-### 9.1 Migrate to mesh-level `extensionProvider` + `AuthorizationPolicy`
+### 9.4 Header-based identity, ignoring Istio mesh identity
 
-Replace the `EnvoyFilter` with:
+The decision input is `x-workspace-user-id`, not mesh SPIFFE identity. JWT-derived identity tracked in §10.4.
 
-- An `extensionProvider` entry in `meshConfig` (registered at Istio install time via Helm values or by editing the `istio` ConfigMap in `istio-system`).
-- An `AuthorizationPolicy` in `istio-system` with `action: CUSTOM`, `provider.name` matching the registered provider, and a `selector` matching `workspace.io/ext-authz: enabled`.
+### 9.5 Single-replica everything
 
-The `pcs` service contract is unchanged. The migration is a YAML swap with no app code changes.
+Every Deployment runs one replica. Multi-replica routing, EnvoyFilter propagation under churn, pod-restart behavior — not exercised.
 
-### 9.2 gRPC ext_authz protocol
+### 9.6 Plain HTTP through the ingressgateway
 
-Switch from HTTP `POST /check` to Envoy's gRPC `CheckRequest`. Production deployments commonly prefer gRPC for typed contracts and lower per-request overhead. The `pcs` service would gain a gRPC server and be tested with a separate verification path.
+TLS termination tracked in §10.5.
 
-### 9.3 Cluster-level baseline policies
+### 9.7 No explicit opt-out negative example deployed
 
-Layer `allow-ip`, `allow-metrics`, and `allow-specific-namespace` `AuthorizationPolicy` resources at the mesh layer to demonstrate defense-in-depth alongside ext_authz. Useful when teaching how Istio's L4/L7 mesh authorization composes with delegated ext_authz checks.
+A team that does not carry the opt-in label is implicitly opted out. The demo does not deploy a fourth, opt-out workload to make this explicit — the absence-of-label semantics are clear from the EnvoyFilter selector. Adding such a workload would clarify for new readers but adds a namespace + Deployment that the headline claim does not depend on.
 
-### 9.4 Real auth (JWT) in front of `x-workspace-user-id`
+## 10. Future Enhancements
 
-Add a `RequestAuthentication` resource targeting `workspace.io/ext-authz: enabled` Pods, requiring a signed JWT, and have the `ext_authz` decision derive identity from the JWT claims instead of a raw header.
+### 10.1 Move EnvoyFilter to `istio-system` (Stage 2)
 
-### 9.5 TLS termination on the ingressgateway
+See §8. The full migration plan is documented there.
 
-Add a self-signed cert generated at setup time, mount it as a TLS Secret in `documents` namespace, and switch the Gateway's `port.protocol` to `HTTPS` with `tls.mode: SIMPLE`. The host port 443 is already mapped in `kind-config.yaml` for this purpose.
+### 10.2 gRPC ext_authz protocol
 
-### 9.6 Mutating webhook for label auto-injection
+Switch from HTTP `POST /check` to Envoy's gRPC `CheckRequest`. Production deployments commonly prefer gRPC for typed contracts and lower per-request overhead.
 
-Replace the manual `workspace.io/ext-authz: enabled` label step with a mutating admission webhook that adds the label automatically based on namespace classification (e.g. all Pods in tier-1 namespaces get the label unless explicitly excluded). Improves onboarding ergonomics but adds operational moving parts (TLS cert for the webhook, CA bundle, webhook server HA). Tracked in the sibling Phase 1 sidecar design under "auto-injection."
+### 10.3 Cluster-level baseline policies
 
-## 10. Open Questions
+Layer `allow-ip`, `allow-metrics`, and `allow-specific-namespace` `AuthorizationPolicy` resources at the mesh layer to demonstrate defense-in-depth alongside ext_authz.
 
-1. **Opt-in label key.** The demo uses `workspace.io/ext-authz: enabled`. If the workspace platform prefers a different convention (e.g. `platform.workspace.io/authz: required`), align before implementation since the same string appears in three places (Deployment Pod templates, the EnvoyFilter `workloadSelector`, and verification commands).
-2. **Demo cluster name.** The script defaults to `ext-authz-demo`. If another demo already uses that name on the same machine, `setup.sh` will reuse the existing cluster rather than recreating. Acceptable; `teardown.sh` removes it cleanly.
-3. **Hostname for external curl.** Default is `documents.local`. If `documents.local` collides with anything the user has configured locally, swap for a less-common name.
+### 10.4 Real auth (JWT) in front of `x-workspace-user-id`
 
-## 11. Success Criteria
+Add a `RequestAuthentication` resource targeting the gated Pods, requiring a signed JWT; derive identity from JWT claims instead of a raw header.
+
+### 10.5 TLS termination on the ingressgateway
+
+Add a self-signed cert generated at setup time, mount it as a TLS Secret in `documents` namespace, switch the Gateway's `port.protocol` to `HTTPS` with `tls.mode: SIMPLE`.
+
+### 10.6 Mutating webhook for label auto-injection (post-Stage 2)
+
+Replace the manual opt-in label with a mutating admission webhook that adds the label automatically based on namespace classification.
+
+### 10.7 Migrate from `EnvoyFilter` to `AuthorizationPolicy` (action: CUSTOM) + `extensionProvider`
+
+The Istio-recommended path. After Stage 2: add an `extensionProvider` entry in the `istio` ConfigMap's `meshConfig`; replace the `EnvoyFilter` in `istio-system` with an `AuthorizationPolicy` (also in `istio-system`) with `action: CUSTOM`. PCS contract unchanged.
+
+## 11. Open Questions
+
+1. **Opt-in label key.** The demo uses `workspace.io/ext-authz: enabled`. The same string appears in five places (three Deployment Pod templates, two EnvoyFilter `workloadSelector` blocks, plus verification commands). Align with the team's standard label vocabulary before implementation; the Stage 2 migration will reuse this label.
+2. **Demo cluster name.** Default `ext-authz-demo`. If another demo already uses that name on the machine, `setup.sh` reuses the existing cluster; `teardown.sh` removes it cleanly.
+3. **Hostname for external curl.** Default `documents.local`. If it collides with anything in `/etc/hosts`, swap for a less-common name.
+4. **PCS namespace owner in production.** Is `pcs` namespace owned by the same platform team that would later own the `istio-system` EnvoyFilter in Stage 2? If different teams own `pcs` and `istio-system`, two approvals are needed for Stage 2.
+5. **Whether to also expose `documents-search` and `wiki-api` via the ingressgateway.** Current spec exposes only `documents-api`. Adding the other two would require additional `Gateway`/`VirtualService` entries (or extra route rules). Not required for the headline claim; can be added if the demo audience wants to curl all three from the host.
+
+## 12. Success Criteria
 
 The harness is considered successful when, on a fresh checkout of `~/ashwini-repos/workspace/`:
 
@@ -698,21 +764,20 @@ The harness is considered successful when, on a fresh checkout of `~/ashwini-rep
 2. After adding `127.0.0.1 documents.local` to `/etc/hosts`:
    - `curl -H "x-workspace-user-id: alice@workspace.test" http://documents.local/hello` returns `200`.
    - `curl -H "x-workspace-user-id: mallory@workspace.test" http://documents.local/hello` returns `403`.
-3. `kubectl -n dashboard logs deploy/dashboard-client -f` shows, every 3 seconds: `documents-api alice → 200`, `documents-api mallory → 403`, `wiki-api alice → 200`, `wiki-api mallory → 200` — confirming both the gate (documents-api) and the opt-out (wiki-api).
-4. `kubectl -n pcs logs deploy/pcs -c pcs -f` shows allow/deny lines only for `documents-api` traffic; no lines for `wiki-api` traffic.
-5. `kubectl -n documents logs deploy/documents-api -c documents-api | grep -c mallory` returns `0`; the equivalent grep for `alice` returns a positive number.
-6. `kubectl -n wiki logs deploy/wiki-api -c wiki-api | grep -c mallory` returns a positive number — proof that opt-out workloads are not gated.
-7. `kubectl -n istio-system get envoyfilter ext-authz-pcs` returns the single EnvoyFilter, in the root namespace.
-8. `kubectl -n pcs scale deploy/pcs --replicas=0` causes all `documents-api` calls (internal and external) to return `403`; `wiki-api` calls continue to return `200`. Restoring the replica brings allow decisions back.
-9. `./kind/teardown.sh` removes the cluster cleanly.
+3. `kubectl -n documents logs deploy/dashboard-client -f` shows the 6-call cycle from §3.3 with the expected status codes.
+4. `kubectl -n pcs logs deploy/pcs -c pcs -f` shows 3 allow + 3 deny decision lines per dashboard-client cycle.
+5. For each of `documents-api`, `documents-search`, `wiki-api`: `kubectl logs ... | grep -c mallory` returns `0`; the equivalent grep for `alice` returns a positive number.
+6. `kubectl get envoyfilter -A` shows exactly two EnvoyFilters — `documents-ext-authz` in `documents` namespace and `wiki-ext-authz` in `wiki` namespace. Nothing in `istio-system`.
+7. `kubectl -n pcs scale deploy/pcs --replicas=0` causes all calls (internal and external, all three workloads) to return `403`; restoring the replica brings allow decisions back.
+8. `./kind/teardown.sh` removes the cluster cleanly.
 
-The harness deliberately does not target throughput, latency, or any production-grade SLO. It is a correctness and teaching harness for the Envoy ext_authz wiring and the platform-vs-app-team ownership pattern.
+The harness deliberately does not target throughput, latency, or any production-grade SLO. It is a correctness and teaching harness for the Stage 1 per-namespace EnvoyFilter pattern, with all three onboarding cases (main product, sibling-in-same-ns, cross-namespace) exercised end-to-end.
 
-## 12. References
+## 13. References
 
 - Envoy `ext_authz` HTTP filter reference: <https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_filters/ext_authz_filter>
 - Istio `EnvoyFilter` reference (including root-namespace scoping rules): <https://istio.io/latest/docs/reference/config/networking/envoy-filter/>
-- Istio `AuthorizationPolicy` reference (for the §9.1 future migration): <https://istio.io/latest/docs/reference/config/security/authorization-policy/>
+- Istio `AuthorizationPolicy` reference (for §10.7 future migration): <https://istio.io/latest/docs/reference/config/security/authorization-policy/>
 - Istio `Gateway` + `VirtualService` reference: <https://istio.io/latest/docs/reference/config/networking/gateway/>
 - ECK Elasticsearch kind harness — structural template: `charts/elasticsearch/kind/` on branch `claude/eck-elasticsearch-setup-VCAsc` of `hmchangw/chat`.
 - Sibling spec: `2026-05-13-permission-validation-phase1-sidecar-design.md` — the broader Phase 1 sidecar design this demo exercises.
