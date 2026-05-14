@@ -14,6 +14,8 @@ spec:
     metadata:
       labels:
         app: pcs
+      annotations:
+        {{- include "extAuthz.sidecarAnnotations" . | nindent 8 }}
     spec:
       containers:
       - name: pcs

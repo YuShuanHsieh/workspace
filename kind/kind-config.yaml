@@ -9,6 +9,12 @@ apiVersion: kind.x-k8s.io/v1alpha4
 name: ext-authz-demo
 nodes:
 - role: control-plane
+  # Node image — pinned by digest for reproducibility AND so a company can
+  # override one line to point at their internal mirror, e.g.
+  #   image: registry.company.internal/kindest/node:v1.35.0@sha256:452d707d...
+  # The default below is what kind v0.31.0 ships; verify with `kind version`
+  # if you bump kind itself.
+  image: kindest/node:v1.35.0@sha256:452d707d4862f52530247495d180205e029056831160e22870e37e3f6c1ac31f
   kubeadmConfigPatches:
   - |
     kind: InitConfiguration

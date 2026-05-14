@@ -24,8 +24,6 @@ The demo exercises three onboarding cases end-to-end:
 | [`sample-apps/dashboard-client/`](sample-apps/dashboard-client/) | 6-call request driver loop |
 | [`kind/`](kind/) | kind cluster config, `setup.sh`, `teardown.sh`, vendored Istio charts |
 | [`kind/demo/`](kind/demo/) | Umbrella Helm chart for the app k8s manifests (single `values.yaml` swap point for image registry / tag) |
-| [`kind/manifests/`](kind/manifests/) | Original per-resource k8s manifests (reference; not used by `setup.sh` anymore) |
-| [`kind/chart-values/`](kind/chart-values/) | Per-chart values from the pre-umbrella shape (reference) |
 
 ## Architecture diagrams (Figma)
 

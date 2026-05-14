@@ -144,7 +144,8 @@ EnvoyFilters in app namespaces (none in istio-system):
   kubectl get envoyfilter -A
 
 Swap container registry for company use:
-  Edit kind/demo/values.yaml under images.*
+  App images:       edit kind/demo/values.yaml under images.*
+  Kind node image:  edit kind/kind-config.yaml (node image is pinned there by digest)
 
 Teardown:
   ${KIND_DIR}/teardown.sh

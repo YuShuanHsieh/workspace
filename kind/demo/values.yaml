@@ -64,8 +64,17 @@ extAuthzMutation:
 
 # ===========================================================================
 # INGRESS GATEWAYS — installed separately by setup.sh (subchart-namespace
-# limitation; see README.md). Settings are sourced from here for single-file
-# config.
+# limitation; see README.md).
+#
+# Two of these fields ARE consumed by templates in this chart:
+#   - .name → gateway-selector label on Gateway/VirtualService templates
+#   - .host → host match on Gateway/VirtualService templates
+#
+# The other fields (namespace, nodePort) and the gateway pod's resources are
+# hardcoded as --set flags in setup.sh because the gateway Helm chart is
+# installed separately, not as a subchart of this umbrella. If you change a
+# value here that's also in setup.sh (namespace, nodePort, resources), update
+# BOTH places — they do not auto-sync.
 # ===========================================================================
 gateways:
   documents:
