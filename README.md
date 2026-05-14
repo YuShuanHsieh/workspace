@@ -18,6 +18,7 @@ The demo exercises three onboarding cases end-to-end:
 |---|---|
 | [`docs/superpowers/specs/2026-05-14-ext-authz-kind-demo-design.md`](docs/superpowers/specs/2026-05-14-ext-authz-kind-demo-design.md) | Full design spec (12 sections — architecture, ownership, request flow, EnvoyFilter wiring, trade-offs, success criteria) |
 | [`docs/superpowers/plans/2026-05-14-ext-authz-kind-demo.md`](docs/superpowers/plans/2026-05-14-ext-authz-kind-demo.md) | 32-task implementation plan |
+| [`DEMO.md`](DEMO.md) | Live demo walkthrough — step-by-step presenter script, expected output, FAQ, and troubleshooting |
 | [`sample-apps/echo-server/`](sample-apps/echo-server/) | Shared Go HTTP echo server — image used by `documents-api`, `documents-search`, `wiki-api` |
 | [`sample-apps/pcs/`](sample-apps/pcs/) | Permission Checking Service (Go) — `POST /check` returns 200 / 403 |
 | [`sample-apps/dashboard-client/`](sample-apps/dashboard-client/) | 6-call request driver loop |
@@ -32,6 +33,8 @@ The demo exercises three onboarding cases end-to-end:
 - **Left-to-right request flow:** <https://www.figma.com/board/wizcwM5QT7kknm5ZDLTXr6>
 
 ## TL;DR — run the demo
+
+> Giving a live demo? See [DEMO.md](DEMO.md) for the full walkthrough script + FAQ.
 
 Prerequisites: Docker Desktop running with ≥ 6 GB RAM, plus `kind`, `kubectl`, `helm`, and `go` (≥ 1.25) installed.
 
