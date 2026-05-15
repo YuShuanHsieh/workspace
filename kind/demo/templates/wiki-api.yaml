@@ -20,8 +20,10 @@ spec:
     spec:
       containers:
       - name: wiki-api
+        # Image reference resolved from kind/demo/values.yaml → images.echoServer.
+        # Edit there to point at a company-internal registry.
         image: "{{ include "extAuthz.image.echoServer" . }}"
-        imagePullPolicy: {{ .Values.images.echoServer.pullPolicy }}
+        imagePullPolicy: {{ .Values.images.pullPolicy }}
         ports:
         - containerPort: 8080
         env:

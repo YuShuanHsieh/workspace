@@ -1,14 +1,19 @@
-{{/* image reference helpers */}}
+{{/*
+  Image reference helpers.
+  All three return a fully-qualified image string sourced from kind/demo/values.yaml
+  under images.* — that file is the single point to swap container registries for
+  company / private-registry use.
+*/}}
 {{- define "extAuthz.image.echoServer" -}}
-{{ .Values.images.echoServer.repository }}:{{ .Values.images.echoServer.tag }}
+{{ .Values.images.echoServer }}
 {{- end -}}
 
 {{- define "extAuthz.image.pcs" -}}
-{{ .Values.images.pcs.repository }}:{{ .Values.images.pcs.tag }}
+{{ .Values.images.pcs }}
 {{- end -}}
 
 {{- define "extAuthz.image.dashboardClient" -}}
-{{ .Values.images.dashboardClient.repository }}:{{ .Values.images.dashboardClient.tag }}
+{{ .Values.images.dashboardClient }}
 {{- end -}}
 
 {{/* sidecar resource annotations (DRY across opt-in workloads) */}}

@@ -19,8 +19,10 @@ spec:
     spec:
       containers:
       - name: pcs
+        # Image reference resolved from kind/demo/values.yaml → images.pcs.
+        # Edit there to point at a company-internal registry.
         image: "{{ include "extAuthz.image.pcs" . }}"
-        imagePullPolicy: {{ .Values.images.pcs.pullPolicy }}
+        imagePullPolicy: {{ .Values.images.pullPolicy }}
         ports:
         - containerPort: 8080
         env:

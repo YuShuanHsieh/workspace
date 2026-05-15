@@ -19,8 +19,10 @@ spec:
     spec:
       containers:
       - name: dashboard-client
+        # Image reference resolved from kind/demo/values.yaml → images.dashboardClient.
+        # Edit there to point at a company-internal registry.
         image: "{{ include "extAuthz.image.dashboardClient" . }}"
-        imagePullPolicy: {{ .Values.images.dashboardClient.pullPolicy }}
+        imagePullPolicy: {{ .Values.images.pullPolicy }}
         env:
         - name: DOCUMENTS_API_URL
           value: "http://documents-api.documents.svc.cluster.local:8080/hello"

@@ -1,25 +1,25 @@
 # ===========================================================================
-# IMAGE OVERRIDES — swap these for a private registry (e.g. company mirror).
-# Every container image used by the demo is referenced from this section.
+# CONTAINER IMAGE OVERRIDES — swap these for a private registry / company use.
+# Every container image touched by this demo (app + Istio) is referenced from
+# THIS BLOCK. One image = one line. To override for company use:
+#   1. Edit the line for the image you want to redirect.
+#   2. Re-run ./kind/setup.sh (idempotent).
+#
+# Where each image lands:
+#   echoServer       → documents-api, documents-search, wiki-api (sidecar-injected)
+#   pcs              → permission-checking service (ext_authz callee)
+#   dashboardClient  → in-cluster request driver loop
+#   istio            → hub:tag pair used by istio-base, istiod, and BOTH ingressgateways
+#                      (no image-name suffix — chart appends pilot, proxyv2, etc.)
+#
+# Kind node image is NOT in this file — see kind/kind-config.yaml.
 # ===========================================================================
 images:
-  echoServer:
-    repository: workspace/echo-server
-    tag: dev
-    pullPolicy: IfNotPresent
-  pcs:
-    repository: workspace/pcs
-    tag: dev
-    pullPolicy: IfNotPresent
-  dashboardClient:
-    repository: workspace/dashboard-client
-    tag: dev
-    pullPolicy: IfNotPresent
-  # Istio component images. Used by the umbrella's base/istiod subchart deps
-  # and by the gateway installs performed separately by setup.sh.
-  istio:
-    hub: docker.io/istio
-    tag: 1.24.2
+  pullPolicy: IfNotPresent
+  echoServer:      workspace/echo-server:dev       # ← override for company use
+  pcs:             workspace/pcs:dev               # ← override for company use
+  dashboardClient: workspace/dashboard-client:dev  # ← override for company use
+  istio:           docker.io/istio:1.24.2          # ← override for company use (hub:tag)
 
 # ===========================================================================
 # RESOURCE FOOTPRINT — sized for a MacBook (every value can be raised in prod).
@@ -87,20 +87,3 @@ gateways:
     name: wiki-ingressgateway
     nodePort: 30081
     host: wiki.local
-
-# ===========================================================================
-# SUBCHART VALUES (passed to base / istiod via Helm dependency mechanism).
-# ===========================================================================
-base:
-  defaultRevision: default
-
-istiod:
-  global:
-    hub: docker.io/istio
-    tag: 1.24.2
-  pilot:
-    resources:
-      requests: { cpu: 50m, memory: 128Mi }
-      limits:   { cpu: 1000m, memory: 512Mi }
-    autoscaleEnabled: false
-    replicaCount: 1
