@@ -24,8 +24,16 @@ var (
 	allowedDefault  = map[string]bool{"deny": true, "skipped": true}
 )
 
-// Validate enforces phase-1-route-config-schema.md §2 / §4 rules. Returns all errors found.
+// Validate enforces phase-1-route-config-schema.md §2 / §4 rules and returns
+// every violation found (callers see all errors at once, not just the first).
+//
+// Out of scope: Validate does NOT check that `appId` matches the sidecar's
+// provisioned appId (§2). That cross-check is the caller's responsibility
+// because this package does not know the runtime appId.
 func Validate(rc *RouteConfig) []error {
+	if rc == nil {
+		return []error{&ValidationError{Msg: "config is nil"}}
+	}
 	var errs []error
 	if rc.Version != "v1" {
 		errs = append(errs, &ValidationError{Path: "version", Msg: fmt.Sprintf("must be %q, got %q", "v1", rc.Version)})

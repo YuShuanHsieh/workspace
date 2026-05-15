@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
 
 	"gopkg.in/yaml.v3"
@@ -21,11 +22,14 @@ type RouteRule struct {
 	Behavior string `yaml:"behavior"`
 }
 
-// Parse decodes the YAML bytes into a RouteConfig. Decode errors are returned;
-// semantic validation lives in Validate.
+// Parse decodes the YAML bytes into a RouteConfig with strict-mode decoding:
+// unknown fields are rejected so typos in keys surface as decode errors instead
+// of unmarshalling to zero values. Semantic validation lives in Validate.
 func Parse(b []byte) (*RouteConfig, error) {
 	rc := &RouteConfig{}
-	if err := yaml.Unmarshal(b, rc); err != nil {
+	dec := yaml.NewDecoder(bytes.NewReader(b))
+	dec.KnownFields(true)
+	if err := dec.Decode(rc); err != nil {
 		return nil, fmt.Errorf("config: yaml decode: %w", err)
 	}
 	return rc, nil
