@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -38,7 +39,7 @@ type Client struct {
 // timeout bounds the per-call HTTP timeout; callers may also cancel via ctx.
 func NewClient(endpoint string, timeout time.Duration) *Client {
 	return &Client{
-		endpoint: endpoint,
+		endpoint: strings.TrimRight(endpoint, "/"),
 		http:     &http.Client{Timeout: timeout},
 	}
 }

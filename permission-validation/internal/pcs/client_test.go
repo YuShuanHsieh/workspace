@@ -76,3 +76,44 @@ func TestClient_TimeoutIsError(t *testing.T) {
 	_, err := c.Check(context.Background(), CheckRequest{ObjectID: "x", ObjectType: "y", Permission: "z", SSOToken: "tok"})
 	require.Error(t, err)
 }
+
+func TestClient_ContextCancelIsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(100 * time.Millisecond)
+		_, _ = io.WriteString(w, `{"allowed": true}`)
+	}))
+	defer srv.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	c := NewClient(srv.URL, 5*time.Second) // long timeout — only ctx cancels
+	go func() {
+		time.Sleep(5 * time.Millisecond)
+		cancel()
+	}()
+	dec, err := c.Check(ctx, CheckRequest{ObjectID: "x", ObjectType: "y", Permission: "z", SSOToken: "tok"})
+	require.Error(t, err)
+	require.Equal(t, DecisionUnknown, dec)
+}
+
+func TestClient_MalformedResponseIsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `not-json`)
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, 500*time.Millisecond)
+	dec, err := c.Check(context.Background(), CheckRequest{ObjectID: "x", ObjectType: "y", Permission: "z", SSOToken: "tok"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "decode response")
+	require.Equal(t, DecisionUnknown, dec)
+}
+
+func TestClient_TrailingSlashEndpointNormalized(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/permission-check/v1/check", r.URL.Path)
+		_, _ = io.WriteString(w, `{"allowed": true}`)
+	}))
+	defer srv.Close()
+	// Note the trailing slash.
+	c := NewClient(srv.URL+"/", 500*time.Millisecond)
+	_, err := c.Check(context.Background(), CheckRequest{ObjectID: "x", ObjectType: "y", Permission: "z", SSOToken: "tok"})
+	require.NoError(t, err)
+}
