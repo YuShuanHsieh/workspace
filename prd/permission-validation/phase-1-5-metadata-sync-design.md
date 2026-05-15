@@ -6,7 +6,11 @@ It builds on, and does not modify, the existing Phase 1 documents:
 
 - [phase-1-user-stories.md](./phase-1-user-stories.md)
 - [phase-1-architecture.md](./phase-1-architecture.md)
+- [phase-1-context-header-format.md](./phase-1-context-header-format.md)
+- [phase-1-request-contract.md](./phase-1-request-contract.md)
 - [PRD.md](./PRD.md)
+
+**Phase 1 trust assumption inherited.** Phase 1 trusts the client's `X-Auth-Context` header (`objectId:objectType:action`) — there is no encryption and no Access Management API call in the request path. Phase 1.5 inherits this assumption: see [§3.1](#31-preserved-phase-1-invariants) for what this means for emitted-event integrity and [§5.1](#51-reconciliation-backstop-out-of-scope-for-phase-15-but-designed-for) for the residual drift it introduces.
 
 ## 1. Scope and Phase Placement
 
@@ -33,7 +37,7 @@ This work is delivered as **Phase 1.5: Metadata Sync** — a slice that ships af
 
 ## 2. Software Architecture
 
-Three new modules sit inside the existing sidecar binary, plus one new service on the Access Management side. All Phase 1 components (Route Matcher, Header Extractor, Context Decryptor, Permission Request Builder, Decision Enforcer) are unchanged.
+Three new modules sit inside the existing sidecar binary, plus one new service on the Access Management side. All Phase 1 components (Route Matcher, Header Extractor, Context Header Parser, Permission Request Builder, Decision Enforcer) are unchanged.
 
 ```mermaid
 flowchart LR
@@ -70,7 +74,7 @@ flowchart LR
 
 | Module | Responsibility |
 |---|---|
-| **Response Tap** | For routes flagged `action: create` or `action: delete`, observe the backend response. On `2xx`, extract `objectId` (from configured JSONPath for create, from decrypted context for delete) and hand a complete event record to the Outbox. On non-2xx, emit nothing. Streams the response body through to the client unchanged. |
+| **Response Tap** | For routes flagged `action: create` or `action: delete`, observe the backend response. On `2xx`, extract `objectId` (from configured JSONPath for create, from the parsed `X-Auth-Context` header for delete) and hand a complete event record to the Outbox. On non-2xx, emit nothing. Streams the response body through to the client unchanged. |
 | **Event Outbox** | Append the event record to an embedded WAL (BadgerDB or bbolt) on a PVC-backed volume. `fsync` before returning control to the Response Tap, so the client never gets `2xx` for an event that was not durably recorded. Owns the on-disk format, compaction, and crash recovery. |
 | **JetStream Publisher** | Background goroutine that reads pending entries from the WAL, publishes to JetStream using the JetStream client's async publish + ack handling, and marks entries done. Retries with exponential backoff on broker errors; never blocks the request path. |
 
@@ -89,7 +93,6 @@ sequenceDiagram
     autonumber
     participant U as Client
     participant SC as Sidecar
-    participant CR as App Credential
     participant PCS as Permission Checking Svc
     participant BE as App Backend
     participant WAL as Outbox WAL (PVC)
@@ -99,11 +102,10 @@ sequenceDiagram
 
     rect rgb(245,255,245)
     note over U,BE: Phase 1 validation path (unchanged)
-    U->>SC: POST /things<br/>Headers: SSO, X-Auth-Context, X-Requested-Action=create
+    U->>SC: POST /things<br/>Headers: SSO, X-Auth-Context = parent:thing:create
     SC->>SC: route match → protected, action=create
-    SC->>CR: lookup key
-    SC->>SC: decrypt + validate context
-    SC->>PCS: POST /check { objectId=parent, objectType, permission=create }<br/>+ SSO header
+    SC->>SC: parse X-Auth-Context → (objectId=parent, objectType=thing, action=create)
+    SC->>PCS: POST /check { objectId=parent, objectType=thing, permission=create }<br/>+ SSO header
     PCS-->>SC: allow
     SC->>BE: forward request
     end
@@ -127,13 +129,15 @@ sequenceDiagram
     end
 ```
 
-The **delete** path is identical except: the Response Tap reads `objectId` from the **decrypted context** (it already exists in Access Management), `action` is `deleted`, and the worker performs a soft-delete (`status=deleted`) rather than a hard `DELETE`.
+The **delete** path is identical except: the Response Tap reads `objectId` from the **parsed `X-Auth-Context` header** (the same value PCS approved the delete on), `action` is `deleted`, and the worker performs a soft-delete (`status=deleted`) rather than a hard `DELETE`. See [§3.1](#31-preserved-phase-1-invariants) for the trust note that applies to the delete path under the simplified Phase 1 model.
 
 ### 3.1 Preserved Phase 1 Invariants
 
 - Authorization decisions still happen *before* the backend is reached. The Response Tap only runs on the allow path.
-- `objectId` for delete still comes only from the decrypted context — never from URL, body, or query.
+- `objectId` for delete comes only from the parsed `X-Auth-Context` header — never from URL, body, or query. This is the same value PCS approved the delete against.
 - The sidecar remains the enforcement point; the metadata-sync path adds no new authorization decisions.
+
+**Trust note inherited from simplified Phase 1.** Because Phase 1 trusts the client to declare a truthful `(objectId, objectType)` in `X-Auth-Context`, Phase 1.5 inherits the same residual risk on the delete path: a client could send `X-Auth-Context: A:type:delete` (an object they have delete permission on) while the URL points the backend at object B. PCS approves on A; backend deletes B; this design emits a `deleted` event for A; AM marks A deleted while B stays active. This is the same accepted risk documented in [phase-1-user-stories.md → Phase 1 Scope](./phase-1-user-stories.md#phase-1-scope) and is the reason the reconciliation backstop ([§5.1](#51-reconciliation-backstop-out-of-scope-for-phase-15-but-designed-for)) is required even when the WAL/JetStream path is healthy. The **create** path is not affected: `objectId` is read from the backend response body, not from the header.
 
 ### 3.2 New Invariants Introduced
 
@@ -165,10 +169,10 @@ JSON, published to NATS JetStream stream `platform.objects` on subject `platform
 | `schemaVersion` | constant `1` | Lets the worker reject unknown versions safely. |
 | `eventId` | sidecar (ULID) | Used as JetStream `Nats-Msg-Id` for broker-side dedup and as the worker's idempotency key. |
 | `occurredAt` | sidecar clock at backend-response time | Worker uses last-write-wins on this for ordering. |
-| `appId` | decrypted authorization context | Trusted source. |
-| `objectId` | response body JSONPath (create) or decrypted context (delete) | Never from URL, body, or query for delete. |
-| `objectType` | decrypted authorization context | Trusted source — same value Access Management issued. |
-| `action` | one of `created`, `deleted` | Derived from the route config's `action` field, **not** from the `X-Requested-Action` header (which is user intent, not proof). |
+| `appId` | sidecar's provisioned `appId` (PV1-004 route config) | Trusted source — sidecar's own configuration, not client-supplied. |
+| `objectId` | response body JSONPath (create) or parsed `X-Auth-Context` (delete) | Never from URL, body, or query for delete. Delete-path value is client-declared (see [§3.1](#31-preserved-phase-1-invariants) trust note). |
+| `objectType` | parsed `X-Auth-Context` segment 2 | Client-declared under the simplified Phase 1 trust model. |
+| `action` | one of `created`, `deleted` | Derived from the route config's `action` field, **not** from the `action` segment of `X-Auth-Context` (which is user intent, not proof). |
 | `actorUserId` | SSO token claim | Captured for audit; Access Management may or may not store it. |
 
 ### 4.2 Route Config Extension
@@ -183,7 +187,7 @@ protected:
     responseObjectIdPath: "$.id"         # NEW — required only when action=create
   - method: DELETE
     path: /things/{id}
-    action: delete                       # objectId comes from decrypted context
+    action: delete                       # objectId comes from the parsed X-Auth-Context header
 ```
 
 Rules:
@@ -224,17 +228,18 @@ Rules:
 | 12 | Out-of-order delivery (`deleted` arrives before `created`) | Worker compares `occurredAt`; if incoming event is older than `lastSeenEventId`'s `occurredAt`, drop it. If create arrives after delete, the row stays in `deleted` state. | No (within the chosen LWW semantics) |
 | 13 | Sidecar config has `action: create` but no `responseObjectIdPath` | Sidecar fails to start. Caught in CI by config validation. | N/A |
 | 14 | Application backend lies — returns 2xx without actually creating the object | Sidecar emits a phantom event; Access Management records an object that doesn't exist. | Yes — out of scope; documented as a backend-contract obligation |
+| 15 | Client puts a different `objectId` in `X-Auth-Context` than the one the URL/body actually targets, on a delete (Phase 1 simplified-trust risk) | Sidecar emits a `deleted` event for the header-declared `objectId`; AM marks that one deleted while the actually-deleted backend object stays `active` in AM. | Yes — same accepted Phase 1 risk; covered by reconciliation backstop (§5.1) |
 
 ### 5.1 Reconciliation Backstop (out of scope for Phase 1.5, but designed-for)
 
-Cases #2, #3, #4, and #14 admit drift. Phase 1.5 accepts this and leaves an explicit hook for a future reconciliation job that scans application backends and replays missing events. Phase 1.5 must:
+Cases #2, #3, #4, #14, and #15 admit drift. Phase 1.5 accepts this and leaves an explicit hook for a future reconciliation job that scans application backends and replays missing events. Phase 1.5 must:
 
 - Emit `outbox_extract_fail_total` and `outbox_response_too_large_total` metrics so SRE can size the drift.
 - Document the `eventId` and `(appId, objectId)` shape so a reconciliation tool can produce compatible events later.
 
 ### 5.2 What We Explicitly Do Not Do
 
-- **No fail-open emission.** If we cannot extract the objectId, we never guess from URL, body, or query — that would violate the same trust boundary Phase 1 protects.
+- **No fail-open emission.** If we cannot extract the objectId, we never guess from URL, body, or query — that would introduce a different trust source than the one Phase 1's request path already commits to.
 - **No client-visible retry of the publish.** The client's success or failure response depends only on the WAL append, never on JetStream.
 - **No cross-event transactions.** Each event is independent; the worker never tries to wait for related events.
 
@@ -270,7 +275,7 @@ Added to the Phase 1 PV1-010 set:
 - **Sidecar**, warn: extract failures and publish retries, rate-limited per `appId` to avoid log spam.
 - **Worker**, info: one line per ack with `eventId`, `(appId, objectId)`, `action`, latency.
 - **Worker**, error: DLQ moves, with full event payload sans `actorUserId` (PII redaction).
-- Raw response bodies, SSO tokens, and encrypted contexts never appear in logs.
+- Raw response bodies and SSO tokens never appear in logs. The `X-Auth-Context` header value may be logged at debug only (it carries no secrets, but it is omitted at info+ for log-volume reasons).
 
 ### 6.4 Tests
 
@@ -309,7 +314,7 @@ Estimate buckets per the Phase 1 convention (S: 1-2 d, M: 3-5 d, L: 1-2 w, XL: s
 |---|---|---|---|
 | **PV1.5-001** | Define `object.created` / `object.deleted` event schema, JetStream stream/subject/dedup config, and `eventId` generation rules | S | — |
 | **PV1.5-002** | Extend route-config schema with `action` and `responseObjectIdPath`; add startup validation | S | PV1-004 |
-| **PV1.5-003** | Implement Response Tap: buffer response (size-capped), pass through unchanged, extract `objectId` via JSONPath on 2xx create / from decrypted context on 2xx delete | M | PV1.5-002, PV1-007, PV1-009 |
+| **PV1.5-003** | Implement Response Tap: buffer response (size-capped), pass through unchanged, extract `objectId` via JSONPath on 2xx create / from the parsed `X-Auth-Context` header on 2xx delete | M | PV1.5-002, PV1-007, PV1-009 |
 | **PV1.5-004** | Implement Event Outbox WAL (embedded store, fsync-before-ack, crash recovery, compaction) | L | PV1.5-001 |
 | **PV1.5-005** | Implement JetStream Publisher loop with retry/backoff, ack handling, dedup via `Nats-Msg-Id` | M | PV1.5-004 |
 | **PV1.5-006** | Wire Response Tap → Outbox → Publisher inside the sidecar; surface `500` to client on WAL append failure | S | PV1.5-003, PV1.5-005 |

@@ -18,7 +18,7 @@ The configuration is a single YAML document per app.
 
 ```yaml
 version: v1
-appId: <string>                       # required; matches the appId in encrypted contexts (PV1-003)
+appId: <string>                       # required; identifies the app this config belongs to
 defaultBehavior: deny | skipped       # required; behavior for routes that match no rule. Default value: deny.
 routes:                               # required; list. First match wins.
   - method: GET | POST | PUT | DELETE | PATCH | "*"
@@ -32,7 +32,7 @@ routes:                               # required; list. First match wins.
 
 - `version` must equal `v1`.
 - `appId` must match the sidecar's provisioned `appId`.
-- `defaultBehavior` is `deny` or `skipped`. `protected` is not a valid default because requiring a validated encrypted context for unenumerated routes would block traffic on first deploy — teams that want everything protected must list their routes explicitly (see §4).
+- `defaultBehavior` is `deny` or `skipped`. `protected` is not a valid default because requiring a present-and-well-formed `X-Auth-Context` for unenumerated routes would block traffic on first deploy — teams that want everything protected must list their routes explicitly (see §4).
 - `routes` is a non-empty list.
 - Each `method` is one of `GET`, `POST`, `PUT`, `DELETE`, `PATCH`, or `*` (any).
 - Each `path` is a non-empty pattern (§2.1).
@@ -113,7 +113,7 @@ routes:
 | `deny` (recommended) | Reject with `403`. | The safe default. New routes are blocked by default until explicitly listed. |
 | `skipped` | Forward without validation. | Only for apps that do not handle sensitive data and want to opt out of route-by-route enumeration. |
 
-There is no `protected` default in Phase 1. Protected requests require an encrypted context, and requiring it for unenumerated routes would block the app's first traffic the day it deploys. Teams that want everything protected must list their routes explicitly.
+There is no `protected` default in Phase 1. Protected requests require a present-and-well-formed `X-Auth-Context` header, and requiring it for unenumerated routes would block the app's first traffic the day it deploys. Teams that want everything protected must list their routes explicitly.
 
 ## 5. Distribution
 
@@ -139,8 +139,8 @@ The application team never writes Envoy config directly.
 - Per-route fail-open behavior.
 - Per-route cache TTL or cache eligibility.
 - Body or query-parameter extraction rules.
-- Route-to-permission mapping (the permission comes from `X-Requested-Action`, not the route).
-- Cross-checking that the URL's object ID matches the decrypted `objectId`.
+- Route-to-permission mapping (the permission comes from the `action` segment of `X-Auth-Context`, not the route).
+- Cross-checking that the URL's object ID matches the context-header `objectId`.
 
 These appear in later phases; teams that need them today should flag the requirement during pilot.
 

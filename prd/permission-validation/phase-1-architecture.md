@@ -13,9 +13,7 @@ flowchart LR
     end
 
     subgraph Platform["Platform Services"]
-        AM[Access Management API]
         PCS[Permission Checking Service]
-        CRED[(App Credential Store<br/>symmetric keys by keyId)]
     end
 
     subgraph AppPod["Application Pod (K8s)"]
@@ -24,7 +22,7 @@ flowchart LR
             direction TB
             RM[Route Matcher<br/>PV1-005]
             HX[Header Extractor<br/>PV1-006]
-            DEC[Context Decryptor<br/>PV1-007]
+            PRS[Context Header Parser<br/>PV1-007]
             BLD[Permission Request Builder<br/>PV1-008]
             ENF[Decision Enforcer<br/>PV1-009]
             MET[SRE Metrics<br/>PV1-010]
@@ -33,13 +31,9 @@ flowchart LR
         BE[Application Backend]
     end
 
-    UI -- "objectId, objectType" --> AM
-    AM -- "encryptedContext + plainPermissions" --> UI
-
-    UI -- "request + headers<br/>(SSO, encCtx, action)" --> RM
-    RM --> HX --> DEC
-    DEC -. "fetch key by keyId" .-> CRED
-    DEC --> BLD --> ENF
+    UI -- "request + headers<br/>(SSO, X-Auth-Context = objectId:objectType:action)" --> RM
+    RM --> HX --> PRS
+    PRS --> BLD --> ENF
     BLD -- "objectId, objectType, permission<br/>+ SSO header" --> PCS
     PCS -- "allow / deny" --> ENF
     ENF -- "allow → forward" --> BE
@@ -49,7 +43,7 @@ flowchart LR
 
     RM -. emits .-> MET
     HX -. emits .-> MET
-    DEC -. emits .-> MET
+    PRS -. emits .-> MET
     ENF -. emits .-> MET
     PCS -. latency .-> MET
 ```
@@ -59,17 +53,16 @@ flowchart LR
 | Component | User story | Responsibility |
 |---|---|---|
 | Route Matcher | PV1-005 | Decide whether incoming request is protected, skipped, or unmatched, based on route config (PV1-004). |
-| Header Extractor | PV1-006 | Pull SSO token, encrypted context, and requested action from headers; reject if missing/malformed. |
-| Context Decryptor | PV1-007 | Decrypt + verify the authorization context (authenticated encryption, expiry, audience) using app credential. |
-| Permission Request Builder | PV1-008 | Compose the PCS payload from the **decrypted** `objectId`/`objectType` and the requested `permission`; forward SSO in headers. |
+| Header Extractor | PV1-006 | Pull SSO token and the combined `X-Auth-Context` header; reject if missing. |
+| Context Header Parser | PV1-007 | Split `X-Auth-Context` into `objectId`, `objectType`, `action`; reject if format rules (PV1-003) are violated. |
+| Permission Request Builder | PV1-008 | Compose the PCS payload from the parsed `objectId`/`objectType`/`permission`; forward SSO in headers. |
 | Decision Enforcer | PV1-009 | Forward on allow; return `403` on deny, timeout, or error (fail-closed). |
-| SRE Metrics | PV1-010 | Emit counters and latencies for traffic, outcomes, decryption failures, and header errors. |
+| SRE Metrics | PV1-010 | Emit counters and latencies for traffic, outcomes, header presence errors, and context-parse failures. |
 | Route Config | PV1-004 | Declarative list of protected and skipped routes (method + path). |
-| App Credential Store | PV1-003 | Source of symmetric keys, keyed by `keyId`, provisioned at app registration. |
 
 ### Alternative Topology — Envoy `ext_proc` Filter
 
-The same Phase 1 flow can be implemented with Envoy in the request path and the sidecar acting as an `envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor` gRPC handler. The functional components (PV1-006 … PV1-010) are unchanged; route matching (PV1-005) and request forwarding move out of the sidecar and into Envoy.
+The same Phase 1 flow can be implemented with Envoy in the request path and the sidecar acting as an `envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor` gRPC handler. The functional components (PV1-006 … PV1-010) are unchanged; route matching (PV1-005) and request forwarding move out of the sidecar and into Envoy. There is no Access Management API call in the request path and no app credential lookup — the sidecar is a thin parser + PCS caller.
 
 ```mermaid
 flowchart LR
@@ -78,9 +71,7 @@ flowchart LR
     end
 
     subgraph Platform["Platform Services"]
-        AM[Access Management API]
         PCS[Permission Checking Service]
-        CRED[(App Credential Store<br/>symmetric keys by keyId)]
     end
 
     subgraph AppPod["Application Pod (K8s)"]
@@ -90,7 +81,7 @@ flowchart LR
             direction TB
             EP[ExternalProcessor gRPC stream]
             HX[Header Extractor<br/>PV1-006]
-            DEC[Context Decryptor<br/>PV1-007]
+            PRS[Context Header Parser<br/>PV1-007]
             BLD[Permission Request Builder<br/>PV1-008]
             ENF[Decision Enforcer<br/>PV1-009]
             MET[SRE Metrics<br/>PV1-010]
@@ -98,14 +89,10 @@ flowchart LR
         BE[Application Backend]
     end
 
-    UI -- "objectId, objectType" --> AM
-    AM -- "encryptedContext + plainPermissions" --> UI
-
-    UI -- "request + headers<br/>(SSO, encCtx, action)" --> ENVOY
+    UI -- "request + headers<br/>(SSO, X-Auth-Context = objectId:objectType:action)" --> ENVOY
     ENVOY -. "ext_proc: request_headers" .-> EP
-    EP --> HX --> DEC
-    DEC -. "fetch key by keyId" .-> CRED
-    DEC --> BLD --> ENF
+    EP --> HX --> PRS
+    PRS --> BLD --> ENF
     BLD -- "objectId, objectType, permission<br/>+ SSO header" --> PCS
     PCS -- "allow / deny" --> ENF
     ENF -. "CONTINUE (allow)" .-> ENVOY
@@ -116,7 +103,7 @@ flowchart LR
     BE -- "response" --> ENVOY --> UI
 
     EP -. emits .-> MET
-    DEC -. emits .-> MET
+    PRS -. emits .-> MET
     ENF -. emits .-> MET
     PCS -. latency .-> MET
 ```
@@ -129,8 +116,8 @@ flowchart LR
 | Route Config (sidecar config, PV1-004) | Envoy `RouteConfiguration` + per-route `ExtProcPerRoute` overrides |
 | HTTP request forwarding to backend | Envoy upstream cluster |
 | Fail-closed on sidecar error (PV1-009) | Envoy `failure_mode_allow: false` |
-| Header Extractor / Decryptor / Builder / Enforcer | Sidecar `ExternalProcessor` gRPC handler, unchanged |
-| SRE Metrics (PV1-010) | Split — outcome and decryption metrics in sidecar; filter latency, deny rate, and upstream RTT from Envoy |
+| Header Extractor / Parser / Builder / Enforcer | Sidecar `ExternalProcessor` gRPC handler, unchanged |
+| SRE Metrics (PV1-010) | Split — outcome and parse-failure metrics in sidecar; filter latency, deny rate, and upstream RTT from Envoy |
 
 #### Notable trade-offs
 
@@ -150,22 +137,13 @@ The logical decisions, ordering, and fail-closed semantics below are identical u
 sequenceDiagram
     autonumber
     participant U as Client / UI
-    participant AM as Access Mgmt API
     participant SC as Sidecar
-    participant CR as App Credential
     participant PCS as Permission Checking Svc
     participant BE as App Backend
 
-    rect rgb(240,247,255)
-    note over U,AM: Pre-action: fetch authorization context (PV1-002, PV1-003)
-    U->>AM: GET context (objectId, objectType)
-    AM-->>U: { encryptedContext, plainPermissions }
-    note right of U: plainPermissions = UI display only<br/>(NOT proof of permission)
-    end
-
     rect rgb(245,255,245)
     note over U,BE: Action request → sidecar validation (PV1-005 … PV1-009)
-    U->>SC: action request<br/>Headers: SSO, X-Auth-Context, X-Requested-Action
+    U->>SC: action request<br/>Headers: SSO, X-Auth-Context = objectId:objectType:action
     SC->>SC: Route match (PV1-005)
     alt Skipped route
         SC->>BE: forward as-is
@@ -173,13 +151,11 @@ sequenceDiagram
         SC-->>U: response
     else Protected route
         SC->>SC: Extract headers (PV1-006)
-        alt Missing / malformed headers
+        alt Missing required headers
             SC-->>U: 403 (rejected)
         else Headers present
-            SC->>CR: lookup key by keyId
-            CR-->>SC: symmetric key
-            SC->>SC: Decrypt + validate context<br/>(appId, exp, audience) (PV1-007)
-            alt Expired / tampered / undecryptable
+            SC->>SC: Parse X-Auth-Context<br/>(3 segments, no `:` in segments,<br/>non-empty, length-bounded) (PV1-007)
+            alt Malformed context header
                 SC-->>U: 403 (rejected)
             else Context valid
                 SC->>PCS: POST /check<br/>body: { objectId, objectType, permission }<br/>header: SSO token (PV1-008)
@@ -200,24 +176,25 @@ sequenceDiagram
     end
     end
 
-    note over SC: All outcomes emit metrics<br/>(allow / deny / error / decrypt-fail / header-fail) — PV1-010
+    note over SC: All outcomes emit metrics<br/>(allow / deny / error / ctx-parse-fail / header-fail) — PV1-010
 ```
 
 ## 3. Key Invariants
 
-- `objectId` / `objectType` come **only** from the decrypted authorization context — never from the URL, body, or query string. Path/body extraction is explicitly out of Phase 1 scope.
-- `permission` comes from the `X-Requested-Action` header — treated as **user intent**, not proof of permission (PV1-002).
-- The plain permissions returned by Access Management API are **UI display data only** and never trusted by the sidecar (PV1-003).
-- Default failure mode is **fail-closed**: any header, decryption, or PCS error returns `403`. Fail-open behavior is out of Phase 1 scope.
-- Skipped routes bypass decryption and the Permission Checking Service entirely (PV1-004, PV1-005).
+- `objectId`, `objectType`, and `permission` come **only** from the parsed `X-Auth-Context` header — never from the URL, body, or query string. Path/body extraction is explicitly out of Phase 1 scope.
+- The `action` segment of `X-Auth-Context` is treated as **user intent**, not proof of permission (PV1-002, PV1-003). PCS is the sole authority on whether the user holds it.
+- Phase 1 trusts the client to declare a truthful `(objectId, objectType)`. URL / body cross-checking is explicitly out of Phase 1 scope and is the residual risk documented in [phase-1-user-stories.md → Phase 1 Scope](./phase-1-user-stories.md#phase-1-scope).
+- Default failure mode is **fail-closed**: any header, parse, or PCS error returns `403`. Fail-open behavior is out of Phase 1 scope.
+- Skipped routes bypass context parsing and the Permission Checking Service entirely (PV1-004, PV1-005).
 - The sidecar — not the application backend — is the enforcement point. Rejected requests must never reach the backend (PV1-009, PV1-011).
 
 ## 4. Out-of-Scope Reminders
 
 The architecture above intentionally omits the following Phase 1 non-goals (see `phase-1-user-stories.md` → "Out Of Scope For Phase 1"):
 
+- Encrypted or signed authorization context, app credential provisioning, and Access Management API in the request path.
 - Decision caching and event-driven invalidation.
 - Body, query, and general path-parameter extraction.
 - Fail-open behavior, distributed tracing, and detailed audit logging.
-- Per-route cache behavior, advanced action mapping, automatic key rotation.
-- Cross-checking that the application path's object ID matches the decrypted `objectId`.
+- Per-route cache behavior, advanced action mapping.
+- Cross-checking that the application path / body object ID matches the context-header `objectId`.

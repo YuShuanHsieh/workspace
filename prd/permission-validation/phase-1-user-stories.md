@@ -11,27 +11,27 @@ Estimate buckets:
 
 ## Phase 1 Scope
 
-Phase 1 delivers the minimum production validation flow:
+Phase 1 delivers the minimum production validation flow under the simplifying assumption that **the client is trusted** to declare the resource it is acting on. There is no encrypted authorization context and no Access Management API call in the request path:
 
-1. The client calls Access Management API with `objectId` and `objectType`.
-2. Access Management API returns an encrypted authorization context and a plain permission list for UI display.
-3. The client sends an action request to the application with headers for the user's SSO token, encrypted authorization context, and requested action.
-4. The sidecar intercepts the request before it reaches the application backend.
-5. The sidecar decrypts the authorization context using the app credential provisioned during app registration.
-6. The sidecar sends a permission check request to Permission Checking Service with `objectId`, `objectType`, and requested `permission`; the user's SSO token is forwarded in HTTP headers.
-7. The sidecar forwards granted requests to the application backend and rejects denied requests.
+1. The client sends an action request to the application with headers for the user's SSO token and a single `objectId:objectType:action` context header.
+2. The sidecar intercepts the request before it reaches the application backend.
+3. The sidecar parses the context header into `objectId`, `objectType`, and `action`.
+4. The sidecar sends a permission check request to Permission Checking Service with `objectId`, `objectType`, and `permission` (= the parsed `action`); the user's SSO token is forwarded in HTTP headers so PCS can identify the user.
+5. The sidecar forwards granted requests to the application backend and rejects denied requests.
+
+Trust model: PCS is the sole authority on whether the SSO user holds the requested permission on `(objectId, objectType)`. A client substituting an `objectId` they do not have permission on is harmless (PCS denies). A client substituting an `objectId` they *do* have permission on, while the application backend operates on a different object referenced in the URL/body, is an accepted Phase 1 risk — see "Out Of Scope" below and the related Phase 2 work on URL/body cross-checking.
 
 ## PV1-001: Compare Validation Topology Options
 
-**Background/Goal:** The platform needs to decide which topology Phase 1 should use to intercept and validate requests. Three options are on the table: a custom HTTP-proxy sidecar in the request path, Envoy `ext_authz` calling a request-only authorization service, and Envoy `ext_proc` calling a processor that participates in both request and response phases. The decision affects routing configuration, decryption, header extraction, metrics, deployment, request and response forwarding, and forward-compatibility with the [Phase 1.5 metadata sync design](./phase-1-5-metadata-sync-design.md).
+**Background/Goal:** The platform needs to decide which topology Phase 1 should use to intercept and validate requests. Three options are on the table: a custom HTTP-proxy sidecar in the request path, Envoy `ext_authz` calling a request-only authorization service, and Envoy `ext_proc` calling a processor that participates in both request and response phases. The decision affects routing configuration, header extraction, metrics, deployment, request and response forwarding, and forward-compatibility with the [Phase 1.5 metadata sync design](./phase-1-5-metadata-sync-design.md).
 
 **Description:** Evaluate the three topology options against the Phase 1 validation flow:
 
-- **Custom proxy sidecar.** Sidecar implements HTTP forwarding; route matching, decryption, PCS call, and enforcement all live in sidecar code.
+- **Custom proxy sidecar.** Sidecar implements HTTP forwarding; route matching, context-header parsing, PCS call, and enforcement all live in sidecar code.
 - **Envoy `ext_authz` + sidecar.** Envoy stays in the data path; sidecar exposes a request-only `Check` API. Route matching moves to Envoy; sidecar never sees the response.
 - **Envoy `ext_proc` + sidecar.** Envoy stays in the data path; sidecar implements the `ExternalProcessor` bidirectional gRPC stream and can participate in both request and response phases.
 
-The evaluation should cover implementation complexity, latency, Kubernetes deployment model, request and response forwarding, encrypted context handling, route skip/protect configuration, SRE metrics support, and forward-compatibility with the Phase 1.5 Response Tap.
+The evaluation should cover implementation complexity, latency, Kubernetes deployment model, request and response forwarding, context-header parsing, route skip/protect configuration, SRE metrics support, and forward-compatibility with the Phase 1.5 Response Tap.
 
 **Decision doc:** [phase-1-topology-decision.md](./phase-1-topology-decision.md)
 
@@ -47,40 +47,42 @@ The evaluation should cover implementation complexity, latency, Kubernetes deplo
 
 ## PV1-002: Define Phase 1 Request Contract
 
-**Background/Goal:** The client, sidecar, Access Management API, and Permission Checking Service need a shared contract before implementation starts.
+**Background/Goal:** The client, sidecar, and Permission Checking Service need a shared contract before implementation starts.
 
-**Description:** Define the Phase 1 request and response contract. The client receives an encrypted authorization context and plain permissions from Access Management API. The client sends the encrypted context, requested action, and user's SSO token to the application request. The sidecar uses decrypted context plus requested action to call Permission Checking Service.
+**Description:** Define the Phase 1 request contract. The client sends a single context header `objectId:objectType:action` together with the user's SSO token. The sidecar parses the header and uses the three values to call Permission Checking Service.
 
 **Decision doc:** [phase-1-request-contract.md](./phase-1-request-contract.md)
 
 **Acceptance Criteria:**
 
-- Access Management API response contract is documented.
-- Required client request headers are documented.
+- Required client request headers are documented (SSO token + combined context header).
+- The combined context header format is `objectId:objectType:action` (literal `:` separator, three non-empty segments).
+- `:` is disallowed inside any of the three segment values; values containing `:` are a rejection case.
 - Sidecar-to-Permission-Checking request body is documented with `objectId`, `objectType`, and `permission`.
-- Sidecar-to-Permission-Checking headers are documented, including forwarding the user's SSO token.
-- The requested action header is explicitly defined as user intent, not proof of permission.
+- Sidecar-to-Permission-Checking headers are documented, including forwarding the user's SSO token verbatim.
+- The `action` segment is explicitly defined as user intent, not proof of permission.
 - Missing or malformed required fields are defined as rejection cases.
 
-**Estimate Effort:** M
+**Estimate Effort:** S
 
-## PV1-003: Define Encrypted Authorization Context Format
+## PV1-003: Define Context Header Format
 
-**Background/Goal:** The encrypted authorization context is the trusted source for `objectId` and `objectType` in Phase 1. It must be tamper-resistant and decryptable only by trusted platform components.
+**Background/Goal:** The sidecar reads `objectId`, `objectType`, and `action` from a single client-supplied header. The format must be unambiguous to parse and unambiguous to reject.
 
-**Description:** Define the encrypted payload format and encryption requirements. The payload should be encrypted with symmetric app credentials provisioned during app registration and should use authenticated encryption so the sidecar can detect tampering.
+**Description:** Define the wire format of the context header value. Phase 1 uses a plain-text colon-separated triple: `objectId:objectType:action`. No encryption, no signing, no encoding — the client is trusted (see Phase 1 Scope trust model). The format and rejection rules must be tight enough that a malformed value never silently turns into a valid PCS call.
 
-**Decision doc:** [phase-1-encrypted-context-format.md](./phase-1-encrypted-context-format.md)
+**Decision doc:** [phase-1-context-header-format.md](./phase-1-context-header-format.md)
 
 **Acceptance Criteria:**
 
-- Encrypted payload includes `appId`, `objectId`, `objectType`, `issuedAt`, `expiresAt`, and `keyId`.
-- Encryption uses an authenticated encryption mode or equivalent tamper-proof envelope.
-- App credential ownership and provisioning responsibilities are documented.
-- Expired, undecryptable, malformed, or wrong-audience contexts are rejected.
-- The plain permission list is documented as UI display data only.
+- Header value is exactly three non-empty segments separated by literal `:` characters.
+- `:` is disallowed inside any segment value; segments containing `:` are rejected.
+- Empty segments (e.g., `:foo:bar`, `foo::bar`, `foo:bar:`) are rejected.
+- Leading or trailing whitespace on any segment is rejected (no trimming).
+- Maximum total header length is bounded and documented; over-length values are rejected.
+- All rejection conditions are enumerated with reason labels for SRE metrics.
 
-**Estimate Effort:** M
+**Estimate Effort:** S
 
 ## PV1-004: Define Protected And Skipped Path Configuration
 
@@ -118,48 +120,45 @@ The evaluation should cover implementation complexity, latency, Kubernetes deplo
 
 ## PV1-006: Extract Required Request Headers
 
-**Background/Goal:** Phase 1 intentionally avoids flexible context extraction. The sidecar only needs to read the user's SSO token, encrypted authorization context, and requested action from headers.
+**Background/Goal:** Phase 1 intentionally avoids flexible context extraction. The sidecar only needs to read the user's SSO token and the combined context header.
 
-**Description:** Implement header extraction for protected requests. The sidecar should extract the SSO token, encrypted context, and requested action. It should reject protected requests when required headers are missing or malformed.
+**Description:** Implement header extraction for protected requests. The sidecar should extract the SSO token and the combined `objectId:objectType:action` context header. It should reject protected requests when required headers are missing.
 
 **Acceptance Criteria:**
 
 - Sidecar extracts user's SSO token from the configured header.
-- Sidecar extracts encrypted authorization context from the configured header.
-- Sidecar extracts requested action from the configured header.
-- Missing SSO token, encrypted context, or requested action causes rejection.
-- Header parsing errors are counted in SRE metrics.
+- Sidecar extracts the combined context header from the configured header.
+- Missing SSO token or context header causes rejection.
+- Header presence errors are counted in SRE metrics.
 
 **Estimate Effort:** S
 
-## PV1-007: Decrypt And Validate Authorization Context
+## PV1-007: Parse And Validate Context Header
 
-**Background/Goal:** The sidecar must recover trusted `objectId` and `objectType` from the encrypted authorization context before calling Permission Checking Service.
+**Background/Goal:** The sidecar must extract `objectId`, `objectType`, and `action` from the context header before calling Permission Checking Service. Phase 1 has no encryption — the parser is the only line of defense against malformed values reaching PCS.
 
-**Description:** Implement decryption and validation of the encrypted authorization context using the app credential. The sidecar should reject protected requests if the context cannot be decrypted or fails validation.
+**Description:** Implement parsing and validation of the context header per PV1-003. The sidecar splits the header on `:`, validates that exactly three non-empty segments are present, and rejects any value that violates the format rules.
 
 **Acceptance Criteria:**
 
-- Sidecar decrypts authorization context using the app credential.
-- Sidecar validates required fields: `appId`, `objectId`, `objectType`, `issuedAt`, `expiresAt`, and `keyId`.
-- Expired context is rejected.
-- Tampered or undecryptable context is rejected.
-- The decrypted `objectId` and `objectType` are used for permission checking.
-- Decryption failures are counted in SRE metrics.
+- Sidecar splits the context header on `:` and requires exactly three non-empty segments.
+- Sidecar rejects values containing extra `:` characters in any segment.
+- Sidecar rejects values with empty segments, leading/trailing whitespace, or over the maximum length.
+- The parsed `objectId`, `objectType`, and `action` are passed to permission checking unchanged.
+- Parse failures are counted in SRE metrics with the reason label from PV1-003.
 
-**Estimate Effort:** L
+**Estimate Effort:** S
 
 ## PV1-008: Build Permission Checking Request
 
 **Background/Goal:** The sidecar must translate the intercepted request into the Permission Checking Service contract.
 
-**Description:** Build the outbound request to Permission Checking Service using trusted decrypted context and requested action. The JSON payload contains `objectId`, `objectType`, and `permission`. The user's SSO token is forwarded in HTTP headers for identity validation by Permission Checking Service.
+**Description:** Build the outbound request to Permission Checking Service using the parsed context-header values. The JSON payload contains `objectId`, `objectType`, and `permission`. The user's SSO token is forwarded in HTTP headers for identity validation by Permission Checking Service.
 
 **Acceptance Criteria:**
 
 - Sidecar sends `objectId`, `objectType`, and `permission` in the JSON payload.
-- `objectId` and `objectType` come from decrypted context.
-- `permission` comes from the requested action header.
+- `objectId`, `objectType`, and `permission` come from the parsed context header.
 - User's SSO token is forwarded in HTTP headers.
 - Permission Checking Service validation errors are handled as request rejection.
 
@@ -193,8 +192,8 @@ The evaluation should cover implementation complexity, latency, Kubernetes deplo
 - Metrics include allow, deny, and error counts.
 - Metrics include sidecar validation latency.
 - Metrics include Permission Checking Service latency.
-- Metrics include missing or invalid header count.
-- Metrics include decryption failure count.
+- Metrics include missing-header count.
+- Metrics include context-header parse-failure count, broken down by reason label from PV1-003.
 - Metrics are documented for SRE consumers.
 
 **Estimate Effort:** M
@@ -203,14 +202,14 @@ The evaluation should cover implementation complexity, latency, Kubernetes deplo
 
 **Background/Goal:** The Phase 1 flow must be validated end to end before pilot adoption.
 
-**Description:** Add integration tests using fake application backend and fake Permission Checking Service. Tests should cover successful forwarding, denied requests, malformed requests, decryption failures, and dependency failures.
+**Description:** Add integration tests using fake application backend and fake Permission Checking Service. Tests should cover successful forwarding, denied requests, missing headers, malformed context-header values, and dependency failures.
 
 **Acceptance Criteria:**
 
 - Test covers granted request forwarded to backend.
 - Test covers denied request returning `403`.
 - Test covers missing required headers.
-- Test covers malformed or expired encrypted context.
+- Test covers malformed context header (extra `:`, empty segment, over-length, whitespace).
 - Test covers Permission Checking Service timeout or error.
 - Test verifies rejected requests do not reach the backend.
 
@@ -220,13 +219,13 @@ The evaluation should cover implementation complexity, latency, Kubernetes deplo
 
 **Background/Goal:** Application teams need a concrete example to adopt Phase 1 without guessing how the pieces fit together.
 
-**Description:** Create a minimal onboarding example showing route configuration, client request headers, encrypted context expectations, and sidecar-to-Permission-Checking request shape.
+**Description:** Create a minimal onboarding example showing route configuration, client request headers, context header format, and sidecar-to-Permission-Checking request shape.
 
 **Acceptance Criteria:**
 
 - Example includes protected and skipped route configuration.
-- Example shows client request headers for SSO token, encrypted context, and requested action.
-- Example explains that plain permissions are for UI display only.
+- Example shows client request headers for SSO token and the combined `objectId:objectType:action` context header.
+- Example calls out the Phase 1 trust assumption (client is trusted to declare `objectId`/`objectType`).
 - Example shows the sidecar-to-Permission-Checking payload and headers.
 - Example documents common rejection cases.
 
@@ -234,6 +233,9 @@ The evaluation should cover implementation complexity, latency, Kubernetes deplo
 
 ## Out Of Scope For Phase 1
 
+- Encrypted or signed authorization context (deferred; Phase 1 trusts client-supplied `objectId`/`objectType`).
+- Access Management API in the request path.
+- App credential provisioning and key management.
 - Decision caching.
 - Event-driven cache invalidation.
 - Body extraction.
@@ -244,5 +246,4 @@ The evaluation should cover implementation complexity, latency, Kubernetes deplo
 - Detailed audit logging.
 - Per-route cache behavior.
 - Advanced route/action mapping.
-- Automatic key rotation.
-- Validation that application path object ID matches decrypted `objectId`.
+- Validation that the application path / body object ID matches the context-header `objectId`.

@@ -8,15 +8,15 @@
 
 ## 1. Context
 
-Phase 1 must intercept every protected request, decrypt the authorization context, call the Permission Checking Service (PCS), and forward or reject before the application backend sees the request. Three topologies are on the table; this doc compares them against the Phase 1 flow and Phase 1.5 forward-compat constraints, then recommends one.
+Phase 1 must intercept every protected request, parse the `X-Auth-Context` header, call the Permission Checking Service (PCS), and forward or reject before the application backend sees the request. Three topologies are on the table; this doc compares them against the Phase 1 flow and Phase 1.5 forward-compat constraints, then recommends one.
 
-The Phase 1 flow (decrypt → PCS check → enforce) is described in [phase-1-architecture.md §2](./phase-1-architecture.md#2-data-flow--protected-request) and applies to all three options. What differs is **where** route matching and HTTP forwarding live, and **what** wire protocol the sidecar speaks.
+The Phase 1 flow (parse context → PCS check → enforce) is described in [phase-1-architecture.md §2](./phase-1-architecture.md#2-data-flow--protected-request) and applies to all three options. What differs is **where** route matching and HTTP forwarding live, and **what** wire protocol the sidecar speaks.
 
 ## 2. Options
 
 ### 2.1 Option A — Custom proxy sidecar
 
-The sidecar is a small HTTP proxy in the pod. It owns route matching, header extraction, decryption, the PCS call, enforcement, and upstream forwarding to the application backend.
+The sidecar is a small HTTP proxy in the pod. It owns route matching, header extraction, context-header parsing, the PCS call, enforcement, and upstream forwarding to the application backend.
 
 - One process per pod; no platform dependency beyond Kubernetes.
 - All Phase 1 components ([phase-1-architecture.md §1](./phase-1-architecture.md#1-software-architecture)) live in sidecar code.
@@ -24,7 +24,7 @@ The sidecar is a small HTTP proxy in the pod. It owns route matching, header ext
 
 ### 2.2 Option B — Envoy `ext_proc` + sidecar (recommended)
 
-Envoy is in the request path. The sidecar implements `envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor` and handles a bidirectional gRPC stream per HTTP transaction. Envoy owns route matching, upstream forwarding, and timeouts; the sidecar owns the validator logic (extract → decrypt → PCS → enforce).
+Envoy is in the request path. The sidecar implements `envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor` and handles a bidirectional gRPC stream per HTTP transaction. Envoy owns route matching, upstream forwarding, and timeouts; the sidecar owns the validator logic (extract → parse context → PCS → enforce).
 
 - Two processes per pod (Envoy + sidecar).
 - Skipped routes are expressed as Envoy `ExtProcPerRoute.disabled: true` and never reach the sidecar.
@@ -62,7 +62,7 @@ A is operationally simplest. B and C add Envoy as a platform-owned dependency.
 ### 3.3 Development effort
 
 - **A** requires building an HTTP proxy: connection pool, keep-alives, timeouts, retries (or explicit no-retry), upstream health, request/response streaming. This is the largest sidecar surface of the three.
-- **B** requires implementing the `ext_proc` bidirectional stream, handling `request_headers` and (for Phase 1.5) `response_headers`/`response_body`, and emitting `ImmediateResponse` for deny. No HTTP proxy code in the sidecar.
+- **B** requires implementing the `ext_proc` bidirectional stream, handling `request_headers` (where `X-Auth-Context` is parsed) and (for Phase 1.5) `response_headers`/`response_body`, and emitting `ImmediateResponse` for deny. No HTTP proxy code in the sidecar.
 - **C** requires implementing the `ext_authz` `Check` unary RPC. Smallest sidecar.
 
 ### 3.4 Debugging experience
@@ -104,13 +104,13 @@ Reasoning:
 
 A short POC is required before pilot adoption. Scope:
 
-1. **Minimal `ext_proc` handler.** Sidecar handles `request_headers`, returns `CONTINUE` for allow and `ImmediateResponse(403)` for deny. No real decryption; stub PCS.
+1. **Minimal `ext_proc` handler.** Sidecar handles `request_headers`, returns `CONTINUE` for allow and `ImmediateResponse(403)` for deny. No real PCS; the stub returns a fixed allow/deny based on the parsed `action` segment.
 2. **Latency benchmark.** Measure added p50 / p95 / p99 latency under sustained load (target: stay under the PRD §4 10ms validation budget). Compare against a no-filter baseline and against a stub Option A.
 3. **Phase 1.5 ordering check.** Enable `response_header_mode: SEND` on one route and confirm the sidecar sees `response_headers` before the client sees the `2xx`. This is the forward-compat smoke test, not a full Phase 1.5 implementation.
 4. **Failure-mode confirmation.** Kill the sidecar mid-stream; confirm Envoy returns `5xx` (fail-closed) given `failure_mode_allow: false`.
 5. **Skipped-route bypass.** Configure `ExtProcPerRoute.disabled: true` on `/health`; confirm via sidecar logs that the request is never observed.
 
-The POC is a single user-story-sized effort (estimated M). It does **not** implement decryption or any real PCS integration — those are PV1-007 / PV1-008.
+The POC is a single user-story-sized effort (estimated M). It does **not** implement real PCS integration — that is PV1-008.
 
 ## 7. Acceptance criteria mapping
 

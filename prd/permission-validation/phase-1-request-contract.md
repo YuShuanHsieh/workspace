@@ -4,56 +4,35 @@
 |---|---|
 | **Status** | Draft |
 | **User story** | [PV1-002](./phase-1-user-stories.md#pv1-002-define-phase-1-request-contract) |
-| **Related** | [phase-1-encrypted-context-format.md](./phase-1-encrypted-context-format.md) · [phase-1-architecture.md §2](./phase-1-architecture.md#2-data-flow--protected-request) · [PRD §5.2](./PRD.md#52-the-validation-flow) |
+| **Related** | [phase-1-context-header-format.md](./phase-1-context-header-format.md) · [phase-1-architecture.md §2](./phase-1-architecture.md#2-data-flow--protected-request) · [PRD §5.2](./PRD.md#52-the-validation-flow) |
 
 ## 1. Overview
 
-This doc fixes the wire contracts that the client, the Access Management API (AM), the sidecar, and the Permission Checking Service (PCS) use for the Phase 1 validation flow. Field semantics, trust assumptions, and rejection cases are normative.
+This doc fixes the wire contracts that the client, the sidecar, and the Permission Checking Service (PCS) use for the Phase 1 validation flow. Field semantics, trust assumptions, and rejection cases are normative.
+
+Phase 1 operates under the simplifying assumption that **the client is trusted** to declare the resource it is acting on. There is no encrypted context, no Access Management API call in the request path, and no app credential. The sidecar is a thin parser + PCS caller; PCS is the sole authority on whether the SSO user holds the requested permission on `(objectId, objectType)`.
 
 Actors:
 
-- **Client** — UI or app code holding the user's SSO token.
-- **Access Management API (AM)** — issues encrypted authorization context plus the plain permission list for UI display.
-- **Sidecar / Envoy `ext_proc` handler** — decrypts, calls PCS, enforces.
+- **Client** — UI or app code holding the user's SSO token. Composes the context header from `objectId`, `objectType`, and the action it intends to perform.
+- **Sidecar / Envoy `ext_proc` handler** — parses the context header, calls PCS, enforces the decision.
 - **Permission Checking Service (PCS)** — evaluates a permission for `objectId` + `objectType`, scoped to the user identified by the forwarded SSO token.
 
-## 2. Access Management API response
-
-**Request (client → AM):** out of scope of Phase 1 sidecar; documented here only to anchor the response shape.
-
-```
-GET /access-mgmt/v1/contexts?objectId={id}&objectType={type}
-Authorization: Bearer <SSO-token>
-```
-
-**Response (AM → client):**
-
-```json
-{
-  "encryptedContext": "v1.<keyId>.<base64url-payload>",
-  "plainPermissions": ["read", "edit", "delete"]
-}
-```
-
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `encryptedContext` | string | yes | Single-line encoded encrypted authorization context. Format defined in [phase-1-encrypted-context-format.md](./phase-1-encrypted-context-format.md). |
-| `plainPermissions` | string[] | yes | List of permissions the user has on the resource, for **UI display only**. Sidecar never reads this field. |
-
-## 3. Client request headers (client → sidecar/Envoy)
+## 2. Client request headers (client → sidecar/Envoy)
 
 | Header | Required | Value | Notes |
 |---|---|---|---|
 | `Authorization` | yes | `Bearer <SSO-token>` | Standard SSO bearer. The sidecar forwards this verbatim to PCS. |
-| `X-Auth-Context` | yes | `encryptedContext` value from AM response (§2) | Single-line; format per [phase-1-encrypted-context-format.md](./phase-1-encrypted-context-format.md). |
-| `X-Requested-Action` | yes | The permission the user is attempting (e.g., `edit`) | **User intent only; see §5.** |
+| `X-Auth-Context` | yes | `objectId:objectType:action` | Single line, plain text. Format per [phase-1-context-header-format.md](./phase-1-context-header-format.md). |
 | `X-Request-Id` | recommended | UUID or platform request id | Propagated to PCS for correlation. |
 
 Header names are normative. Casing follows HTTP/2 lowercased convention on the wire; documentation uses the conventional title-case for readability.
 
-## 4. Sidecar → Permission Checking Service
+The `action` segment of `X-Auth-Context` carries user intent and is **not** a separate header. See §4 for the trust model.
 
-### 4.1 Body
+## 3. Sidecar → Permission Checking Service
+
+### 3.1 Body
 
 ```
 POST /permission-check/v1/check
@@ -62,21 +41,21 @@ Content-Type: application/json
 
 ```json
 {
-  "objectId": "<from decrypted context>",
-  "objectType": "<from decrypted context>",
-  "permission": "<from X-Requested-Action header>"
+  "objectId": "<from parsed X-Auth-Context>",
+  "objectType": "<from parsed X-Auth-Context>",
+  "permission": "<from parsed X-Auth-Context>"
 }
 ```
 
 | Field | Source | Trust |
 |---|---|---|
-| `objectId` | Decrypted authorization context (PV1-003) | Trusted — issued by AM, AEAD-protected. |
-| `objectType` | Decrypted authorization context (PV1-003) | Trusted — issued by AM, AEAD-protected. |
-| `permission` | `X-Requested-Action` header | **Untrusted intent.** PCS decides if the user has this permission. |
+| `objectId` | `X-Auth-Context` segment 1 | **Client-declared.** Trusted under the Phase 1 assumption (§4); PCS still gates the decision. |
+| `objectType` | `X-Auth-Context` segment 2 | **Client-declared.** Trusted under the Phase 1 assumption (§4); PCS still gates the decision. |
+| `permission` | `X-Auth-Context` segment 3 (`action`) | **Untrusted intent.** PCS decides if the user has this permission. |
 
-The user identity (`userId`, tenant, etc.) is **not** sent in the JSON body. PCS derives it from the forwarded SSO token (§4.2).
+The user identity (`userId`, tenant, etc.) is **not** sent in the JSON body. PCS derives it from the forwarded SSO token (§3.2).
 
-### 4.2 Headers
+### 3.2 Headers
 
 | Header | Required | Value | Notes |
 |---|---|---|---|
@@ -84,42 +63,40 @@ The user identity (`userId`, tenant, etc.) is **not** sent in the JSON body. PCS
 | `Content-Type` | yes | `application/json` | |
 | `X-Request-Id` | recommended | Same value the sidecar received, or one it generated | For correlation in PCS logs. |
 
-The sidecar **does not** synthesize or modify the SSO token. If the client did not send `Authorization`, the request is rejected (§6) before PCS is called.
+The sidecar **does not** synthesize or modify the SSO token. If the client did not send `Authorization`, the request is rejected (§5) before PCS is called.
 
-## 5. Trust model and action-header semantics
+## 4. Trust model
 
-The `X-Requested-Action` header is treated as **user intent**, not proof of permission:
+Phase 1 trusts the client to put a truthful `(objectId, objectType)` in `X-Auth-Context`. The defense in depth is:
 
-- The client declares "I am trying to perform action X."
-- PCS decides whether the user is allowed to perform X on (`objectId`, `objectType`).
-- The action header is not signed and not encrypted; tampering with it changes only which permission is checked, never whose decision is enforced.
+- **PCS gates the decision.** A client substituting an `objectId` they do not have permission on will be denied. They cannot forge access they do not have.
+- **The `action` segment is intent, not proof.** Setting `X-Auth-Context: doc-1:document:admin-delete` does **not** grant admin-delete; PCS denies if the user lacks it.
 
-Concretely, a client that sets `X-Requested-Action: admin-delete` does **not** thereby gain admin-delete; PCS will deny if the user does not have it. The only way the action header can matter is by checking a permission the user *does* have, which is harmless.
+The accepted residual risk: a client substitutes an `objectId` they *do* have permission on (e.g., another document they own) while the application backend operates on a different object referenced in the URL or body. Phase 1 does not cross-check the URL against the header. This risk is documented in [phase-1-user-stories.md → Out Of Scope](./phase-1-user-stories.md#out-of-scope-for-phase-1) and is the motivation for path/body validation in a later phase.
 
-`objectId` and `objectType` come **only** from the decrypted authorization context. They are never read from the URL, query string, or body. This is what makes the decision tamper-resistant: the encrypted context uses authenticated encryption that binds `objectId` and `objectType` into the ciphertext, so a client cannot substitute them. See [phase-1-encrypted-context-format.md](./phase-1-encrypted-context-format.md) for the format.
+`objectId`, `objectType`, and `permission` come **only** from the parsed `X-Auth-Context`. They are never read from the URL, query string, or body.
 
-## 6. Rejection cases
+## 5. Rejection cases
 
 | Condition | Sidecar response | Reach backend? | Metric |
 |---|---|---|---|
 | Missing `Authorization` | `403 Forbidden` | no | `header_invalid_total{reason="missing_authz"}` |
 | Missing `X-Auth-Context` | `403 Forbidden` | no | `header_invalid_total{reason="missing_ctx"}` |
-| Missing `X-Requested-Action` | `403 Forbidden` | no | `header_invalid_total{reason="missing_action"}` |
 | Malformed `Authorization` (not a well-formed `Bearer <token>` value) | `403 Forbidden` | no | `header_invalid_total{reason="malformed_authz"}` |
-| Malformed `X-Requested-Action` (empty after trimming whitespace) | `403 Forbidden` | no | `header_invalid_total{reason="malformed_action"}` |
-| `X-Auth-Context` undecryptable, tampered, expired, or wrong audience (`appId` mismatch) | `403 Forbidden` | no | `decrypt_failure_total{reason=...}` |
+| `X-Auth-Context` malformed (wrong segment count, empty segment, whitespace, over-length) | `403 Forbidden` | no | `ctx_parse_failure_total{reason=...}` — labels enumerated in [phase-1-context-header-format.md §4](./phase-1-context-header-format.md#4-validation-rules-and-rejection) |
 | PCS returns deny | `403 Forbidden` | no | `decisions_total{outcome="deny"}` |
 | PCS times out or 5xx | `403 Forbidden` (fail-closed) | no | `decisions_total{outcome="error"}` |
 
-The body of rejection responses is intentionally minimal in Phase 1; a single-line reason code is acceptable but it must not leak decrypted context fields or PCS internals.
+The body of rejection responses is intentionally minimal in Phase 1; a single-line reason code is acceptable but it must not echo the raw context-header value or PCS internals.
 
-## 7. Acceptance criteria mapping
+## 6. Acceptance criteria mapping
 
 | Acceptance criterion | Section |
 |---|---|
-| AM API response contract documented | §2 |
-| Required client request headers documented | §3 |
-| Sidecar-to-PCS body with `objectId`, `objectType`, `permission` | §4.1 |
-| Sidecar-to-PCS headers including forwarded SSO | §4.2 |
-| Action header defined as intent, not proof | §5 |
-| Missing/malformed required fields are rejection cases | §6 |
+| Required client request headers documented | §2 |
+| Combined context header format `objectId:objectType:action` | §2 + [phase-1-context-header-format.md](./phase-1-context-header-format.md) |
+| `:` disallowed inside segment values | [phase-1-context-header-format.md §4](./phase-1-context-header-format.md#4-validation-rules-and-rejection) |
+| Sidecar-to-PCS body with `objectId`, `objectType`, `permission` | §3.1 |
+| Sidecar-to-PCS headers including forwarded SSO | §3.2 |
+| `action` segment defined as intent, not proof | §4 |
+| Missing/malformed required fields are rejection cases | §5 |
