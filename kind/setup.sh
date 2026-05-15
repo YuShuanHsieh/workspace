@@ -42,18 +42,27 @@ fi
 kubectl config use-context "kind-${CLUSTER_NAME}"
 
 # Local image build+load. The tags below MUST match kind/demo/values.yaml →
-# images.{echoServer,pcs,dashboardClient}. For company use (private registry),
-# skip this build/load section and just override the three lines in values.yaml
-# to point at your pre-built, pre-published images.
-log "Building local images (echo-server, pcs, dashboard-client)"
-(cd "${ROOT}/sample-apps/echo-server"      && docker build -t workspace/echo-server:dev      -f deploy/Dockerfile .)
-(cd "${ROOT}/sample-apps/pcs"              && docker build -t workspace/pcs:dev              -f deploy/Dockerfile .)
-(cd "${ROOT}/sample-apps/dashboard-client" && docker build -t workspace/dashboard-client:dev -f deploy/Dockerfile .)
+# images.{echoServer,pcs,dashboardClient}. For company use with a private
+# registry that already has the images pushed, skip this whole block:
+#
+#   SKIP_LOCAL_BUILD=1 ./kind/setup.sh
+#
+# …and make sure the three image lines in values.yaml point at your registry.
+# The kind nodes will then pull from the registry instead of from the local
+# Docker daemon.
+if [[ -z "${SKIP_LOCAL_BUILD:-}" ]]; then
+  log "Building local images (echo-server, pcs, dashboard-client) — set SKIP_LOCAL_BUILD=1 to skip"
+  (cd "${ROOT}/sample-apps/echo-server"      && docker build -t workspace/echo-server:dev      -f deploy/Dockerfile .)
+  (cd "${ROOT}/sample-apps/pcs"              && docker build -t workspace/pcs:dev              -f deploy/Dockerfile .)
+  (cd "${ROOT}/sample-apps/dashboard-client" && docker build -t workspace/dashboard-client:dev -f deploy/Dockerfile .)
 
-log "Loading images into kind"
-kind load docker-image workspace/echo-server:dev      --name "${CLUSTER_NAME}"
-kind load docker-image workspace/pcs:dev              --name "${CLUSTER_NAME}"
-kind load docker-image workspace/dashboard-client:dev --name "${CLUSTER_NAME}"
+  log "Loading local images into kind"
+  kind load docker-image workspace/echo-server:dev      --name "${CLUSTER_NAME}"
+  kind load docker-image workspace/pcs:dev              --name "${CLUSTER_NAME}"
+  kind load docker-image workspace/dashboard-client:dev --name "${CLUSTER_NAME}"
+else
+  log "Skipping local image build+load (SKIP_LOCAL_BUILD set) — kind will pull from the registry in values.yaml"
+fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Phase B — Istio control plane (separate Helm releases) + umbrella chart
@@ -85,13 +94,13 @@ helm upgrade --install demo "${DEMO}" -n istio-system --wait
 
 # Wait for the app workloads applied by the umbrella to be Available
 log "Waiting for documents-team Deployments to be Available"
-kubectl -n documents wait --for=condition=Available deploy/pcs              --timeout=120s
-kubectl -n documents wait --for=condition=Available deploy/documents-api    --timeout=180s
-kubectl -n documents wait --for=condition=Available deploy/documents-search --timeout=180s
-kubectl -n documents wait --for=condition=Available deploy/dashboard-client --timeout=120s
+kubectl -n documents wait --for=condition=Available deploy/pcs              --timeout=300s
+kubectl -n documents wait --for=condition=Available deploy/documents-api    --timeout=300s
+kubectl -n documents wait --for=condition=Available deploy/documents-search --timeout=300s
+kubectl -n documents wait --for=condition=Available deploy/dashboard-client --timeout=300s
 
 log "Waiting for wiki-team Deployment to be Available"
-kubectl -n wiki wait --for=condition=Available deploy/wiki-api --timeout=180s
+kubectl -n wiki wait --for=condition=Available deploy/wiki-api --timeout=300s
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Phase C — Per-namespace ingressgateways (separate Helm releases because
@@ -138,8 +147,8 @@ helm upgrade --install wiki-ingressgateway "${CHARTS}/gateway-1.24.2.tgz" \
 # ─────────────────────────────────────────────────────────────────────────────
 
 log "Waiting for ingressgateway pods to be Ready"
-kubectl -n documents wait --for=condition=ready pod -l istio=documents-ingressgateway --timeout=180s
-kubectl -n wiki      wait --for=condition=ready pod -l istio=wiki-ingressgateway      --timeout=180s
+kubectl -n documents wait --for=condition=ready pod -l istio=documents-ingressgateway --timeout=300s
+kubectl -n wiki      wait --for=condition=ready pod -l istio=wiki-ingressgateway      --timeout=300s
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Verification banner
@@ -175,6 +184,7 @@ EnvoyFilters in app namespaces (none in istio-system):
 Swap container registry for company use:
   App images:       edit kind/demo/values.yaml under images.*
   Kind node image:  edit kind/kind-config.yaml (node image is pinned there by digest)
+  Skip local build: SKIP_LOCAL_BUILD=1 ./kind/setup.sh  (when registry already has the images)
 
 Teardown:
   ${KIND_DIR}/teardown.sh
