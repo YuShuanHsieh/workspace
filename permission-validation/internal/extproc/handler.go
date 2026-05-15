@@ -2,6 +2,7 @@ package extproc
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"permission-validation/internal/header"
@@ -51,21 +52,30 @@ func (h *Handler) Decide(ctx context.Context, hdrs map[string]string) Outcome {
 
 	tok, err := header.ExtractAuth(hdrs)
 	if err != nil {
-		reason := err.(*header.HeaderError).Reason
-		h.m.HeaderInvalid(ctx, reason)
-		return Outcome{Kind: OutcomeRejectHeader, Reason: reason}
+		var he *header.HeaderError
+		if !errors.As(err, &he) {
+			he = &header.HeaderError{Reason: "internal_error"}
+		}
+		h.m.HeaderInvalid(ctx, he.Reason)
+		return Outcome{Kind: OutcomeRejectHeader, Reason: he.Reason}
 	}
 	ctxRaw, err := header.ExtractContext(hdrs)
 	if err != nil {
-		reason := err.(*header.HeaderError).Reason
-		h.m.HeaderInvalid(ctx, reason)
-		return Outcome{Kind: OutcomeRejectHeader, Reason: reason}
+		var he *header.HeaderError
+		if !errors.As(err, &he) {
+			he = &header.HeaderError{Reason: "internal_error"}
+		}
+		h.m.HeaderInvalid(ctx, he.Reason)
+		return Outcome{Kind: OutcomeRejectHeader, Reason: he.Reason}
 	}
 	parsed, err := header.ParseContextHeader(ctxRaw)
 	if err != nil {
-		reason := err.(*header.ParseError).Reason
-		h.m.CtxParseFailure(ctx, reason)
-		return Outcome{Kind: OutcomeRejectParse, Reason: reason}
+		var pe *header.ParseError
+		if !errors.As(err, &pe) {
+			pe = &header.ParseError{Reason: "internal_error"}
+		}
+		h.m.CtxParseFailure(ctx, pe.Reason)
+		return Outcome{Kind: OutcomeRejectParse, Reason: pe.Reason}
 	}
 
 	pcsStart := time.Now()

@@ -64,7 +64,7 @@ func (m *Metrics) SidecarLatency(ctx context.Context, d time.Duration) {
 	m.sidecarLatency.Record(ctx, float64(d.Microseconds())/1000.0)
 }
 
-// PCSLatency records the time spent waiting on PCS.
+// PCSLatency records the duration of the PCS HTTP call, including failed calls.
 func (m *Metrics) PCSLatency(ctx context.Context, d time.Duration) {
 	m.pcsLatency.Record(ctx, float64(d.Microseconds())/1000.0)
 }

@@ -65,6 +65,7 @@ func TestDecide_PCSError_FailClosed(t *testing.T) {
 		"x-auth-context": "doc-1:document:edit",
 	})
 	require.Equal(t, OutcomeRejectError, out.Kind)
+	require.Equal(t, "pcs_error", out.Reason)
 }
 
 func TestDecide_MissingAuth(t *testing.T) {
