@@ -61,14 +61,18 @@ curl -H "x-workspace-user-id: alice@workspace.test"   http://wiki.local:8081/hel
 curl -H "x-workspace-user-id: mallory@workspace.test" http://wiki.local:8081/hello        # 403
 ```
 
-Alternative (no `/etc/hosts` edit — useful in CI or environments without sudo):
+Alternative (no `/etc/hosts` edit — useful in CI or environments without sudo).
+Istio's VirtualService matches on the `Host` header, so passing it explicitly
+works without DNS games:
 
 ```bash
-curl --resolve documents.local:8080:127.0.0.1 -H "x-workspace-user-id: alice@workspace.test"   http://documents.local:8080/hello
-curl --resolve documents.local:8080:127.0.0.1 -H "x-workspace-user-id: mallory@workspace.test" http://documents.local:8080/hello
-curl --resolve wiki.local:8081:127.0.0.1      -H "x-workspace-user-id: alice@workspace.test"   http://wiki.local:8081/hello
-curl --resolve wiki.local:8081:127.0.0.1      -H "x-workspace-user-id: mallory@workspace.test" http://wiki.local:8081/hello
+curl -H "Host: documents.local" -H "x-workspace-user-id: alice@workspace.test"   http://127.0.0.1:8080/hello
+curl -H "Host: documents.local" -H "x-workspace-user-id: mallory@workspace.test" http://127.0.0.1:8080/hello
+curl -H "Host: wiki.local"      -H "x-workspace-user-id: alice@workspace.test"   http://127.0.0.1:8081/hello
+curl -H "Host: wiki.local"      -H "x-workspace-user-id: mallory@workspace.test" http://127.0.0.1:8081/hello
 ```
+
+(`curl --resolve documents.local:8080:127.0.0.1 …` also works if you prefer.)
 
 Teardown:
 

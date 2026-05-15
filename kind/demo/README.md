@@ -29,32 +29,31 @@ templates/
 
 ## Single point to swap container registry / tag
 
-Edit [`values.yaml`](values.yaml). Every image used by the app resources
-references this file. For a private-registry deployment, change the `images.*`
-section:
+Edit [`values.yaml`](values.yaml). Every image used by the demo — app AND
+Istio — is one line in the `images.*` block. One image = one line.
+For a private-registry deployment:
 
 ```yaml
 images:
-  echoServer:
-    repository: my-private-registry.local/workspace/echo-server
-    tag: v1.0.0
-    pullPolicy: IfNotPresent
-  pcs:
-    repository: my-private-registry.local/workspace/pcs
-    tag: v1.0.0
-  dashboardClient:
-    repository: my-private-registry.local/workspace/dashboard-client
-    tag: v1.0.0
-  # Istio images. NOTE: these are consumed only by setup.sh's separate Istio
-  # installs (istio-base, istiod, the two gateways). Setting them here keeps
-  # the swap workflow centralized in one file.
-  istio:
-    hub: my-private-registry.local/istio
-    tag: 1.24.2
+  pullPolicy: IfNotPresent
+  echoServer:      my-private-registry.local/workspace/echo-server:v1.0.0
+  pcs:             my-private-registry.local/workspace/pcs:v1.0.0
+  dashboardClient: my-private-registry.local/workspace/dashboard-client:v1.0.0
+  istio:           my-private-registry.local/istio:1.24.2   # hub:tag pair
 ```
 
+Notes:
+- The `istio:` line is a `hub:tag` pair (no image-name suffix). The Istio
+  charts append `pilot`, `proxyv2`, etc. internally, so all Istio components
+  (istiod, both ingressgateways, every sidecar) inherit from this one line.
+- `setup.sh` reads `images.istio` with a tiny `awk` one-liner and passes
+  `--set global.hub` / `--set global.tag` to the istiod and gateway Helm
+  installs — that's how the single source of truth propagates everywhere.
+
 Then re-run `./kind/setup.sh`. All four Helm releases (istio-base, istiod, both
-ingressgateways, and `demo`) pick up the new values.
+ingressgateways, and `demo`) pick up the new values. The kind node image is
+NOT in this file — see [`../kind-config.yaml`](../kind-config.yaml) for that
+one-line override.
 
 ## Other tunables in values.yaml
 
