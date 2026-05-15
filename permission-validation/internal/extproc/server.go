@@ -36,7 +36,7 @@ func (s *Server) Process(stream ext_proc_v3.ExternalProcessor_ProcessServer) err
 		switch v := msg.Request.(type) {
 		case *ext_proc_v3.ProcessingRequest_RequestHeaders:
 			if decided {
-				if err := stream.Send(continueReply()); err != nil {
+				if err := stream.Send(continueRequestHeaders()); err != nil {
 					return err
 				}
 				continue
@@ -49,7 +49,11 @@ func (s *Server) Process(stream ext_proc_v3.ExternalProcessor_ProcessServer) err
 				return err
 			}
 		default:
-			if err := stream.Send(continueReply()); err != nil {
+			// Other phases (response_headers/body, trailers, request_body) are not
+			// processed in Phase 1, but we must reply with a matching oneof variant
+			// so Envoy considers the stream well-formed. Phase 1's processing_mode
+			// is configured to SKIP these phases entirely; this branch is defensive.
+			if err := stream.Send(continueFor(msg)); err != nil {
 				return err
 			}
 		}
@@ -59,7 +63,7 @@ func (s *Server) Process(stream ext_proc_v3.ExternalProcessor_ProcessServer) err
 func outcomeToReply(o Outcome) *ext_proc_v3.ProcessingResponse {
 	switch o.Kind {
 	case OutcomeAllow:
-		return continueReply()
+		return continueRequestHeaders()
 	case OutcomeDeny:
 		return rejectReply("deny")
 	case OutcomeRejectHeader, OutcomeRejectParse, OutcomeRejectError:

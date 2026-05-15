@@ -106,3 +106,42 @@ func TestServer_MissingHeader(t *testing.T) {
 	}
 	require.Equal(t, "missing_authz", reason)
 }
+
+func TestServer_ContinueOnNonRequestHeadersPhase(t *testing.T) {
+	c, stop := startServer(t, &fixedPCS{d: pcs.DecisionAllow})
+	defer stop()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	stream, err := c.Process(ctx)
+	require.NoError(t, err)
+
+	// First, send RequestHeaders so the handler decides.
+	require.NoError(t, stream.Send(&ext_proc_v3.ProcessingRequest{
+		Request: &ext_proc_v3.ProcessingRequest_RequestHeaders{
+			RequestHeaders: &ext_proc_v3.HttpHeaders{Headers: &core_v3.HeaderMap{Headers: []*core_v3.HeaderValue{
+				{Key: "authorization", RawValue: []byte("Bearer t")},
+				{Key: "x-auth-context", RawValue: []byte("a:b:c")},
+			}}},
+		},
+	}))
+	r1, err := stream.Recv()
+	require.NoError(t, err)
+	require.NotNil(t, r1.GetRequestHeaders())
+
+	// Now send ResponseHeaders. The server should reply with a ResponseHeaders
+	// CONTINUE oneof variant, not a RequestHeaders variant.
+	require.NoError(t, stream.Send(&ext_proc_v3.ProcessingRequest{
+		Request: &ext_proc_v3.ProcessingRequest_ResponseHeaders{
+			ResponseHeaders: &ext_proc_v3.HttpHeaders{Headers: &core_v3.HeaderMap{Headers: []*core_v3.HeaderValue{
+				{Key: ":status", RawValue: []byte("200")},
+			}}},
+		},
+	}))
+	r2, err := stream.Recv()
+	require.NoError(t, err)
+	require.NotNil(t, r2.GetResponseHeaders(), "expected ResponseHeaders oneof variant; got %+v", r2.Response)
+	require.Equal(t, ext_proc_v3.CommonResponse_CONTINUE, r2.GetResponseHeaders().Response.Status)
+
+	require.NoError(t, stream.CloseSend())
+}
