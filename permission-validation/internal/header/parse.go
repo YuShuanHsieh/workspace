@@ -52,7 +52,7 @@ func ParseContextHeader(v string) (ParsedContext, error) {
 	for _, s := range segs {
 		for i := 0; i < len(s); i++ {
 			c := s[i]
-			if c == ' ' || c == '\t' {
+			if c == ' ' {
 				return ParsedContext{}, &ParseError{Reason: "whitespace"}
 			}
 		}

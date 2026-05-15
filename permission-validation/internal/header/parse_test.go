@@ -49,3 +49,21 @@ func TestParseContextHeader_Rejections(t *testing.T) {
 		})
 	}
 }
+
+func TestParseContextHeader_BoundaryLength(t *testing.T) {
+	// 1024 bytes total: 1018 'a's + ":b:c" (4 bytes) + ... wait, recompute.
+	// We want exactly 1024 bytes. Format: <id>:<type>:<action>
+	// Pick id length = 1024 - len(":b:c") = 1024 - 4 = 1020.
+	id := strings.Repeat("a", 1020)
+	input := id + ":b:c"
+	if len(input) != 1024 {
+		t.Fatalf("test input is %d bytes, want exactly 1024", len(input))
+	}
+	got, err := ParseContextHeader(input)
+	if err != nil {
+		t.Fatalf("expected ok at exactly 1024 bytes, got %v", err)
+	}
+	if got.ObjectID != id || got.ObjectType != "b" || got.Action != "c" {
+		t.Fatalf("unexpected parse result: %#v", got)
+	}
+}
