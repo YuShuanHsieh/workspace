@@ -52,7 +52,7 @@ func runValidate(args []string, stderr io.Writer) int {
 
 func runTranslate(args []string, stdout, stderr io.Writer) int {
 	if len(args) < 1 {
-		fmt.Fprintln(stderr, "usage: validate-routes translate <file> [-o output] [--sidecar-host h] [--sidecar-port n] [--backend-host h] [--backend-port n]")
+		fmt.Fprintln(stderr, "usage: validate-routes translate <file> [-o output] [--sidecar-host h] [--sidecar-port n] [--backend-host h] [--backend-port n] [--admin-host h] [--access-log]")
 		return 2
 	}
 	// First positional is the route-config file; flags follow it.
@@ -64,6 +64,8 @@ func runTranslate(args []string, stdout, stderr io.Writer) int {
 	sidecarPort := fs.Int("sidecar-port", 50051, "sidecar gRPC port Envoy will dial")
 	backendHost := fs.String("backend-host", "127.0.0.1", "application backend host")
 	backendPort := fs.Int("backend-port", 8080, "application backend port")
+	adminHost := fs.String("admin-host", "127.0.0.1", "Envoy admin listener bind address (port 9901). Override to 0.0.0.0 only for local/test stacks that need host-side access.")
+	accessLog := fs.Bool("access-log", false, "emit Envoy access logs to stdout. Recommended for production renders; off by default to keep test runs quiet.")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 2
 	}
@@ -81,6 +83,7 @@ func runTranslate(args []string, stdout, stderr io.Writer) int {
 	b, err := config.Translate(rc, config.TranslateOptions{
 		SidecarHost: *sidecarHost, SidecarPort: *sidecarPort,
 		AppBackendHost: *backendHost, AppBackendPort: *backendPort,
+		AdminHost: *adminHost, AccessLogStdout: *accessLog,
 	})
 	if err != nil {
 		fmt.Fprintln(stderr, err)

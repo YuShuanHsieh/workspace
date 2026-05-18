@@ -19,6 +19,14 @@ type TranslateOptions struct {
 	AppBackendHost   string
 	AppBackendPort   int
 	FailureModeAllow bool // must stay false in Phase 1; exposed for tests
+	// AdminHost binds Envoy's admin listener on port 9901. Defaults to 127.0.0.1
+	// so production renders are safe by default; the e2e harness overrides it
+	// to 0.0.0.0 so the host can curl admin endpoints from outside the container.
+	AdminHost string
+	// AccessLogStdout adds an http_connection_manager access_log that writes to
+	// the container's stdout. Off by default; production renders should turn it
+	// on so SREs see traffic alongside the sidecar's own logs.
+	AccessLogStdout bool
 }
 
 type routeView struct {
@@ -37,10 +45,16 @@ type translateView struct {
 	AppBackendHost   string
 	AppBackendPort   int
 	FailureModeAllow bool
+	AdminHost        string
+	AccessLogStdout  bool
 }
 
 // Translate renders the embedded Envoy template using rc + opts.
 func Translate(rc *RouteConfig, opts TranslateOptions) ([]byte, error) {
+	adminHost := opts.AdminHost
+	if adminHost == "" {
+		adminHost = "127.0.0.1"
+	}
 	tv := translateView{
 		DefaultBehavior:  rc.DefaultBehavior,
 		SidecarHost:      opts.SidecarHost,
@@ -48,6 +62,8 @@ func Translate(rc *RouteConfig, opts TranslateOptions) ([]byte, error) {
 		AppBackendHost:   opts.AppBackendHost,
 		AppBackendPort:   opts.AppBackendPort,
 		FailureModeAllow: opts.FailureModeAllow,
+		AdminHost:        adminHost,
+		AccessLogStdout:  opts.AccessLogStdout,
 	}
 	for _, r := range rc.Routes {
 		rv, err := routeToView(r)

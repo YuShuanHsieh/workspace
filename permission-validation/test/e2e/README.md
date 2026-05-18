@@ -45,10 +45,14 @@ Same three steps spelled out, run from the repo root:
 
 ```
 # 1. Regenerate envoy.yaml (only needed if routes.yaml or the translator changed).
+#    --admin-host 0.0.0.0 publishes Envoy's :9901 admin interface to the host so
+#    curl/9901 works from outside the container. Production renders should leave
+#    the default (127.0.0.1) — see examples/onboarding/README.md.
 go run ./cmd/validate-routes translate test/e2e/routes.yaml \
   -o test/e2e/envoy.yaml \
   --sidecar-host sidecar --sidecar-port 50051 \
-  --backend-host fake-backend --backend-port 8080
+  --backend-host fake-backend --backend-port 8080 \
+  --admin-host 0.0.0.0
 
 # 2. Bring the stack up (first run builds three images; cached after).
 docker compose -f test/e2e/docker-compose.yaml up --build -d

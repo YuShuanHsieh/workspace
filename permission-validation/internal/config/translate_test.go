@@ -51,3 +51,35 @@ func TestTranslate_DefaultDenyEmitsFallbackRoute(t *testing.T) {
 	require.Contains(t, string(got), "direct_response")
 	require.Contains(t, string(got), "status: 403")
 }
+
+func TestTranslate_AdminHostDefaultsTo127(t *testing.T) {
+	rc := loadFile(t, "valid-minimal.yaml")
+	got, err := Translate(rc, TranslateOptions{SidecarHost: "s", SidecarPort: 1, AppBackendHost: "b", AppBackendPort: 1})
+	require.NoError(t, err)
+	require.Contains(t, string(got), "address: 127.0.0.1, port_value: 9901")
+}
+
+func TestTranslate_AdminHostOverride(t *testing.T) {
+	rc := loadFile(t, "valid-minimal.yaml")
+	got, err := Translate(rc, TranslateOptions{
+		SidecarHost: "s", SidecarPort: 1, AppBackendHost: "b", AppBackendPort: 1,
+		AdminHost: "0.0.0.0",
+	})
+	require.NoError(t, err)
+	require.Contains(t, string(got), "address: 0.0.0.0, port_value: 9901")
+}
+
+func TestTranslate_AccessLogOptIn(t *testing.T) {
+	rc := loadFile(t, "valid-minimal.yaml")
+	off, err := Translate(rc, TranslateOptions{SidecarHost: "s", SidecarPort: 1, AppBackendHost: "b", AppBackendPort: 1})
+	require.NoError(t, err)
+	require.NotContains(t, string(off), "access_log")
+
+	on, err := Translate(rc, TranslateOptions{
+		SidecarHost: "s", SidecarPort: 1, AppBackendHost: "b", AppBackendPort: 1,
+		AccessLogStdout: true,
+	})
+	require.NoError(t, err)
+	require.Contains(t, string(on), "access_log")
+	require.Contains(t, string(on), "StdoutAccessLog")
+}

@@ -94,13 +94,28 @@ stderr.
 validate-routes translate routes.yaml \
   -o envoy.yaml \
   --sidecar-host sidecar --sidecar-port 50051 \
-  --backend-host orders-app --backend-port 8080
+  --backend-host orders-app --backend-port 8080 \
+  --access-log
 ```
 
 Renders an Envoy 1.31 static bootstrap (validates first; errors abort
 output). Omit `-o` to write to stdout. App teams put this command in CI so
 config drift fails the build instead of silently shipping a stale
 `envoy.yaml`.
+
+Two flags control the test/production split:
+
+- `--admin-host` (default `127.0.0.1`): bind address for Envoy's `:9901`
+  admin interface. Defaults to loopback because that listener is
+  unauthenticated and exposes mutating endpoints (`/quitquitquit`,
+  runtime overrides). The e2e harness overrides it to `0.0.0.0` so the
+  host can curl admin endpoints; do **not** do that in production.
+- `--access-log` (default off): emits an `http_connection_manager` stdout
+  access log. Off by default to keep test runs quiet; turn it on for
+  production renders.
+
+See [`examples/onboarding/`](examples/onboarding/) for a committed
+production-style render and the adoption checklist.
 
 ## Route config
 
