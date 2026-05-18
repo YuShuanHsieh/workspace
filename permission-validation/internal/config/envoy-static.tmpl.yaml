@@ -1,0 +1,103 @@
+admin:
+  address:
+    socket_address: { address: 0.0.0.0, port_value: 9901 }
+
+static_resources:
+  listeners:
+    - name: ingress
+      address:
+        socket_address: { address: 0.0.0.0, port_value: 8000 }
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: ingress_http
+                route_config:
+                  name: app_routes
+                  virtual_hosts:
+                    - name: app
+                      domains: ["*"]
+                      routes:
+                        {{- range $i, $r := .Routes }}
+                        - match:
+                            {{- if eq $r.PathKind "exact" }}
+                            path: {{ printf "%q" $r.Path }}
+                            {{- else if eq $r.PathKind "prefix" }}
+                            prefix: {{ printf "%q" $r.Path }}
+                            {{- else }}
+                            safe_regex:
+                              regex: {{ printf "%q" $r.Regex }}
+                            {{- end }}
+                            {{- if ne $r.Method "*" }}
+                            headers:
+                              - name: ":method"
+                                string_match: { exact: {{ printf "%q" $r.Method }} }
+                            {{- end }}
+                          route: { cluster: app_backend }
+                          typed_per_filter_config:
+                            envoy.filters.http.ext_proc:
+                              "@type": type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExtProcPerRoute
+                              {{- if eq $r.Behavior "skipped" }}
+                              disabled: true
+                              {{- else }}
+                              overrides: {}
+                              {{- end }}
+                        {{- end }}
+                        {{- if eq .DefaultBehavior "deny" }}
+                        - match: { prefix: "/" }
+                          direct_response:
+                            status: 403
+                            body: { inline_string: "forbidden\n" }
+                        {{- else }}
+                        - match: { prefix: "/" }
+                          route: { cluster: app_backend }
+                          typed_per_filter_config:
+                            envoy.filters.http.ext_proc:
+                              "@type": type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExtProcPerRoute
+                              disabled: true
+                        {{- end }}
+                http_filters:
+                  - name: envoy.filters.http.ext_proc
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor
+                      grpc_service:
+                        envoy_grpc: { cluster_name: pv_sidecar }
+                      failure_mode_allow: {{ .FailureModeAllow }}
+                      processing_mode:
+                        request_header_mode: SEND
+                        response_header_mode: SKIP
+                        request_body_mode: NONE
+                        response_body_mode: NONE
+                        request_trailer_mode: SKIP
+                        response_trailer_mode: SKIP
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+
+  clusters:
+    - name: app_backend
+      type: STRICT_DNS
+      connect_timeout: 1s
+      load_assignment:
+        cluster_name: app_backend
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: {{ .AppBackendHost }}, port_value: {{ .AppBackendPort }} }
+    - name: pv_sidecar
+      type: STRICT_DNS
+      connect_timeout: 1s
+      typed_extension_protocol_options:
+        envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+          "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+          explicit_http_config:
+            http2_protocol_options: {}
+      load_assignment:
+        cluster_name: pv_sidecar
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: {{ .SidecarHost }}, port_value: {{ .SidecarPort }} }
