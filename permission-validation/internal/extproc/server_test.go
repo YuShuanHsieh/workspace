@@ -72,7 +72,7 @@ func TestServer_Allow(t *testing.T) {
 	c, stop := startServer(t, &fixedPCS{d: pcs.DecisionAllow})
 	defer stop()
 	r := sendHeaders(t, c, map[string]string{
-		"authorization":   "Bearer t",
+		"authorization":  "Bearer t",
 		"x-auth-context": "a:b:c",
 	})
 	require.NotNil(t, r.GetRequestHeaders())
@@ -83,7 +83,7 @@ func TestServer_Deny(t *testing.T) {
 	c, stop := startServer(t, &fixedPCS{d: pcs.DecisionDeny})
 	defer stop()
 	r := sendHeaders(t, c, map[string]string{
-		"authorization":   "Bearer t",
+		"authorization":  "Bearer t",
 		"x-auth-context": "a:b:c",
 	})
 	imm := r.GetImmediateResponse()

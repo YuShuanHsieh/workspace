@@ -88,11 +88,9 @@ func routeToView(r RouteRule) (routeView, error) {
 	return rv, nil
 }
 
-// globToRegex converts a gitignore-style glob (§2.1) to an Envoy safe_regex (RE2).
-//
-//	*  → one path segment ([^/]+)
-//	** → zero or more segments (.*)
-//	literal characters → escaped
+// globToRegex converts a gitignore-style glob (§2.1) to an Envoy safe_regex (RE2):
+// "*" → one path segment ([^/]+); "**" → zero or more segments (.*); literal
+// characters are escaped via regexp.QuoteMeta.
 func globToRegex(p string) string {
 	var b strings.Builder
 	b.WriteString("^")
