@@ -1,0 +1,4 @@
+version: v1
+appId: orders-app
+defaultBehavior: deny
+routes: []

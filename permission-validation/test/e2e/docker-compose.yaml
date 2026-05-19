@@ -1,0 +1,25 @@
+services:
+  fake-pcs:
+    build: { context: ../.., dockerfile: test/e2e/Dockerfile.fake-pcs }
+    command: ["--listen", "0.0.0.0:9000"]
+    ports: ["9000:9000"]
+  fake-backend:
+    build: { context: ../.., dockerfile: test/e2e/Dockerfile.fake-backend }
+    command: ["--listen", "0.0.0.0:8080"]
+    ports: ["8080:8080"]
+  sidecar:
+    build: { context: ../.., dockerfile: test/e2e/Dockerfile.sidecar }
+    command:
+      - "--listen=0.0.0.0:50051"
+      - "--pcs-endpoint=http://fake-pcs:9000"
+      - "--pcs-timeout=250ms"
+      - "--otel-disabled"
+    depends_on: [fake-pcs]
+    ports: ["50051:50051"]
+  envoy:
+    image: envoyproxy/envoy:v1.31.3
+    command: ["-c", "/etc/envoy/envoy.yaml", "--log-level", "info"]
+    volumes:
+      - ./envoy.yaml:/etc/envoy/envoy.yaml:ro
+    depends_on: [sidecar, fake-backend]
+    ports: ["8000:8000", "9901:9901"]

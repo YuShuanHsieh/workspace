@@ -1,0 +1,31 @@
+# Phase 1 onboarding example: orders-app
+# Adopted by copying this file into your app repo and running:
+#   validate-routes validate routes.yaml
+#   validate-routes translate routes.yaml -o envoy.yaml \
+#       --sidecar-host sidecar --sidecar-port 50051 \
+#       --backend-host orders-app --backend-port 8080
+version: v1
+appId: orders-app
+defaultBehavior: deny
+routes:
+  # --- skipped (no validation) ---
+  - method: GET
+    path: /health
+    behavior: skipped
+  - method: GET
+    path: /metrics
+    behavior: skipped
+  - method: GET
+    path: /assets/**
+    behavior: skipped
+
+  # --- protected (validated via PCS) ---
+  - method: GET
+    path: /api/orders/*
+    behavior: protected
+  - method: POST
+    path: /api/orders
+    behavior: protected
+  - method: "*"
+    path: /api/admin/**
+    behavior: protected

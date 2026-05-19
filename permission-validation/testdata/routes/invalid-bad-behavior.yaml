@@ -1,0 +1,7 @@
+version: v1
+appId: orders-app
+defaultBehavior: deny
+routes:
+  - method: GET
+    path: /api
+    behavior: maybe

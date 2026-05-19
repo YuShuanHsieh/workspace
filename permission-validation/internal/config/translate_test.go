@@ -1,0 +1,112 @@
+package config
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
+)
+
+func TestTranslate_MinimalProducesValidYAML(t *testing.T) {
+	rc := loadFile(t, "valid-minimal.yaml")
+	require.Empty(t, Validate(rc))
+	got, err := Translate(rc, TranslateOptions{
+		SidecarHost: "127.0.0.1", SidecarPort: 18080,
+		AppBackendHost: "127.0.0.1", AppBackendPort: 8080,
+		FailureModeAllow: false,
+	})
+	require.NoError(t, err)
+
+	// Sanity: it's valid YAML.
+	var parsed map[string]any
+	require.NoError(t, yaml.Unmarshal(got, &parsed))
+
+	s := string(got)
+	require.Contains(t, s, "ext_proc")
+	require.Contains(t, s, "failure_mode_allow: false")
+	require.Contains(t, s, "/health")
+	require.Contains(t, s, "/api/orders")
+}
+
+func TestTranslate_SkippedHasDisabled(t *testing.T) {
+	rc := loadFile(t, "valid-minimal.yaml")
+	got, err := Translate(rc, TranslateOptions{
+		SidecarHost: "sidecar", SidecarPort: 50051,
+		AppBackendHost: "backend", AppBackendPort: 8080,
+	})
+	require.NoError(t, err)
+	s := string(got)
+	healthIdx := strings.Index(s, `path: "/health"`)
+	require.GreaterOrEqual(t, healthIdx, 0)
+	nextRouteIdx := strings.Index(s[healthIdx+1:], "\n                        - match:")
+	require.GreaterOrEqual(t, nextRouteIdx, 0)
+	healthRoute := s[healthIdx : healthIdx+1+nextRouteIdx]
+	require.Contains(t, healthRoute, "disabled: true")
+}
+
+func TestTranslate_DefaultDenyEmitsFallbackRoute(t *testing.T) {
+	rc := loadFile(t, "valid-minimal.yaml")
+	require.Equal(t, "deny", rc.DefaultBehavior)
+	got, err := Translate(rc, TranslateOptions{SidecarHost: "s", SidecarPort: 1, AppBackendHost: "b", AppBackendPort: 1})
+	require.NoError(t, err)
+	require.Contains(t, string(got), "direct_response")
+	require.Contains(t, string(got), "status: 403")
+}
+
+func TestTranslate_AdminHostDefaultsTo127(t *testing.T) {
+	rc := loadFile(t, "valid-minimal.yaml")
+	got, err := Translate(rc, TranslateOptions{SidecarHost: "s", SidecarPort: 1, AppBackendHost: "b", AppBackendPort: 1})
+	require.NoError(t, err)
+	require.Contains(t, string(got), `address: "127.0.0.1", port_value: 9901`)
+}
+
+func TestTranslate_AdminHostOverride(t *testing.T) {
+	rc := loadFile(t, "valid-minimal.yaml")
+	got, err := Translate(rc, TranslateOptions{
+		SidecarHost: "s", SidecarPort: 1, AppBackendHost: "b", AppBackendPort: 1,
+		AdminHost: "0.0.0.0",
+	})
+	require.NoError(t, err)
+	require.Contains(t, string(got), `address: "0.0.0.0", port_value: 9901`)
+}
+
+func TestTranslate_AccessLogOptIn(t *testing.T) {
+	rc := loadFile(t, "valid-minimal.yaml")
+	off, err := Translate(rc, TranslateOptions{SidecarHost: "s", SidecarPort: 1, AppBackendHost: "b", AppBackendPort: 1})
+	require.NoError(t, err)
+	require.NotContains(t, string(off), "access_log")
+
+	on, err := Translate(rc, TranslateOptions{
+		SidecarHost: "s", SidecarPort: 1, AppBackendHost: "b", AppBackendPort: 1,
+		AccessLogStdout: true,
+	})
+	require.NoError(t, err)
+	require.Contains(t, string(on), "access_log")
+	require.Contains(t, string(on), "StdoutAccessLog")
+}
+
+func TestTranslate_NilConfigReturnsError(t *testing.T) {
+	got, err := Translate(nil, TranslateOptions{})
+	require.Nil(t, got)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "nil route config")
+}
+
+func TestTranslate_QuotesHostValuesForYAML(t *testing.T) {
+	rc := loadFile(t, "valid-minimal.yaml")
+	got, err := Translate(rc, TranslateOptions{
+		AdminHost:      "::1",
+		SidecarHost:    "2001:db8::1",
+		SidecarPort:    50051,
+		AppBackendHost: "2001:db8::2",
+		AppBackendPort: 8080,
+	})
+	require.NoError(t, err)
+	require.Contains(t, string(got), `address: "::1"`)
+	require.Contains(t, string(got), `address: "2001:db8::1"`)
+	require.Contains(t, string(got), `address: "2001:db8::2"`)
+
+	var parsed map[string]any
+	require.NoError(t, yaml.Unmarshal(got, &parsed))
+}

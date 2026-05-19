@@ -1,0 +1,25 @@
+version: v1
+appId: orders-app
+defaultBehavior: deny
+routes:
+  - method: GET
+    path: /health
+    behavior: skipped
+  - method: GET
+    path: /metrics
+    behavior: skipped
+  - method: GET
+    path: /assets/**
+    behavior: skipped
+  - method: GET
+    path: /favicon.ico
+    behavior: skipped
+  - method: GET
+    path: /api/orders/*
+    behavior: protected
+  - method: POST
+    path: /api/orders
+    behavior: protected
+  - method: "*"
+    path: /api/admin/**
+    behavior: protected
