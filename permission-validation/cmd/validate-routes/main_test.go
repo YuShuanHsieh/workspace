@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,12 @@ import (
 
 	"github.com/stretchr/testify/require"
 )
+
+type failWriter struct{}
+
+func (failWriter) Write(_ []byte) (int, error) {
+	return 0, errors.New("write failed")
+}
 
 func TestValidate_ValidExits0(t *testing.T) {
 	var stdout, stderr bytes.Buffer
@@ -43,7 +50,7 @@ func TestTranslate_WritesFile(t *testing.T) {
 	s := string(b)
 	require.True(t, strings.Contains(s, "ext_proc"))
 	// Production-safe defaults: admin bound to loopback, no access log.
-	require.Contains(t, s, "address: 127.0.0.1, port_value: 9901")
+	require.Contains(t, s, `address: "127.0.0.1", port_value: 9901`)
 	require.NotContains(t, s, "access_log")
 }
 
@@ -63,6 +70,41 @@ func TestTranslate_AdminHostAndAccessLogFlags(t *testing.T) {
 	b, err := os.ReadFile(out)
 	require.NoError(t, err)
 	s := string(b)
-	require.Contains(t, s, "address: 0.0.0.0, port_value: 9901")
+	require.Contains(t, s, `address: "0.0.0.0", port_value: 9901`)
 	require.Contains(t, s, "StdoutAccessLog")
+}
+
+func TestTranslate_RejectsInvalidPorts(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "sidecar port zero",
+			args: []string{"translate", "../../testdata/routes/valid-minimal.yaml", "--sidecar-port", "0"},
+			want: "sidecar-port",
+		},
+		{
+			name: "backend port above range",
+			args: []string{"translate", "../../testdata/routes/valid-minimal.yaml", "--backend-port", "65536"},
+			want: "backend-port",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var stderr bytes.Buffer
+			code := run(context.Background(), tc.args, &bytes.Buffer{}, &stderr)
+			require.Equal(t, 2, code)
+			require.Contains(t, stderr.String(), tc.want)
+		})
+	}
+}
+
+func TestTranslate_StdoutWriteFailureExitsNonZero(t *testing.T) {
+	var stderr bytes.Buffer
+	code := run(context.Background(),
+		[]string{"translate", "../../testdata/routes/valid-minimal.yaml"},
+		failWriter{}, &stderr)
+	require.Equal(t, 1, code)
+	require.Contains(t, stderr.String(), "write failed")
 }

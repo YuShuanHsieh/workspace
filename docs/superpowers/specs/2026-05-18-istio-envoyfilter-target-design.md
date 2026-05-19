@@ -51,7 +51,7 @@ Three runtime containers per protected pod when the Istio target is in use:
 
 Per-request flow:
 
-```
+```text
 client → istio-proxy (1) → pv (2) via 127.0.0.1:50051
                        │     │
                        │     └─→ PCS (external)

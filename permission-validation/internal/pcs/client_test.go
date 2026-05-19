@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -61,8 +62,9 @@ func TestClient_5xxIsError(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL, 500*time.Millisecond)
-	_, err := c.Check(context.Background(), CheckRequest{ObjectID: "x", ObjectType: "y", Permission: "z", SSOToken: "tok"})
+	dec, err := c.Check(context.Background(), CheckRequest{ObjectID: "x", ObjectType: "y", Permission: "z", SSOToken: "tok"})
 	require.Error(t, err)
+	require.Equal(t, DecisionUnknown, dec)
 }
 
 func TestClient_TimeoutIsError(t *testing.T) {
@@ -73,8 +75,9 @@ func TestClient_TimeoutIsError(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL, 5*time.Millisecond)
-	_, err := c.Check(context.Background(), CheckRequest{ObjectID: "x", ObjectType: "y", Permission: "z", SSOToken: "tok"})
+	dec, err := c.Check(context.Background(), CheckRequest{ObjectID: "x", ObjectType: "y", Permission: "z", SSOToken: "tok"})
 	require.Error(t, err)
+	require.Equal(t, DecisionUnknown, dec)
 }
 
 func TestClient_ContextCancelIsError(t *testing.T) {
@@ -116,4 +119,17 @@ func TestClient_TrailingSlashEndpointNormalized(t *testing.T) {
 	c := NewClient(srv.URL+"/", 500*time.Millisecond)
 	_, err := c.Check(context.Background(), CheckRequest{ObjectID: "x", ObjectType: "y", Permission: "z", SSOToken: "tok"})
 	require.NoError(t, err)
+}
+
+func TestClient_OversizedResponseIsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, strings.Repeat("x", maxResponseBodyBytes+1))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, 500*time.Millisecond)
+	dec, err := c.Check(context.Background(), CheckRequest{ObjectID: "x", ObjectType: "y", Permission: "z", SSOToken: "tok"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "response body too large")
+	require.Equal(t, DecisionUnknown, dec)
 }

@@ -33,7 +33,7 @@ wire format, rejection table, and adoption checklist.
 
 ## Repo layout
 
-```
+```text
 cmd/
   permission-validation/   sidecar entrypoint (ext_proc gRPC server)
   validate-routes/         CLI: validate routes.yaml / translate to envoy.yaml
@@ -54,14 +54,14 @@ Requires Go 1.25.
 
 Build the two binaries:
 
-```
+```sh
 go build ./cmd/permission-validation
 go build ./cmd/validate-routes
 ```
 
 Run the sidecar against a real PCS:
 
-```
+```sh
 ./permission-validation \
   --listen 0.0.0.0:50051 \
   --pcs-endpoint http://permission-checking.internal:8080 \
@@ -72,7 +72,7 @@ Run the sidecar against a real PCS:
 For local development without an OTel collector, pass `--otel-disabled` to
 use a no-op meter provider:
 
-```
+```sh
 ./permission-validation --listen 0.0.0.0:50051 --pcs-endpoint http://127.0.0.1:9000 --otel-disabled
 ```
 
@@ -83,14 +83,14 @@ The sidecar shuts down gracefully on SIGINT/SIGTERM.
 Two subcommands. The first positional argument is the route-config file;
 flags follow it.
 
-```
+```sh
 validate-routes validate routes.yaml
 ```
 
 Exits 0 if the file parses and validates, 1 otherwise; errors print to
 stderr.
 
-```
+```sh
 validate-routes translate routes.yaml \
   -o envoy.yaml \
   --sidecar-host sidecar --sidecar-port 50051 \
@@ -162,7 +162,7 @@ SREs can distinguish "PCS is slow" from "the sidecar itself is slow."
 
 Unit tests, vet, build, gofmt:
 
-```
+```sh
 go test ./...
 go vet ./...
 go build ./...
@@ -174,7 +174,7 @@ End-to-end tests are build-tag-gated (`//go:build e2e`) so a plain
 Envoy on `:8000` and asserts granted/denied/missing/malformed/over-length/
 PCS-error/skipped-route behavior end to end.
 
-```
+```sh
 cd test/e2e && make up                # docker compose up --build -d
 cd ../.. && go test -tags=e2e ./test/e2e/... -v
 cd test/e2e && make down

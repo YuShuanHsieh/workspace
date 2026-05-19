@@ -12,7 +12,7 @@ so a plain `go test ./...` from the repo root does **not** require Docker.
 
 | Service | Image / source | Host port | Purpose |
 |---|---|---|---|
-| `envoy` | `envoyproxy/envoy:v1.31-latest` + generated `envoy.yaml` | `8000`, admin `9901` | Front door; routes `/api/orders/*` through the sidecar, `/health` straight to backend. |
+| `envoy` | `envoyproxy/envoy:v1.31.3` + generated `envoy.yaml` | `8000`, admin `9901` | Front door; routes `/api/orders/*` through the sidecar, `/health` straight to backend. |
 | `sidecar` | `Dockerfile.sidecar` (builds `cmd/permission-validation`) | `50051` | The thing under test. Talks to fake-pcs. `--otel-disabled`. |
 | `fake-pcs` | `fakes/pcs/main.go` | `9000` | Programmable PCS. Admin endpoints let tests register rules and reset state. |
 | `fake-backend` | `fakes/backend/main.go` | `8080` | 200-OK echo with a call counter so tests can assert "did this request reach the backend?". |
@@ -30,7 +30,7 @@ Regenerate after editing `routes.yaml`.
 
 ## Run it (with `make`)
 
-```
+```sh
 make -C test/e2e up                       # build + start the stack in the background
 go test -tags=e2e ./test/e2e/... -v       # run from repo root
 make -C test/e2e down                     # stop + remove containers, network, volumes
@@ -43,7 +43,7 @@ make -C test/e2e down                     # stop + remove containers, network, v
 
 Same three steps spelled out, run from the repo root:
 
-```
+```sh
 # 1. Regenerate envoy.yaml (only needed if routes.yaml or the translator changed).
 #    --admin-host 0.0.0.0 publishes Envoy's :9901 admin interface to the host so
 #    curl/9901 works from outside the container. Production renders should leave
@@ -89,7 +89,7 @@ seeds the PCS rule it needs via `POST /_admin/rules`.
 While the stack is up, the fakes expose admin endpoints so you can drive
 scenarios from `curl` without running the Go suite:
 
-```
+```sh
 # Seed a rule: allow doc-1|document|view.
 curl -s -X POST http://127.0.0.1:9000/_admin/rules \
   -H 'content-type: application/json' \

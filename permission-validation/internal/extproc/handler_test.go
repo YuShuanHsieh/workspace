@@ -106,3 +106,23 @@ func TestDecide_RecordsSidecarLatency(t *testing.T) {
 	})
 	require.WithinDuration(t, time.Now(), start, 50*time.Millisecond)
 }
+
+func TestDecide_NilDependenciesFailClosed(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		h    *Handler
+	}{
+		{name: "nil pcs", h: New(nil, metrics.New(metric.NewMeterProvider().Meter("test")))},
+		{name: "nil metrics", h: New(&stubPCS{decision: pcs.DecisionAllow}, nil)},
+		{name: "nil handler", h: nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := tc.h.Decide(context.Background(), map[string]string{
+				"authorization":  "Bearer sso-tok",
+				"x-auth-context": "doc-1:document:edit",
+			})
+			require.Equal(t, OutcomeRejectError, out.Kind)
+			require.Equal(t, "internal_error", out.Reason)
+		})
+	}
+}

@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"time"
 )
+
+const maxResponseBodyBytes = 1 << 20
 
 // Decision is the resolved PCS outcome.
 type Decision int
@@ -79,7 +82,7 @@ func (c *Client) Check(ctx context.Context, req CheckRequest) (Decision, error) 
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := readLimited(resp.Body, maxResponseBodyBytes)
 	if err != nil {
 		return DecisionUnknown, err
 	}
@@ -94,6 +97,17 @@ func (c *Client) Check(ctx context.Context, req CheckRequest) (Decision, error) 
 		return DecisionAllow, nil
 	}
 	return DecisionDeny, nil
+}
+
+func readLimited(r io.Reader, max int64) ([]byte, error) {
+	body, err := io.ReadAll(io.LimitReader(r, max+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(body)) > max {
+		return nil, errors.New("pcs: response body too large")
+	}
+	return body, nil
 }
 
 func truncate(b []byte, n int) []byte {

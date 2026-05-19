@@ -3,6 +3,7 @@ package extproc
 import (
 	"errors"
 	"io"
+	"strings"
 
 	core_v3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	ext_proc_v3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
@@ -42,7 +43,13 @@ func (s *Server) Process(stream ext_proc_v3.ExternalProcessor_ProcessServer) err
 				continue
 			}
 			decided = true
-			hdrs := flattenHeaders(v.RequestHeaders.GetHeaders())
+			hdrs, err := flattenHeaders(v.RequestHeaders.GetHeaders())
+			if err != nil {
+				if err := stream.Send(rejectReply("duplicate_header")); err != nil {
+					return err
+				}
+				continue
+			}
 			out := s.h.Decide(stream.Context(), hdrs)
 			reply := outcomeToReply(out)
 			if err := stream.Send(reply); err != nil {
@@ -73,18 +80,28 @@ func outcomeToReply(o Outcome) *ext_proc_v3.ProcessingResponse {
 	}
 }
 
-func flattenHeaders(hm *core_v3.HeaderMap) map[string]string {
+func flattenHeaders(hm *core_v3.HeaderMap) (map[string]string, error) {
 	if hm == nil {
-		return map[string]string{}
+		return map[string]string{}, nil
 	}
 	out := make(map[string]string, len(hm.Headers))
 	for _, h := range hm.Headers {
+		key := strings.ToLower(h.Key)
+		if isCriticalHeader(key) {
+			if _, ok := out[key]; ok {
+				return nil, errors.New("duplicate critical header")
+			}
+		}
 		// Envoy may put the value in Value (string) or RawValue (bytes); prefer RawValue.
 		if len(h.RawValue) > 0 {
-			out[h.Key] = string(h.RawValue)
+			out[key] = string(h.RawValue)
 		} else {
-			out[h.Key] = h.Value
+			out[key] = h.Value
 		}
 	}
-	return out
+	return out, nil
+}
+
+func isCriticalHeader(key string) bool {
+	return key == "authorization" || key == "x-auth-context"
 }

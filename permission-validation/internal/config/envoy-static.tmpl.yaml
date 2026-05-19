@@ -1,6 +1,6 @@
 admin:
   address:
-    socket_address: { address: {{ .AdminHost }}, port_value: 9901 }
+    socket_address: { address: {{ printf "%q" .AdminHost }}, port_value: 9901 }
 
 static_resources:
   listeners:
@@ -91,7 +91,7 @@ static_resources:
           - lb_endpoints:
               - endpoint:
                   address:
-                    socket_address: { address: {{ .AppBackendHost }}, port_value: {{ .AppBackendPort }} }
+                    socket_address: { address: {{ printf "%q" .AppBackendHost }}, port_value: {{ .AppBackendPort }} }
     - name: pv_sidecar
       type: STRICT_DNS
       connect_timeout: 1s
@@ -106,4 +106,4 @@ static_resources:
           - lb_endpoints:
               - endpoint:
                   address:
-                    socket_address: { address: {{ .SidecarHost }}, port_value: {{ .SidecarPort }} }
+                    socket_address: { address: {{ printf "%q" .SidecarHost }}, port_value: {{ .SidecarPort }} }

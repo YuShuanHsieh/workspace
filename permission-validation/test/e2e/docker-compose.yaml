@@ -17,7 +17,7 @@ services:
     depends_on: [fake-pcs]
     ports: ["50051:50051"]
   envoy:
-    image: envoyproxy/envoy:v1.31-latest
+    image: envoyproxy/envoy:v1.31.3
     command: ["-c", "/etc/envoy/envoy.yaml", "--log-level", "info"]
     volumes:
       - ./envoy.yaml:/etc/envoy/envoy.yaml:ro

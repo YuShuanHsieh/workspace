@@ -5,6 +5,7 @@ package e2e
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -23,27 +24,35 @@ const (
 
 func waitReady(t *testing.T) {
 	t.Helper()
+	require.NoError(t, waitReadyError())
+}
+
+func waitReadyError() error {
 	deadline := time.Now().Add(20 * time.Second)
 	for time.Now().Before(deadline) {
 		resp, err := http.Get(envoyURL + "/health")
 		if err == nil {
 			_ = resp.Body.Close()
 			if resp.StatusCode == 200 {
-				return
+				return nil
 			}
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	t.Fatalf("envoy not ready after 20s")
+	return fmt.Errorf("envoy not ready after 20s")
 }
 
 func resetFixtures(t *testing.T) {
 	t.Helper()
 	for _, u := range []string{pcsURL + "/_admin/reset", backendURL + "/_admin/reset"} {
-		req, _ := http.NewRequest("POST", u, nil)
+		req, err := http.NewRequest("POST", u, nil)
+		require.NoError(t, err, u)
 		resp, err := http.DefaultClient.Do(req)
 		require.NoError(t, err, u)
-		_ = resp.Body.Close()
+		body, readErr := io.ReadAll(resp.Body)
+		require.NoError(t, resp.Body.Close())
+		require.NoError(t, readErr, u)
+		require.True(t, resp.StatusCode >= 200 && resp.StatusCode < 300, "%s status=%d body=%s", u, resp.StatusCode, string(body))
 	}
 }
 
@@ -52,7 +61,10 @@ func setRule(t *testing.T, key string, allowed bool) {
 	body, _ := json.Marshal(map[string]bool{key: allowed})
 	resp, err := http.Post(pcsURL+"/_admin/rules", "application/json", bytes.NewReader(body))
 	require.NoError(t, err)
-	_ = resp.Body.Close()
+	respBody, readErr := io.ReadAll(resp.Body)
+	require.NoError(t, resp.Body.Close())
+	require.NoError(t, readErr)
+	require.True(t, resp.StatusCode >= 200 && resp.StatusCode < 300, "status=%d body=%s", resp.StatusCode, string(respBody))
 }
 
 func backendCallCount(t *testing.T) int {
@@ -83,8 +95,10 @@ func TestMain(m *testing.M) {
 	// e2e build tag is the gate; CI brings the stack up via `make -C test/e2e up`.
 	if os.Getenv("E2E_SKIP_WAIT") != "1" {
 		// Just-in-case readiness probe.
-		t := &testing.T{}
-		waitReady(t)
+		if err := waitReadyError(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 	}
 	os.Exit(m.Run())
 }

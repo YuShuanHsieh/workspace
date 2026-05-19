@@ -1,6 +1,6 @@
 admin:
   address:
-    socket_address: { address: 0.0.0.0, port_value: 9901 }
+    socket_address: { address: "0.0.0.0", port_value: 9901 }
 
 static_resources:
   listeners:
@@ -82,7 +82,7 @@ static_resources:
           - lb_endpoints:
               - endpoint:
                   address:
-                    socket_address: { address: fake-backend, port_value: 8080 }
+                    socket_address: { address: "fake-backend", port_value: 8080 }
     - name: pv_sidecar
       type: STRICT_DNS
       connect_timeout: 1s
@@ -97,4 +97,4 @@ static_resources:
           - lb_endpoints:
               - endpoint:
                   address:
-                    socket_address: { address: sidecar, port_value: 50051 }
+                    socket_address: { address: "sidecar", port_value: 50051 }

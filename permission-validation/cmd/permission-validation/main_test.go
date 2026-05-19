@@ -8,6 +8,27 @@ import (
 	"time"
 )
 
+type blockingGRPCServer struct {
+	gracefulCalled chan struct{}
+	stopCalled     chan struct{}
+}
+
+func newBlockingGRPCServer() *blockingGRPCServer {
+	return &blockingGRPCServer{
+		gracefulCalled: make(chan struct{}),
+		stopCalled:     make(chan struct{}),
+	}
+}
+
+func (s *blockingGRPCServer) GracefulStop() {
+	close(s.gracefulCalled)
+	<-s.stopCalled
+}
+
+func (s *blockingGRPCServer) Stop() {
+	close(s.stopCalled)
+}
+
 func TestRun_HelpExitsZero(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := run(context.Background(), []string{"--help"}, &stdout, &stderr)
@@ -48,5 +69,21 @@ func TestRun_ServesAndShutsDownOnContextCancel(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("server did not shut down within 2s")
+	}
+}
+
+func TestStopGRPCServerFallsBackWhenGracefulStopBlocks(t *testing.T) {
+	s := newBlockingGRPCServer()
+	stopGRPCServer(s, 10*time.Millisecond)
+
+	select {
+	case <-s.gracefulCalled:
+	default:
+		t.Fatal("expected graceful stop to be attempted")
+	}
+	select {
+	case <-s.stopCalled:
+	default:
+		t.Fatal("expected forced stop fallback")
 	}
 }

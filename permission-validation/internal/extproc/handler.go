@@ -47,6 +47,9 @@ func New(p PCS, m *metrics.Metrics) *Handler {
 // Decide consumes a lowercased header map (Envoy normalizes header casing on HTTP/2)
 // and returns the wire outcome.
 func (h *Handler) Decide(ctx context.Context, hdrs map[string]string) Outcome {
+	if h == nil || h.m == nil || h.pcs == nil {
+		return Outcome{Kind: OutcomeRejectError, Reason: "internal_error"}
+	}
 	start := time.Now()
 	defer func() { h.m.SidecarLatency(ctx, time.Since(start)) }()
 

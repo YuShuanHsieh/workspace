@@ -28,7 +28,7 @@ body against the header is out of Phase 1 scope.
 
 ## Wire format
 
-```
+```http
 Authorization: Bearer <SSO token>
 X-Auth-Context: <objectId>:<objectType>:<action>
 ```
@@ -43,7 +43,7 @@ Rules (rejection labels in parentheses):
 
 ## What the sidecar sends to PCS
 
-```
+```http
 POST http://permission-checking/permission-check/v1/check
 Content-Type: application/json
 Authorization: Bearer <SSO token, forwarded verbatim>
@@ -65,7 +65,7 @@ Authorization: Bearer <SSO token, forwarded verbatim>
 | Missing `X-Auth-Context` | `403 Forbidden` | no |
 | `X-Auth-Context: doc-1:document` (too few segments) | `403 Forbidden` | no |
 | `X-Auth-Context: doc-1::view` (empty segment) | `403 Forbidden` | no |
-| `X-Auth-Context: doc-1:document:view ` (trailing space) | `403 Forbidden` | no |
+| `X-Auth-Context: doc-1:document:view␠` (trailing space) | `403 Forbidden` | no |
 | PCS timeout or 5xx | `403 Forbidden` (fail-closed) | no |
 
 ## Generating `envoy.yaml`
@@ -75,7 +75,7 @@ Authorization: Bearer <SSO token, forwarded verbatim>
 `envoy.yaml` in this directory is the **production-style** render —
 admin bound to loopback, access logs enabled:
 
-```
+```sh
 validate-routes translate examples/onboarding/routes.yaml \
   -o examples/onboarding/envoy.yaml \
   --sidecar-host sidecar --sidecar-port 50051 \
@@ -98,7 +98,7 @@ Run `validate-routes translate routes.yaml -h` to see every flag.
 
 Run Envoy with the generated file as its static bootstrap:
 
-```
+```sh
 envoy -c /etc/envoy/envoy.yaml --log-level info
 ```
 

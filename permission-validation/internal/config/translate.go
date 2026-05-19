@@ -3,6 +3,7 @@ package config
 import (
 	"bytes"
 	_ "embed"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -51,6 +52,9 @@ type translateView struct {
 
 // Translate renders the embedded Envoy template using rc + opts.
 func Translate(rc *RouteConfig, opts TranslateOptions) ([]byte, error) {
+	if rc == nil {
+		return nil, errors.New("translate: nil route config")
+	}
 	adminHost := opts.AdminHost
 	if adminHost == "" {
 		adminHost = "127.0.0.1"

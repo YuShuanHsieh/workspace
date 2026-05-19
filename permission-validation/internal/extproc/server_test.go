@@ -48,15 +48,20 @@ func startServer(t *testing.T, p PCS) (ext_proc_v3.ExternalProcessorClient, func
 
 func sendHeaders(t *testing.T, c ext_proc_v3.ExternalProcessorClient, hdrs map[string]string) *ext_proc_v3.ProcessingResponse {
 	t.Helper()
+	hv := make([]*core_v3.HeaderValue, 0, len(hdrs))
+	for k, v := range hdrs {
+		hv = append(hv, &core_v3.HeaderValue{Key: k, RawValue: []byte(v)})
+	}
+	return sendHeaderValues(t, c, hv)
+}
+
+func sendHeaderValues(t *testing.T, c ext_proc_v3.ExternalProcessorClient, hv []*core_v3.HeaderValue) *ext_proc_v3.ProcessingResponse {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	stream, err := c.Process(ctx)
 	require.NoError(t, err)
 
-	hv := make([]*core_v3.HeaderValue, 0, len(hdrs))
-	for k, v := range hdrs {
-		hv = append(hv, &core_v3.HeaderValue{Key: k, RawValue: []byte(v)})
-	}
 	require.NoError(t, stream.Send(&ext_proc_v3.ProcessingRequest{
 		Request: &ext_proc_v3.ProcessingRequest_RequestHeaders{
 			RequestHeaders: &ext_proc_v3.HttpHeaders{Headers: &core_v3.HeaderMap{Headers: hv}},
@@ -105,6 +110,37 @@ func TestServer_MissingHeader(t *testing.T) {
 		}
 	}
 	require.Equal(t, "missing_authz", reason)
+}
+
+func TestServer_DuplicateCriticalHeaderRejected(t *testing.T) {
+	c, stop := startServer(t, &fixedPCS{d: pcs.DecisionAllow})
+	defer stop()
+	r := sendHeaderValues(t, c, []*core_v3.HeaderValue{
+		{Key: "Authorization", RawValue: []byte("Bearer one")},
+		{Key: "authorization", RawValue: []byte("Bearer two")},
+		{Key: "x-auth-context", RawValue: []byte("a:b:c")},
+	})
+	imm := r.GetImmediateResponse()
+	require.NotNil(t, imm)
+	require.EqualValues(t, 403, imm.Status.Code)
+	var reason string
+	for _, h := range imm.Headers.SetHeaders {
+		if h.Header.Key == "x-pv-reject-reason" {
+			reason = string(h.Header.RawValue)
+		}
+	}
+	require.Equal(t, "duplicate_header", reason)
+}
+
+func TestServer_NormalizesHeaderNames(t *testing.T) {
+	c, stop := startServer(t, &fixedPCS{d: pcs.DecisionAllow})
+	defer stop()
+	r := sendHeaderValues(t, c, []*core_v3.HeaderValue{
+		{Key: "Authorization", RawValue: []byte("Bearer t")},
+		{Key: "X-Auth-Context", RawValue: []byte("a:b:c")},
+	})
+	require.NotNil(t, r.GetRequestHeaders())
+	require.Equal(t, ext_proc_v3.CommonResponse_CONTINUE, r.GetRequestHeaders().Response.Status)
 }
 
 func TestServer_ContinueOnNonRequestHeadersPhase(t *testing.T) {

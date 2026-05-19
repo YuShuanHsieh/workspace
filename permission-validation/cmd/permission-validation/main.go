@@ -76,7 +76,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 	select {
 	case <-ctx.Done():
-		gs.GracefulStop()
+		stopGRPCServer(gs, 2*time.Second)
 		return 0
 	case err := <-serveErr:
 		if err != nil {
@@ -84,6 +84,26 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		return 0
+	}
+}
+
+type grpcStopper interface {
+	GracefulStop()
+	Stop()
+}
+
+func stopGRPCServer(gs grpcStopper, timeout time.Duration) {
+	stopped := make(chan struct{})
+	go func() {
+		gs.GracefulStop()
+		close(stopped)
+	}()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-stopped:
+	case <-timer.C:
+		gs.Stop()
 	}
 }
 

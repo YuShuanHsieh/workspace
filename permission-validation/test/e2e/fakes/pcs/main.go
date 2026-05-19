@@ -23,7 +23,11 @@ type fixture struct {
 }
 
 func (f *fixture) check(w http.ResponseWriter, r *http.Request) {
-	body, _ := io.ReadAll(r.Body)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "read body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
 	var req struct {
 		ObjectID   string `json:"objectId"`
 		ObjectType string `json:"objectType"`
@@ -48,6 +52,7 @@ func (f *fixture) check(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no rule for "+key, http.StatusServiceUnavailable)
 		return
 	}
+	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(r2)
 }
 
@@ -96,6 +101,7 @@ func main() {
 	mux.HandleFunc("/_admin/calls", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(f.calls)
 	})
 	mux.HandleFunc("/_admin/reset", func(w http.ResponseWriter, r *http.Request) {

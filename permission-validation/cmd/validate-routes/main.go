@@ -69,6 +69,14 @@ func runTranslate(args []string, stdout, stderr io.Writer) int {
 	if err := fs.Parse(args[1:]); err != nil {
 		return 2
 	}
+	if !validPort(*sidecarPort) {
+		fmt.Fprintf(stderr, "sidecar-port must be in range 1..65535 (got %d)\n", *sidecarPort)
+		return 2
+	}
+	if !validPort(*backendPort) {
+		fmt.Fprintf(stderr, "backend-port must be in range 1..65535 (got %d)\n", *backendPort)
+		return 2
+	}
 	rc, err := readConfig(file)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -90,7 +98,15 @@ func runTranslate(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	if *out == "" {
-		_, _ = stdout.Write(b)
+		n, err := stdout.Write(b)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		if n != len(b) {
+			fmt.Fprintf(stderr, "short write: wrote %d of %d bytes\n", n, len(b))
+			return 1
+		}
 		return 0
 	}
 	if err := os.WriteFile(*out, b, 0o644); err != nil {
@@ -98,6 +114,10 @@ func runTranslate(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+func validPort(p int) bool {
+	return p >= 1 && p <= 65535
 }
 
 func readConfig(path string) (*config.RouteConfig, error) {
