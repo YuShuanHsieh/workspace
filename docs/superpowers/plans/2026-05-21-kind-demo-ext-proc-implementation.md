@@ -1313,25 +1313,28 @@ expect_status() {
   fi
 }
 
-BASE="http://app.local:8090"
-ALICE='-H Authorization: Bearer alice@workspace.test'
+BASE="http://127.0.0.1:8090"   # Option B NodePort → echo-app Envoy
+HOSTHDR='-H Host: app.local'
 
 # 1) ALLOW
 expect_status 200 "${BASE}/anything" \
+  -H "Host: app.local" \
   -H "Authorization: Bearer alice@workspace.test" \
   -H "X-Auth-Context: doc-1:document:edit"
 
 # 2) DENY
 expect_status 403 "${BASE}/anything" \
+  -H "Host: app.local" \
   -H "Authorization: Bearer alice@workspace.test" \
   -H "X-Auth-Context: doc-2:document:edit"
 
 # 3) MISSING CONTEXT
 expect_status 403 "${BASE}/anything" \
+  -H "Host: app.local" \
   -H "Authorization: Bearer alice@workspace.test"
 
 # 4) SKIPPED ROUTE
-expect_status 200 "${BASE}/healthz"
+expect_status 200 "${BASE}/healthz" -H "Host: app.local"
 
 if [[ ${fail} -eq 0 ]]; then
   printf "\n\033[1;32mAll four canonical curls returned expected status codes.\033[0m\n"
@@ -1341,18 +1344,7 @@ else
 fi
 ```
 
-You will also need a `/etc/hosts` entry for `app.local`. Inline this near the top of the script (right after the `CLUSTER_NAME=...` block):
-
-```bash
-ensure_hosts_entry() {
-  local entry="127.0.0.1 app.local"
-  if ! grep -qx "${entry}" /etc/hosts 2>/dev/null; then
-    log "Adding '${entry}' to /etc/hosts (sudo required)"
-    echo "${entry}" | sudo tee -a /etc/hosts >/dev/null
-  fi
-}
-ensure_hosts_entry
-```
+No `/etc/hosts` edit is required: every verification curl in Phase C uses `-H "Host: app.local"` against a `127.0.0.1` URL, so DNS for `app.local` is never resolved.
 
 - [ ] **Step 2: Re-run the full script**
 
@@ -1898,14 +1890,9 @@ NAMESPACE="demo-istio"
 
 log() { printf "\n\033[1;32m▶ %s\033[0m\n" "$*"; }
 
-ensure_hosts_entry() {
-  local entry="127.0.0.1 app.local"
-  if ! grep -qx "${entry}" /etc/hosts 2>/dev/null; then
-    log "Adding '${entry}' to /etc/hosts (sudo required)"
-    echo "${entry}" | sudo tee -a /etc/hosts >/dev/null
-  fi
-}
-ensure_hosts_entry
+# Note: we avoid touching /etc/hosts — all verification curls use
+# `-H "Host: app.local"` with a 127.0.0.1 URL. This matches the
+# pattern from kind-demo branch commit b63db92.
 
 # Single source of truth for the Istio image: kind/demo-ext-proc-istio/values.yaml
 # (no images.istio entry yet; default to docker.io/istio:1.24.2).
@@ -2020,24 +2007,27 @@ expect_status() {
 sleep 5
 
 # 1) ALLOW
-expect_status 200 "http://app.local:8080/anything" \
+expect_status 200 "http://127.0.0.1:8080/anything" \
+  -H "Host: app.local" \
   -H "Authorization: Bearer alice@workspace.test" \
   -H "X-Auth-Context: doc-1:document:edit"
 
 # 2) DENY
-expect_status 403 "http://app.local:8080/anything" \
+expect_status 403 "http://127.0.0.1:8080/anything" \
+  -H "Host: app.local" \
   -H "Authorization: Bearer alice@workspace.test" \
   -H "X-Auth-Context: doc-2:document:edit"
 
 # 3) MISSING CONTEXT
-expect_status 403 "http://app.local:8080/anything" \
+expect_status 403 "http://127.0.0.1:8080/anything" \
+  -H "Host: app.local" \
   -H "Authorization: Bearer alice@workspace.test"
 
 # 4) ECHO HEALTHZ — Option A does not honour the routes.yaml skipped list
 #    (no translate target); the request still goes through ext_proc, where
 #    the sidecar rejects missing X-Auth-Context with 403. We assert 403 here
 #    intentionally and call it out in DEMO.md.
-expect_status 403 "http://app.local:8080/healthz"
+expect_status 403 "http://127.0.0.1:8080/healthz" -H "Host: app.local"
 
 if [[ ${fail} -eq 0 ]]; then
   printf "\n\033[1;32mAll four canonical curls returned expected status codes.\033[0m\n"
@@ -2231,32 +2221,36 @@ expected status codes.
 
 ## Four canonical curls
 
-For Option B set `BASE=http://app.local:8090`. For Option A set
-`BASE=http://app.local:8080`.
+For Option B set `BASE=http://127.0.0.1:8090`. For Option A set
+`BASE=http://127.0.0.1:8080`. Pass `-H "Host: app.local"` on every
+request — no `/etc/hosts` edits required.
 
 ```bash
-BASE=http://app.local:8090   # Option B
-# BASE=http://app.local:8080  # Option A
+BASE=http://127.0.0.1:8090   # Option B
+# BASE=http://127.0.0.1:8080  # Option A
 
 # 1) ALLOW — alice editing doc-1
 curl -i "${BASE}/anything" \
+  -H "Host: app.local" \
   -H "Authorization: Bearer alice@workspace.test" \
   -H "X-Auth-Context: doc-1:document:edit"
 # expected: 200, echo-server prints back the headers it received
 
 # 2) DENY — alice trying to edit doc-2 (no permission)
 curl -i "${BASE}/anything" \
+  -H "Host: app.local" \
   -H "Authorization: Bearer alice@workspace.test" \
   -H "X-Auth-Context: doc-2:document:edit"
 # expected: 403 from the sidecar, echo-server never sees the request
 
 # 3) REJECT — missing X-Auth-Context entirely
 curl -i "${BASE}/anything" \
+  -H "Host: app.local" \
   -H "Authorization: Bearer alice@workspace.test"
 # expected: 403 with sidecar log line "context_header_missing"
 
 # 4) SKIPPED ROUTE — /healthz bypasses the sidecar (Option B only)
-curl -i "${BASE}/healthz"
+curl -i "${BASE}/healthz" -H "Host: app.local"
 # Option B: 200 — bootstrap honours routes.yaml skipped:
 # Option A: 403 — EnvoyFilter does not implement per-route skip
 ```
@@ -2277,6 +2271,7 @@ curl -i "${BASE}/healthz"
 # PCS down — fail-closed (DecisionUnknown → 403)
 kubectl -n <ns> scale deploy/pcs --replicas=0
 curl -i "${BASE}/anything" \
+  -H "Host: app.local" \
   -H "Authorization: Bearer alice@workspace.test" \
   -H "X-Auth-Context: doc-1:document:edit"
 # expected: 403 from the sidecar. Re-scale to 1 to recover:
@@ -2287,6 +2282,7 @@ POD=$(kubectl -n <ns> get pod -l app=echo-app -o jsonpath='{.items[0].metadata.n
 kubectl -n <ns> exec ${POD} -c sidecar -- /bin/sh -c 'kill 1' || true
 # during the gap before Kubernetes restarts the container:
 curl -i "${BASE}/anything" \
+  -H "Host: app.local" \
   -H "Authorization: Bearer alice@workspace.test" \
   -H "X-Auth-Context: doc-1:document:edit"
 # expected: 503 or 504 (failure_mode_allow: false — never bypass).
