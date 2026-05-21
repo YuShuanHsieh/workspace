@@ -1,0 +1,18 @@
+# kind/routes.yaml
+# Single source of truth for protected/skipped routes.
+# Both demos consume this file:
+#   - setup-plain.sh: `validate-routes translate` → envoy.yaml → ConfigMap
+#   - setup-istio.sh: `validate-routes validate` as a lint step
+version: v1
+appId: kind-demo
+defaultBehavior: deny
+routes:
+  - method: GET
+    path: /anything
+    behavior: protected
+  - method: POST
+    path: /anything
+    behavior: protected
+  - method: GET
+    path: /healthz
+    behavior: skipped
