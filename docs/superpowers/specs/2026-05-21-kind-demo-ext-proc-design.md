@@ -409,7 +409,7 @@ No new automated tests on this branch. The sidecar's own correctness is covered 
 
 ## 11. Out of Scope / Future Work
 
-- **A `translate --target=istio` mode in `validate-routes`.** Would let Option A derive its EnvoyFilter from `routes.yaml` automatically. The full design for that mode is already captured in [`2026-05-18-istio-envoyfilter-target-design.md`](2026-05-18-istio-envoyfilter-target-design.md) on this branch; it is the right follow-up if this team adopts Option A as the production deployment shape. In this demo the EnvoyFilter is hand-written.
+- ~~**A `translate --target=istio` mode in `validate-routes`.**~~ **Done.** See [`docs/superpowers/plans/2026-05-21-istio-envoyfilter-target-implementation.md`](../plans/2026-05-21-istio-envoyfilter-target-implementation.md). Option A's `envoyfilter.yaml` is now generated from `routes.yaml`; `/healthz` returns 200 (the previous "known difference vs Option B" caveat is removed).
 - **Multi-namespace onboarding stories.** The sibling `ext_authz` demo's stage-1/stage-2 story (per-namespace filter → shared filter in `istio-system`) applies identically to `ext_proc`. Skipped here to keep the surface area small.
 - **Response-phase enforcement.** Phase 1.5 needs the sidecar to observe responses (per [`prd/permission-validation/phase-1-5-metadata-sync-design.md`](../../../prd/permission-validation/phase-1-5-metadata-sync-design.md) §3.2). The `ext_proc` filter config in this demo runs with `response_header_mode: SKIP`, so this demo does not exercise that lever — it is forward-compatible (we can flip the mode in a follow-up) but not yet active.
 - **Cache, batching, or any Phase 2 behaviour.** Out of scope.
