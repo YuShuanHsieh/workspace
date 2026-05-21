@@ -134,3 +134,33 @@ func TestTranslate_TargetIstio_WritesFile(t *testing.T) {
 		t.Fatalf("expected namespace: orders; got:\n%s", b)
 	}
 }
+
+func TestTranslate_TargetIstio_RequiresNamespace(t *testing.T) {
+	var stderr bytes.Buffer
+	code := run(context.Background(), []string{
+		"translate", "../../testdata/routes/valid-minimal.yaml",
+		"--target=istio",
+		"--workload-label=app=x",
+	}, &bytes.Buffer{}, &stderr)
+	if code != 2 {
+		t.Fatalf("exit: got %d, want 2; stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "namespace") {
+		t.Fatalf("stderr should mention 'namespace'; got: %s", stderr.String())
+	}
+}
+
+func TestTranslate_TargetIstio_RequiresWorkloadLabel(t *testing.T) {
+	var stderr bytes.Buffer
+	code := run(context.Background(), []string{
+		"translate", "../../testdata/routes/valid-minimal.yaml",
+		"--target=istio",
+		"--namespace=orders",
+	}, &bytes.Buffer{}, &stderr)
+	if code != 2 {
+		t.Fatalf("exit: got %d, want 2; stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "workload-label") {
+		t.Fatalf("stderr should mention 'workload-label'; got: %s", stderr.String())
+	}
+}
