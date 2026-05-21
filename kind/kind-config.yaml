@@ -1,0 +1,15 @@
+# kind/kind-config.yaml
+# Single-node cluster used by BOTH setup-plain.sh and setup-istio.sh
+# (one cluster at a time — different cluster names so they don't collide).
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+- role: control-plane
+  image: kindest/node:v1.30.0
+  extraPortMappings:
+  - containerPort: 30080   # Option A: istio-ingressgateway NodePort
+    hostPort: 8080
+    protocol: TCP
+  - containerPort: 30090   # Option B: echo-app NodePort (Envoy listener)
+    hostPort: 8090
+    protocol: TCP
