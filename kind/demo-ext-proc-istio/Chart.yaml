@@ -1,0 +1,11 @@
+apiVersion: v2
+name: demo-ext-proc-istio
+description: |
+  Option A of the ext_proc kind demo — main's sidecar adapted to Istio.
+  Single namespace with istio-injection=enabled; permission-validation
+  sidecar is a container in the echo-app pod, reached by istio-proxy
+  via the echo-app Service on port 50051. An EnvoyFilter splices the
+  ext_proc HTTP filter into istio-proxy's filter chain.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

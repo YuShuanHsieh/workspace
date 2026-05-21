@@ -1,0 +1,19 @@
+namespace: demo-istio
+gatewayHost: app.local
+
+images:
+  pullPolicy: IfNotPresent
+  permissionValidation: workspace/permission-validation:dev
+  echoServer:           workspace/echo-server:dev
+  pcs:                  workspace/pcs-ext-proc:dev
+
+# EnvoyFilter wiring. The `authority` field is critical — Istio's xDS
+# cluster_name contains `|`, which is invalid in HTTP/2 :authority,
+# so we override it explicitly.
+extProc:
+  clusterName: "outbound|50051||echo-app.demo-istio.svc.cluster.local"
+  authority:   "echo-app.demo-istio.svc.cluster.local"
+  messageTimeout: "2s"
+
+resources:
+  app: { requests: { cpu: 10m,  memory: 32Mi }, limits: { cpu: 100m, memory: 64Mi } }
