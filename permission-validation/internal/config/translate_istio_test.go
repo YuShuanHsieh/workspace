@@ -112,3 +112,46 @@ func TestTranslateIstio_ProbePathsOverride(t *testing.T) {
 		}
 	}
 }
+
+func TestTranslateIstio_WorkloadLabelsRendered(t *testing.T) {
+	rc := &RouteConfig{Version: "v1", AppID: "x", DefaultBehavior: "deny"}
+	opts := IstioOptions{
+		Namespace:      "ns",
+		WorkloadLabels: map[string]string{"app": "x", "tier": "api"},
+	}
+	b, _ := TranslateIstio(rc, opts)
+	s := string(b)
+	if !strings.Contains(s, "app: x") || !strings.Contains(s, "tier: api") {
+		t.Fatalf("expected both labels rendered; got:\n%s", b)
+	}
+}
+
+func TestTranslateIstio_RoutesNotInOutput(t *testing.T) {
+	rc := &RouteConfig{
+		Version: "v1", AppID: "orders-app", DefaultBehavior: "deny",
+		Routes: []RouteRule{
+			{Method: "GET", Path: "/api/orders/secret", Behavior: "protected"},
+			{Method: "POST", Path: "/api/orders/admin", Behavior: "skipped"},
+		},
+	}
+	opts := IstioOptions{Namespace: "orders", WorkloadLabels: map[string]string{"app": "orders-app"}}
+	b, _ := TranslateIstio(rc, opts)
+	s := string(b)
+	// Routes from routes.yaml MUST NOT appear in the EnvoyFilter — they move into
+	// the sidecar via --routes-file. Probe paths are the only routes in the CRD.
+	if strings.Contains(s, "/api/orders/secret") || strings.Contains(s, "/api/orders/admin") {
+		t.Fatalf("routes.yaml paths must not appear in the EnvoyFilter; got:\n%s", b)
+	}
+}
+
+func TestTranslateIstio_ContextIsSidecarInbound(t *testing.T) {
+	rc := &RouteConfig{Version: "v1", AppID: "x", DefaultBehavior: "deny"}
+	opts := IstioOptions{Namespace: "ns", WorkloadLabels: map[string]string{"app": "x"}}
+	b, _ := TranslateIstio(rc, opts)
+	// Every configPatches[].match.context MUST be SIDECAR_INBOUND.
+	// 3 patches × 1 context line each = 3.
+	got := strings.Count(string(b), "context: SIDECAR_INBOUND")
+	if got != 3 {
+		t.Fatalf("expected 3 SIDECAR_INBOUND contexts; got %d in:\n%s", got, b)
+	}
+}
