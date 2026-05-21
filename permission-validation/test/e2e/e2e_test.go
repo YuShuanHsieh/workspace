@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,7 +14,11 @@ import (
 	"testing"
 	"time"
 
+	core_v3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
+	ext_proc_v3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 const (
@@ -178,4 +183,68 @@ func TestE2E_SkippedRouteBypassesSidecar(t *testing.T) {
 	code, _ := do(t, "GET", "/health", nil)
 	require.Equal(t, 200, code)
 	require.Equal(t, before+1, backendCallCount(t))
+}
+
+// pcsCallCount returns the number of /permission-check calls recorded by fake-pcs.
+func pcsCallCount(t *testing.T) int {
+	t.Helper()
+	resp, err := http.Get(pcsURL + "/_admin/calls")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	var calls []any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&calls))
+	return len(calls)
+}
+
+// extprocClient opens a gRPC Process stream to a permission-validation sidecar
+// at addr, sends a single RequestHeaders message, reads the first
+// ProcessingResponse, and returns (status code, was-ImmediateResponse).
+// A CONTINUE response is reported as (200, false).
+func extprocClient(t *testing.T, addr string, hdrs map[string]string) (int, bool) {
+	t.Helper()
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err, "dial")
+	defer conn.Close()
+	client := ext_proc_v3.NewExternalProcessorClient(conn)
+	stream, err := client.Process(context.Background())
+	require.NoError(t, err, "open stream")
+	hm := &core_v3.HeaderMap{}
+	for k, v := range hdrs {
+		hm.Headers = append(hm.Headers, &core_v3.HeaderValue{Key: k, RawValue: []byte(v)})
+	}
+	require.NoError(t, stream.Send(&ext_proc_v3.ProcessingRequest{
+		Request: &ext_proc_v3.ProcessingRequest_RequestHeaders{
+			RequestHeaders: &ext_proc_v3.HttpHeaders{Headers: hm},
+		},
+	}), "send")
+	resp, err := stream.Recv()
+	require.NoError(t, err, "recv")
+	if ir, ok := resp.Response.(*ext_proc_v3.ProcessingResponse_ImmediateResponse); ok {
+		return int(ir.ImmediateResponse.Status.Code), true
+	}
+	return 200, false
+}
+
+const sidecarRoutesAddr = "127.0.0.1:50052"
+
+func TestE2E_RoutesFile_SkippedRouteAllowsWithoutPCS(t *testing.T) {
+	resetFixtures(t)
+	status, immediate := extprocClient(t, sidecarRoutesAddr, map[string]string{
+		":method": "GET",
+		":path":   "/health",
+	})
+	require.False(t, immediate, "skipped route should produce CONTINUE, not ImmediateResponse")
+	require.Equal(t, 200, status)
+	require.Equal(t, 0, pcsCallCount(t), "PCS must not be called for skipped routes")
+}
+
+func TestE2E_RoutesFile_DefaultDenyNoMatch_403WithoutPCS(t *testing.T) {
+	resetFixtures(t)
+	status, immediate := extprocClient(t, sidecarRoutesAddr, map[string]string{
+		":method": "GET",
+		":path":   "/totally-unknown-path",
+	})
+	require.True(t, immediate, "default-deny no-match should produce ImmediateResponse, not CONTINUE")
+	require.Equal(t, 403, status)
+	require.Equal(t, 0, pcsCallCount(t), "PCS must not be called for default-deny no-match")
 }

@@ -23,3 +23,15 @@ services:
       - ./envoy.yaml:/etc/envoy/envoy.yaml:ro
     depends_on: [sidecar, fake-backend]
     ports: ["8000:8000", "9901:9901"]
+  sidecar-with-routes:
+    build: { context: ../.., dockerfile: test/e2e/Dockerfile.sidecar }
+    command:
+      - "--listen=0.0.0.0:50051"
+      - "--pcs-endpoint=http://fake-pcs:9000"
+      - "--pcs-timeout=250ms"
+      - "--routes-file=/test-routes.yaml"
+      - "--otel-disabled"
+    volumes:
+      - ./routes.yaml:/test-routes.yaml:ro
+    depends_on: [fake-pcs]
+    ports: ["50052:50051"]
