@@ -34,6 +34,23 @@ helm install istio kind/demo-ext-proc-istio/ --wait
 - `kubectl -n demo-istio logs <echo-app-pod> -c istio-proxy` — Envoy access logs.
 - `kubectl -n demo-istio logs deploy/pcs` — one JSON line per decision.
 
-## Known difference vs. Option B
+## Skipped routes via VIRTUAL_HOST patch
 
-`routes.yaml`'s `skipped:` list is **not** honoured by this option, because there is no per-route skip in the EnvoyFilter. A request to `/healthz` therefore goes through `ext_proc` and is rejected for missing `X-Auth-Context` (403), not passed through (200). To make Option A honour skipped routes, see [`docs/superpowers/specs/2026-05-18-istio-envoyfilter-target-design.md`](../../docs/superpowers/specs/2026-05-18-istio-envoyfilter-target-design.md).
+`/healthz`, `/readyz`, and `/livez` bypass `ext_proc` at the Envoy level —
+the EnvoyFilter's third `configPatch` (`applyTo: VIRTUAL_HOST`) marks
+them with `ExtProcPerRoute.disabled: true`, so istio-proxy never opens
+a gRPC stream to the sidecar for those paths. This means probes survive
+sidecar restarts entirely.
+
+`routes.yaml`'s `behavior: skipped` rules are honoured by the sidecar
+itself (via `--routes-file`) for any other skipped routes you declare;
+the EnvoyFilter only handles the probe paths.
+
+To override the probe paths at generation time:
+
+```sh
+validate-routes translate routes.yaml --target=istio \
+  --namespace demo-istio --workload-label app=echo-app \
+  --probe-paths=/healthz,/custom-ready \
+  -o envoyfilter.yaml
+```
