@@ -22,6 +22,7 @@ spec:
         - "--listen=0.0.0.0:50051"
         - "--pcs-endpoint=http://pcs:8080"
         - "--pcs-timeout=250ms"
+        - "--routes-file=/etc/pv/routes.yaml"
         - "--otel-disabled"
         ports:
         - containerPort: 50051
@@ -29,6 +30,9 @@ spec:
         readinessProbe:
           tcpSocket: { port: 50051 }
           periodSeconds: 2
+        volumeMounts:
+        - name: pv-routes
+          mountPath: /etc/pv
         resources:
           {{- toYaml .Values.resources.app | nindent 10 }}
       - name: echo
@@ -42,6 +46,10 @@ spec:
           periodSeconds: 2
         resources:
           {{- toYaml .Values.resources.app | nindent 10 }}
+      volumes:
+      - name: pv-routes
+        configMap:
+          name: pv-routes
 ---
 # Dual-port Service: 8080 for app traffic via the Gateway, 50051 so that
 # istio-proxy can reach the sidecar via the standard xDS cluster_name
