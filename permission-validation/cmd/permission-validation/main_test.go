@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -85,5 +87,37 @@ func TestStopGRPCServerFallsBackWhenGracefulStopBlocks(t *testing.T) {
 	case <-s.stopCalled:
 	default:
 		t.Fatal("expected forced stop fallback")
+	}
+}
+
+func TestRun_RoutesFile_MissingFile_ExitsNonZero(t *testing.T) {
+	var stderr bytes.Buffer
+	code := run(context.Background(), []string{
+		"--listen=127.0.0.1:0",
+		"--routes-file=/nonexistent/routes.yaml",
+		"--otel-disabled",
+	}, &bytes.Buffer{}, &stderr)
+	if code == 0 {
+		t.Fatalf("expected non-zero exit; got 0; stderr=%s", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "read routes file") {
+		t.Fatalf("stderr should mention 'read routes file'; got: %s", stderr.String())
+	}
+}
+
+func TestRun_RoutesFile_InvalidYAML_ExitsNonZero(t *testing.T) {
+	tmp := t.TempDir()
+	bad := filepath.Join(tmp, "routes.yaml")
+	if err := os.WriteFile(bad, []byte("not: valid: yaml: { ["), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	code := run(context.Background(), []string{
+		"--listen=127.0.0.1:0",
+		"--routes-file=" + bad,
+		"--otel-disabled",
+	}, &bytes.Buffer{}, &stderr)
+	if code == 0 {
+		t.Fatalf("expected non-zero exit; got 0; stderr=%s", stderr.String())
 	}
 }

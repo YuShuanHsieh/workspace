@@ -8,6 +8,7 @@ import (
 	"permission-validation/internal/header"
 	"permission-validation/internal/metrics"
 	"permission-validation/internal/pcs"
+	"permission-validation/internal/routes"
 )
 
 // PCS is the dependency interface for the permission checking service.
@@ -35,13 +36,15 @@ type Outcome struct {
 
 // Handler is the orchestration core: extract → parse → PCS → emit metrics → return Outcome.
 type Handler struct {
-	pcs PCS
-	m   *metrics.Metrics
+	pcs    PCS
+	m      *metrics.Metrics
+	routes *routes.Table // nil = Phase 1 behavior (no short-circuit)
 }
 
 // New constructs a Handler. The metrics object is required.
-func New(p PCS, m *metrics.Metrics) *Handler {
-	return &Handler{pcs: p, m: m}
+// t may be nil (Phase 1 behavior: no route-based short-circuit).
+func New(p PCS, m *metrics.Metrics, t *routes.Table) *Handler {
+	return &Handler{pcs: p, m: m, routes: t}
 }
 
 // Decide consumes a lowercased header map (Envoy normalizes header casing on HTTP/2)
@@ -50,6 +53,23 @@ func (h *Handler) Decide(ctx context.Context, hdrs map[string]string) Outcome {
 	if h == nil || h.m == nil || h.pcs == nil {
 		return Outcome{Kind: OutcomeRejectError, Reason: "internal_error"}
 	}
+
+	if h.routes != nil {
+		method := hdrs[":method"]
+		path := hdrs[":path"]
+		behavior, _ := h.routes.Lookup(method, path)
+		switch behavior {
+		case "skipped":
+			h.m.Decision(ctx, "allow")
+			return Outcome{Kind: OutcomeAllow}
+		case "deny":
+			h.m.Decision(ctx, "deny")
+			return Outcome{Kind: OutcomeDeny}
+		}
+		// "protected" (matched rule or default-protected) → fall through to
+		// existing header parse + PCS path.
+	}
+
 	start := time.Now()
 	defer func() { h.m.SidecarLatency(ctx, time.Since(start)) }()
 

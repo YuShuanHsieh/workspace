@@ -34,7 +34,7 @@ func startServer(t *testing.T, p PCS) (ext_proc_v3.ExternalProcessorClient, func
 	gs := grpc.NewServer()
 	reader := metric.NewManualReader()
 	mp := metric.NewMeterProvider(metric.WithReader(reader))
-	h := New(p, metrics.New(mp.Meter("test")))
+	h := New(p, metrics.New(mp.Meter("test")), nil)
 	RegisterServer(gs, h)
 	go func() { _ = gs.Serve(lis) }()
 

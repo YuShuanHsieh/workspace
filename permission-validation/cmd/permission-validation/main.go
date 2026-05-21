@@ -15,9 +15,11 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric"
 	"google.golang.org/grpc"
 
+	"permission-validation/internal/config"
 	"permission-validation/internal/extproc"
 	"permission-validation/internal/metrics"
 	"permission-validation/internal/pcs"
+	"permission-validation/internal/routes"
 )
 
 func main() {
@@ -34,6 +36,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	pcsTimeout := fs.Duration("pcs-timeout", 250*time.Millisecond, "per-call PCS timeout")
 	otelEndpoint := fs.String("otel-endpoint", "127.0.0.1:4317", "OTLP/gRPC metrics endpoint")
 	otelDisabled := fs.Bool("otel-disabled", false, "disable OTLP export (uses no-op meter)")
+	routesFile := fs.String("routes-file", "", "optional path to routes.yaml; when set, the sidecar short-circuits skipped routes and the default-behavior catch-all before any header parse or PCS call")
 
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, "permission-validation — Phase 1 Envoy ext_proc sidecar\n")
@@ -45,6 +48,31 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			return 0
 		}
 		return 2
+	}
+
+	var routeTable *routes.Table
+	if *routesFile != "" {
+		b, err := os.ReadFile(*routesFile)
+		if err != nil {
+			fmt.Fprintln(stderr, "read routes file:", err)
+			return 1
+		}
+		rc, err := config.Parse(b)
+		if err != nil {
+			fmt.Fprintln(stderr, "parse routes file:", err)
+			return 1
+		}
+		if errs := config.Validate(rc); len(errs) > 0 {
+			for _, e := range errs {
+				fmt.Fprintln(stderr, e)
+			}
+			return 1
+		}
+		routeTable, err = routes.Compile(rc)
+		if err != nil {
+			fmt.Fprintln(stderr, "compile routes:", err)
+			return 1
+		}
 	}
 
 	mp, shutdownMeter, err := buildMeterProvider(ctx, *otelEndpoint, *otelDisabled)
@@ -60,7 +88,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 	m := metrics.New(mp.Meter("permission-validation"))
 	pcsClient := pcs.NewClient(*pcsEndpoint, *pcsTimeout)
-	h := extproc.New(pcsClient, m)
+	h := extproc.New(pcsClient, m, routeTable)
 
 	lis, err := net.Listen("tcp", *listen)
 	if err != nil {
