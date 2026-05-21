@@ -1,0 +1,11 @@
+{{- if not .Values.envoyBootstrap }}
+{{- fail "envoyBootstrap is empty — pass via `helm install --set-file envoyBootstrap=/path/to/envoy.yaml`" }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: envoy-bootstrap
+  namespace: {{ .Values.namespace }}
+data:
+  envoy.yaml: |
+{{ .Values.envoyBootstrap | indent 4 }}
