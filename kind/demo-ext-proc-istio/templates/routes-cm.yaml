@@ -1,0 +1,14 @@
+# ConfigMap holding kind/routes.yaml content. The sidecar reads it via
+# --routes-file=/etc/pv/routes.yaml so route decisions move into the
+# sidecar (matched skipped → ALLOW pre-PCS, default-deny → 403 pre-PCS).
+{{- if not .Values.routesYaml }}
+{{- fail "routesYaml is empty — pass via `helm install --set-file routesYaml=kind/routes.yaml`" }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pv-routes
+  namespace: {{ .Values.namespace }}
+data:
+  routes.yaml: |
+{{ .Values.routesYaml | indent 4 }}
