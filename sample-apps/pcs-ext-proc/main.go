@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -55,4 +56,19 @@ func checkHandler(w http.ResponseWriter, r *http.Request) {
 	)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(checkResponse{Allowed: allowed})
+}
+
+func main() {
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	slog.SetDefault(logger)
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	http.HandleFunc("/permission-check/v1/check", checkHandler)
+	slog.Info("pcs-ext-proc starting", "port", port)
+	if err := http.ListenAndServe(":"+port, nil); err != nil {
+		slog.Error("listen failed", "err", err)
+		os.Exit(1)
+	}
 }
