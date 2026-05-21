@@ -1,0 +1,22 @@
+# kind/demo-ext-proc-plain/values.yaml
+# Single source of image references for the chart.
+namespace: demo-plain
+
+images:
+  pullPolicy: IfNotPresent
+  envoy:               envoyproxy/envoy:v1.31.3
+  permissionValidation: workspace/permission-validation:dev
+  echoServer:           workspace/echo-server:dev
+  pcs:                  workspace/pcs-ext-proc:dev
+
+# envoyBootstrap is injected by setup-plain.sh via:
+#   helm install ... --set-file envoyBootstrap=/tmp/envoy.yaml
+# The default empty string makes `helm template` fail loudly if you forget,
+# which is intended.
+envoyBootstrap: ""
+
+resources:
+  app:   { requests: { cpu: 10m,  memory: 32Mi }, limits: { cpu: 100m, memory: 64Mi } }
+  envoy: { requests: { cpu: 20m,  memory: 64Mi }, limits: { cpu: 200m, memory: 128Mi } }
+
+nodePort: 30090

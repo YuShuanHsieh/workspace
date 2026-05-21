@@ -1,0 +1,9 @@
+apiVersion: v2
+name: demo-ext-proc-plain
+description: |
+  Option B of the ext_proc kind demo — main's design as written.
+  Plain Envoy + permission-validation sidecar + echo-server in one pod,
+  istio-injection=disabled, NodePort straight to Envoy.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
