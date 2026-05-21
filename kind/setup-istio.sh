@@ -55,4 +55,61 @@ for img in workspace/echo-server:dev workspace/pcs-ext-proc:dev workspace/permis
   kind load docker-image "${img}" --name "${CLUSTER_NAME}"
 done
 
-echo "Phase A done."
+# -- Phase B: validate routes + helm install ----------------------------------
+log "Validating routes.yaml (lint only — Option A does not generate envoy.yaml)"
+( cd "${ROOT}/permission-validation" && go run ./cmd/validate-routes validate "${KIND_DIR}/routes.yaml" )
+
+log "Helm install"
+helm upgrade --install istio "${CHART_DIR}" --namespace default --wait --timeout 180s
+
+# -- Phase C: verification ----------------------------------------------------
+log "Waiting for echo-app and pcs pods to be Ready"
+kubectl -n "${NAMESPACE}" wait --for=condition=Ready pod -l app=echo-app --timeout=180s
+kubectl -n "${NAMESPACE}" wait --for=condition=Ready pod -l app=pcs       --timeout=180s
+
+log "Verifying canonical curls (via ingressgateway @ localhost:8080, Host: app.local)"
+fail=0
+expect_status() {
+  local want="$1"; shift
+  local got
+  got="$(curl -sS -o /dev/null -w '%{http_code}' "$@")"
+  if [[ "${got}" != "${want}" ]]; then
+    printf "  FAIL  expected %s, got %s    curl %s\n" "${want}" "${got}" "$*"
+    fail=1
+  else
+    printf "  ok    %s    curl %s\n" "${got}" "$*"
+  fi
+}
+
+# Tiny wait for the EnvoyFilter to propagate to istio-proxy via xDS
+sleep 5
+
+# 1) ALLOW
+expect_status 200 "http://127.0.0.1:8080/anything" \
+  -H "Host: app.local" \
+  -H "Authorization: Bearer alice@workspace.test" \
+  -H "X-Auth-Context: doc-1:document:edit"
+
+# 2) DENY
+expect_status 403 "http://127.0.0.1:8080/anything" \
+  -H "Host: app.local" \
+  -H "Authorization: Bearer alice@workspace.test" \
+  -H "X-Auth-Context: doc-2:document:edit"
+
+# 3) MISSING CONTEXT
+expect_status 403 "http://127.0.0.1:8080/anything" \
+  -H "Host: app.local" \
+  -H "Authorization: Bearer alice@workspace.test"
+
+# 4) ECHO HEALTHZ — Option A does not honour the routes.yaml skipped list
+#    (no translate target); the request still goes through ext_proc, where
+#    the sidecar rejects missing X-Auth-Context with 403. We assert 403 here
+#    intentionally and call it out in DEMO.md.
+expect_status 403 "http://127.0.0.1:8080/healthz" -H "Host: app.local"
+
+if [[ ${fail} -eq 0 ]]; then
+  printf "\n\033[1;32mAll four canonical curls returned expected status codes.\033[0m\n"
+else
+  printf "\n\033[1;31mAt least one curl returned an unexpected status.\033[0m\n"
+  exit 1
+fi
