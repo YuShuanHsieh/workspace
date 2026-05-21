@@ -80,3 +80,35 @@ func TestTranslateIstio_ExplicitNameOverridesDefault(t *testing.T) {
 		t.Fatalf("expected explicit name; got:\n%s", b)
 	}
 }
+
+func TestTranslateIstio_ProbePathsDefault(t *testing.T) {
+	rc := &RouteConfig{Version: "v1", AppID: "orders-app", DefaultBehavior: "deny"}
+	opts := IstioOptions{Namespace: "orders", WorkloadLabels: map[string]string{"app": "orders-app"}}
+	b, _ := TranslateIstio(rc, opts)
+	s := string(b)
+	for _, p := range []string{`path: "/healthz"`, `path: "/readyz"`, `path: "/livez"`} {
+		if !strings.Contains(s, p) {
+			t.Fatalf("expected default probe-path entry %q; got:\n%s", p, b)
+		}
+	}
+}
+
+func TestTranslateIstio_ProbePathsOverride(t *testing.T) {
+	rc := &RouteConfig{Version: "v1", AppID: "orders-app", DefaultBehavior: "deny"}
+	opts := IstioOptions{
+		Namespace:      "orders",
+		WorkloadLabels: map[string]string{"app": "orders-app"},
+		ProbePaths:     []string{"/health", "/ready"},
+	}
+	b, _ := TranslateIstio(rc, opts)
+	s := string(b)
+	if !strings.Contains(s, `path: "/health"`) || !strings.Contains(s, `path: "/ready"`) {
+		t.Fatalf("expected /health and /ready probe paths; got:\n%s", b)
+	}
+	// Defaults must NOT appear when override given.
+	for _, p := range []string{`path: "/healthz"`, `path: "/readyz"`, `path: "/livez"`} {
+		if strings.Contains(s, p) {
+			t.Fatalf("default probe path %q must not appear when override is given; got:\n%s", p, b)
+		}
+	}
+}
