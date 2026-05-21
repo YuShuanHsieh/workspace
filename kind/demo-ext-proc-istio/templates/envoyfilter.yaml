@@ -2,40 +2,37 @@ apiVersion: networking.istio.io/v1alpha3
 kind: EnvoyFilter
 metadata:
   name: echo-ext-proc
-  namespace: {{ .Values.namespace }}
+  namespace: demo-istio
 spec:
   workloadSelector:
     labels:
       app: echo-app
   configPatches:
-  # 1) Define a static CLUSTER pointing at the sidecar container in the SAME
-  #    pod (localhost). Using a Service-derived cluster_name like
-  #    `outbound|50051||echo-app.demo-istio.svc.cluster.local` creates a
-  #    routing loop here because that Service backs the very pod we are in:
-  #    istio-proxy → outbound listener → cluster → Service IP → pod IP →
-  #    istio-proxy inbound → ... 503 connection-reset before headers.
-  #    Bypassing the mesh by hitting 127.0.0.1:50051 is what the sidecar
-  #    pattern is for: pod-local, no iptables redirection.
+
+  # (a) STATIC cluster for the pv sibling container at 127.0.0.1.
   - applyTo: CLUSTER
     match:
       context: SIDECAR_INBOUND
     patch:
       operation: ADD
       value:
-        name: ext_proc_sidecar_local
+        name: pv_sidecar
         type: STATIC
         connect_timeout: 1s
-        http2_protocol_options: {}
+        typed_extension_protocol_options:
+          envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+            "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+            explicit_http_config:
+              http2_protocol_options: {}
         load_assignment:
-          cluster_name: ext_proc_sidecar_local
+          cluster_name: pv_sidecar
           endpoints:
-          - lb_endpoints:
-            - endpoint:
-                address:
-                  socket_address:
-                    address: 127.0.0.1
-                    port_value: 50051
-  # 2) Insert the ext_proc HTTP filter pointing at the static cluster above.
+            - lb_endpoints:
+                - endpoint:
+                    address:
+                      socket_address: { address: 127.0.0.1, port_value: 50051 }
+
+  # (b) Insert ext_proc before the router in the inbound HCM.
   - applyTo: HTTP_FILTER
     match:
       context: SIDECAR_INBOUND
@@ -52,9 +49,8 @@ spec:
         typed_config:
           "@type": type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor
           grpc_service:
-            envoy_grpc:
-              cluster_name: ext_proc_sidecar_local
-            timeout: 1s
+            envoy_grpc: { cluster_name: pv_sidecar }
+          failure_mode_allow: false
           processing_mode:
             request_header_mode: SEND
             response_header_mode: SKIP
@@ -62,5 +58,27 @@ spec:
             response_body_mode: NONE
             request_trailer_mode: SKIP
             response_trailer_mode: SKIP
-          failure_mode_allow: false
-          message_timeout: {{ .Values.extProc.messageTimeout | quote }}
+
+  # (c) Probe-path carve-out: disable ext_proc for liveness/readiness paths.
+  - applyTo: VIRTUAL_HOST
+    match:
+      context: SIDECAR_INBOUND
+    patch:
+      operation: MERGE
+      value:
+        routes:
+          - match: { path: "/healthz" }
+            typed_per_filter_config:
+              envoy.filters.http.ext_proc:
+                "@type": type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExtProcPerRoute
+                disabled: true
+          - match: { path: "/readyz" }
+            typed_per_filter_config:
+              envoy.filters.http.ext_proc:
+                "@type": type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExtProcPerRoute
+                disabled: true
+          - match: { path: "/livez" }
+            typed_per_filter_config:
+              envoy.filters.http.ext_proc:
+                "@type": type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExtProcPerRoute
+                disabled: true
