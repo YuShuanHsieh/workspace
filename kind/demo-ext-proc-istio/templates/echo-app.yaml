@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: echo-app
+  namespace: {{ .Values.namespace }}
+  labels: { app: echo-app }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: echo-app } }
+  template:
+    metadata:
+      labels: { app: echo-app }
+      # No istio-proxy injection annotations needed; the namespace label
+      # turns on injection. istio-proxy will be added as a 3rd container
+      # by the Istio admission webhook.
+    spec:
+      containers:
+      - name: sidecar
+        image: {{ .Values.images.permissionValidation }}
+        imagePullPolicy: {{ .Values.images.pullPolicy }}
+        args:
+        - "--listen=0.0.0.0:50051"
+        - "--pcs-endpoint=http://pcs:8080"
+        - "--pcs-timeout=250ms"
+        - "--otel-disabled"
+        ports:
+        - containerPort: 50051
+          name: grpc-extproc
+        readinessProbe:
+          tcpSocket: { port: 50051 }
+          periodSeconds: 2
+        resources:
+          {{- toYaml .Values.resources.app | nindent 10 }}
+      - name: echo
+        image: {{ .Values.images.echoServer }}
+        imagePullPolicy: {{ .Values.images.pullPolicy }}
+        ports:
+        - containerPort: 8080
+          name: http-echo
+        readinessProbe:
+          tcpSocket: { port: 8080 }
+          periodSeconds: 2
+        resources:
+          {{- toYaml .Values.resources.app | nindent 10 }}
+---
+# Dual-port Service: 8080 for app traffic via the Gateway, 50051 so that
+# istio-proxy can reach the sidecar via the standard xDS cluster_name
+# pattern (outbound|50051||echo-app.demo-istio.svc.cluster.local).
+apiVersion: v1
+kind: Service
+metadata:
+  name: echo-app
+  namespace: {{ .Values.namespace }}
+spec:
+  type: ClusterIP
+  selector: { app: echo-app }
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+    appProtocol: http
+  - name: grpc-extproc
+    port: 50051
+    targetPort: 50051
+    appProtocol: grpc
