@@ -45,10 +45,14 @@ helm upgrade --install ingressgateway "${CHARTS}/gateway-1.24.2.tgz" \
   --wait
 
 # -- Phase A: images ----------------------------------------------------------
-log "Building images"
-docker build -t workspace/echo-server:dev          -f "${ROOT}/sample-apps/echo-server/deploy/Dockerfile"         "${ROOT}/sample-apps/echo-server/"
-docker build -t workspace/pcs-ext-proc:dev         -f "${ROOT}/sample-apps/pcs-ext-proc/deploy/Dockerfile"        "${ROOT}/sample-apps/pcs-ext-proc/"
-docker build -t workspace/permission-validation:dev -f "${ROOT}/permission-validation/test/e2e/Dockerfile.sidecar" "${ROOT}/permission-validation/"
+if [[ -z "${SKIP_LOCAL_BUILD:-}" ]]; then
+  log "Building images (set SKIP_LOCAL_BUILD=1 to reuse already-built images)"
+  docker build -t workspace/echo-server:dev          -f "${ROOT}/sample-apps/echo-server/deploy/Dockerfile"         "${ROOT}/sample-apps/echo-server/"
+  docker build -t workspace/pcs-ext-proc:dev         -f "${ROOT}/sample-apps/pcs-ext-proc/deploy/Dockerfile"        "${ROOT}/sample-apps/pcs-ext-proc/"
+  docker build -t workspace/permission-validation:dev -f "${ROOT}/permission-validation/test/e2e/Dockerfile.sidecar" "${ROOT}/permission-validation/"
+else
+  log "SKIP_LOCAL_BUILD set — assuming workspace/echo-server:dev, workspace/pcs-ext-proc:dev, workspace/permission-validation:dev are already built locally"
+fi
 
 log "Loading images into kind"
 for img in workspace/echo-server:dev workspace/pcs-ext-proc:dev workspace/permission-validation:dev; do
