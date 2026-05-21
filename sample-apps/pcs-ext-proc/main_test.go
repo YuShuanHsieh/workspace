@@ -57,3 +57,34 @@ func TestCheckHandler_AllowReturns200WithAllowedTrue(t *testing.T) {
 		t.Fatalf("body: got %q, want allowed:true", w.Body.String())
 	}
 }
+
+func TestCheckHandler_DenyReturns200WithAllowedFalse(t *testing.T) {
+	r := httptest.NewRequest(
+		http.MethodPost,
+		"/permission-check/v1/check",
+		strings.NewReader(`{"objectId":"doc-2","objectType":"document","permission":"edit"}`),
+	)
+	r.Header.Set("Authorization", "Bearer alice@workspace.test")
+	w := httptest.NewRecorder()
+	checkHandler(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), `"allowed":false`) {
+		t.Fatalf("body: got %q, want allowed:false", w.Body.String())
+	}
+}
+
+func TestCheckHandler_MalformedJSONReturns400(t *testing.T) {
+	r := httptest.NewRequest(
+		http.MethodPost,
+		"/permission-check/v1/check",
+		strings.NewReader(`not json`),
+	)
+	r.Header.Set("Authorization", "Bearer alice@workspace.test")
+	w := httptest.NewRecorder()
+	checkHandler(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status: got %d, want 400", w.Code)
+	}
+}
