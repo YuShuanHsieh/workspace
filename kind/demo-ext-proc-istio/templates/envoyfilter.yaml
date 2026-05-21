@@ -8,6 +8,34 @@ spec:
     labels:
       app: echo-app
   configPatches:
+  # 1) Define a static CLUSTER pointing at the sidecar container in the SAME
+  #    pod (localhost). Using a Service-derived cluster_name like
+  #    `outbound|50051||echo-app.demo-istio.svc.cluster.local` creates a
+  #    routing loop here because that Service backs the very pod we are in:
+  #    istio-proxy → outbound listener → cluster → Service IP → pod IP →
+  #    istio-proxy inbound → ... 503 connection-reset before headers.
+  #    Bypassing the mesh by hitting 127.0.0.1:50051 is what the sidecar
+  #    pattern is for: pod-local, no iptables redirection.
+  - applyTo: CLUSTER
+    match:
+      context: SIDECAR_INBOUND
+    patch:
+      operation: ADD
+      value:
+        name: ext_proc_sidecar_local
+        type: STATIC
+        connect_timeout: 1s
+        http2_protocol_options: {}
+        load_assignment:
+          cluster_name: ext_proc_sidecar_local
+          endpoints:
+          - lb_endpoints:
+            - endpoint:
+                address:
+                  socket_address:
+                    address: 127.0.0.1
+                    port_value: 50051
+  # 2) Insert the ext_proc HTTP filter pointing at the static cluster above.
   - applyTo: HTTP_FILTER
     match:
       context: SIDECAR_INBOUND
@@ -25,12 +53,7 @@ spec:
           "@type": type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor
           grpc_service:
             envoy_grpc:
-              cluster_name: {{ .Values.extProc.clusterName | quote }}
-              # CRITICAL: Istio's xDS cluster_name contains `|`, which is
-              # invalid in HTTP/2 :authority. Without this override, the
-              # gRPC stream out of istio-proxy fails with a malformed-
-              # header error. (Found in earlier parked scaffolding.)
-              authority: {{ .Values.extProc.authority | quote }}
+              cluster_name: ext_proc_sidecar_local
             timeout: 1s
           processing_mode:
             request_header_mode: SEND
