@@ -55,3 +55,28 @@ func TestTranslateIstio_MinimalProducesValidYAML(t *testing.T) {
 		t.Fatalf("expected namespace: orders in output\n%s", b)
 	}
 }
+
+func TestTranslateIstio_NameDefaultsFromAppID(t *testing.T) {
+	rc := &RouteConfig{Version: "v1", AppID: "orders-app", DefaultBehavior: "deny"}
+	opts := IstioOptions{Namespace: "orders", WorkloadLabels: map[string]string{"app": "orders-app"}}
+	b, err := TranslateIstio(rc, opts)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(string(b), "name: permission-validation-orders-app") {
+		t.Fatalf("expected default name 'permission-validation-orders-app'; got:\n%s", b)
+	}
+}
+
+func TestTranslateIstio_ExplicitNameOverridesDefault(t *testing.T) {
+	rc := &RouteConfig{Version: "v1", AppID: "orders-app", DefaultBehavior: "deny"}
+	opts := IstioOptions{
+		Namespace:      "orders",
+		WorkloadLabels: map[string]string{"app": "orders-app"},
+		Name:           "custom-filter-name",
+	}
+	b, _ := TranslateIstio(rc, opts)
+	if !strings.Contains(string(b), "name: custom-filter-name") {
+		t.Fatalf("expected explicit name; got:\n%s", b)
+	}
+}
