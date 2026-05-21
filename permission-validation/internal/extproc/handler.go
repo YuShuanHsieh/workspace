@@ -54,6 +54,9 @@ func (h *Handler) Decide(ctx context.Context, hdrs map[string]string) Outcome {
 		return Outcome{Kind: OutcomeRejectError, Reason: "internal_error"}
 	}
 
+	start := time.Now()
+	defer func() { h.m.SidecarLatency(ctx, time.Since(start)) }()
+
 	if h.routes != nil {
 		method := hdrs[":method"]
 		path := hdrs[":path"]
@@ -69,9 +72,6 @@ func (h *Handler) Decide(ctx context.Context, hdrs map[string]string) Outcome {
 		// "protected" (matched rule or default-protected) → fall through to
 		// existing header parse + PCS path.
 	}
-
-	start := time.Now()
-	defer func() { h.m.SidecarLatency(ctx, time.Since(start)) }()
 
 	tok, err := header.ExtractAuth(hdrs)
 	if err != nil {
