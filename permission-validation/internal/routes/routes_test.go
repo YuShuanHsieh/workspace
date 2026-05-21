@@ -80,3 +80,51 @@ func TestLookup_MethodMatching(t *testing.T) {
 		t.Fatalf("lowercase 'get' should match GET rule")
 	}
 }
+
+func TestLookup_FirstMatchWins(t *testing.T) {
+	rc := &config.RouteConfig{
+		Version: "v1", AppID: "x", DefaultBehavior: "deny",
+		Routes: []config.RouteRule{
+			{Method: "GET", Path: "/api/orders/admin", Behavior: "skipped"},
+			{Method: "GET", Path: "/api/orders/*", Behavior: "protected"},
+		},
+	}
+	tbl, _ := Compile(rc)
+
+	if b, m := tbl.Lookup("GET", "/api/orders/admin"); !m || b != "skipped" {
+		t.Fatalf("expected skipped on first-match-wins; got (%s, matched=%v)", b, m)
+	}
+	if b, m := tbl.Lookup("GET", "/api/orders/other"); !m || b != "protected" {
+		t.Fatalf("expected protected for non-admin under /api/orders/*; got (%s, matched=%v)", b, m)
+	}
+}
+
+func TestLookup_DefaultDeny(t *testing.T) {
+	rc := &config.RouteConfig{
+		Version: "v1", AppID: "x", DefaultBehavior: "deny",
+		Routes:  []config.RouteRule{{Method: "GET", Path: "/protected", Behavior: "protected"}},
+	}
+	tbl, _ := Compile(rc)
+	b, m := tbl.Lookup("GET", "/nothing-matches")
+	if m {
+		t.Fatalf("expected no match")
+	}
+	if b != "deny" {
+		t.Fatalf("expected default deny; got %q", b)
+	}
+}
+
+func TestLookup_DefaultSkipped(t *testing.T) {
+	rc := &config.RouteConfig{
+		Version: "v1", AppID: "x", DefaultBehavior: "skipped",
+		Routes:  []config.RouteRule{{Method: "GET", Path: "/protected", Behavior: "protected"}},
+	}
+	tbl, _ := Compile(rc)
+	b, m := tbl.Lookup("GET", "/nothing-matches")
+	if m {
+		t.Fatalf("expected no match")
+	}
+	if b != "skipped" {
+		t.Fatalf("expected default skipped; got %q", b)
+	}
+}
