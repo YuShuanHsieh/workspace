@@ -37,6 +37,18 @@ func newRouter() *gin.Engine {
 		c.String(http.StatusOK, body)
 	})
 
+	// Catch-all: echo back method, path, and request headers as JSON.
+	// Used by the kind-demo-ext_proc demos (routes /anything and /healthz),
+	// and by anyone who points curl at an arbitrary path to see what the
+	// upstream actually receives after the sidecar mutates headers.
+	r.NoRoute(func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"method":  c.Request.Method,
+			"path":    c.Request.URL.Path,
+			"headers": c.Request.Header,
+		})
+	})
+
 	return r
 }
 
