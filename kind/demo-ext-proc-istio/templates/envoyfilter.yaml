@@ -60,6 +60,8 @@ spec:
             response_trailer_mode: SKIP
 
   # (c) Probe-path carve-out: disable ext_proc for liveness/readiness paths.
+  # Each route needs an action; direct_response 200 keeps the probe entirely
+  # inside Envoy so a sidecar/app outage does not fail kubelet probes.
   - applyTo: VIRTUAL_HOST
     match:
       context: SIDECAR_INBOUND
@@ -68,16 +70,25 @@ spec:
       value:
         routes:
           - match: { path: "/healthz" }
+            direct_response:
+              status: 200
+              body: { inline_string: "ok\n" }
             typed_per_filter_config:
               envoy.filters.http.ext_proc:
                 "@type": type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExtProcPerRoute
                 disabled: true
           - match: { path: "/readyz" }
+            direct_response:
+              status: 200
+              body: { inline_string: "ok\n" }
             typed_per_filter_config:
               envoy.filters.http.ext_proc:
                 "@type": type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExtProcPerRoute
                 disabled: true
           - match: { path: "/livez" }
+            direct_response:
+              status: 200
+              body: { inline_string: "ok\n" }
             typed_per_filter_config:
               envoy.filters.http.ext_proc:
                 "@type": type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExtProcPerRoute

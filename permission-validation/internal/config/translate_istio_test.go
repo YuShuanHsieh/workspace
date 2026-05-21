@@ -93,6 +93,22 @@ func TestTranslateIstio_ProbePathsDefault(t *testing.T) {
 	}
 }
 
+func TestTranslateIstio_ProbePathRoutesHaveDirectResponseAction(t *testing.T) {
+	// Envoy rejects routes that lack an action. The probe-path carve-out
+	// must therefore include direct_response (or some other action),
+	// otherwise istiod NACKs the LDS update and istio-proxy fails readiness.
+	rc := &RouteConfig{Version: "v1", AppID: "x", DefaultBehavior: "deny"}
+	opts := IstioOptions{Namespace: "ns", WorkloadLabels: map[string]string{"app": "x"}}
+	b, _ := TranslateIstio(rc, opts)
+	s := string(b)
+	if !strings.Contains(s, "direct_response:") {
+		t.Fatalf("probe-path routes must include direct_response action; got:\n%s", s)
+	}
+	if !strings.Contains(s, "status: 200") {
+		t.Fatalf("probe-path direct_response must return 200; got:\n%s", s)
+	}
+}
+
 func TestTranslateIstio_ProbePathsOverride(t *testing.T) {
 	rc := &RouteConfig{Version: "v1", AppID: "orders-app", DefaultBehavior: "deny"}
 	opts := IstioOptions{
