@@ -108,3 +108,29 @@ func TestTranslate_StdoutWriteFailureExitsNonZero(t *testing.T) {
 	require.Equal(t, 1, code)
 	require.Contains(t, stderr.String(), "write failed")
 }
+
+func TestTranslate_TargetIstio_WritesFile(t *testing.T) {
+	tmp := t.TempDir()
+	out := filepath.Join(tmp, "envoyfilter.yaml")
+	var stderr bytes.Buffer
+	code := run(context.Background(), []string{
+		"translate", "../../testdata/routes/valid-minimal.yaml",
+		"--target=istio",
+		"--namespace=orders",
+		"--workload-label=app=orders-app",
+		"-o", out,
+	}, &bytes.Buffer{}, &stderr)
+	if code != 0 {
+		t.Fatalf("exit %d; stderr=%s", code, stderr.String())
+	}
+	b, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(b, []byte("kind: EnvoyFilter")) {
+		t.Fatalf("expected EnvoyFilter output; got:\n%s", b)
+	}
+	if !bytes.Contains(b, []byte("namespace: orders")) {
+		t.Fatalf("expected namespace: orders; got:\n%s", b)
+	}
+}
