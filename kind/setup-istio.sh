@@ -64,7 +64,9 @@ log "Validating routes.yaml (lint only — Option A does not generate envoy.yaml
 ( cd "${ROOT}/permission-validation" && go run ./cmd/validate-routes validate "${KIND_DIR}/routes.yaml" )
 
 log "Helm install"
-helm upgrade --install istio "${CHART_DIR}" --namespace default --wait --timeout 180s
+helm upgrade --install istio "${CHART_DIR}" \
+  --namespace default --wait --timeout 180s \
+  --set-file routesYaml="${KIND_DIR}/routes.yaml"
 
 # -- Phase C: verification ----------------------------------------------------
 log "Waiting for echo-app and pcs pods to be Ready"
@@ -105,11 +107,9 @@ expect_status 403 "http://127.0.0.1:8080/anything" \
   -H "Host: app.local" \
   -H "Authorization: Bearer alice@workspace.test"
 
-# 4) ECHO HEALTHZ — Option A does not honour the routes.yaml skipped list
-#    (no translate target); the request still goes through ext_proc, where
-#    the sidecar rejects missing X-Auth-Context with 403. We assert 403 here
-#    intentionally and call it out in DEMO.md.
-expect_status 403 "http://127.0.0.1:8080/healthz" -H "Host: app.local"
+# 4) SKIPPED ROUTE — /healthz now bypasses the sidecar in Option A too,
+#    courtesy of the VIRTUAL_HOST configPatch that --target=istio emits.
+expect_status 200 "http://127.0.0.1:8080/healthz" -H "Host: app.local"
 
 if [[ ${fail} -eq 0 ]]; then
   printf "\n\033[1;32mAll four canonical curls returned expected status codes.\033[0m\n"
