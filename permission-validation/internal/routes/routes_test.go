@@ -56,3 +56,27 @@ func TestLookup_PathPatterns(t *testing.T) {
 		})
 	}
 }
+
+func TestLookup_MethodMatching(t *testing.T) {
+	rc := &config.RouteConfig{
+		Version: "v1", AppID: "x", DefaultBehavior: "deny",
+		Routes: []config.RouteRule{
+			{Method: "GET", Path: "/get-only", Behavior: "protected"},
+			{Method: "*", Path: "/any-method", Behavior: "protected"},
+		},
+	}
+	tbl, _ := Compile(rc)
+
+	if _, m := tbl.Lookup("GET", "/get-only"); !m {
+		t.Fatalf("GET /get-only should match")
+	}
+	if _, m := tbl.Lookup("POST", "/get-only"); m {
+		t.Fatalf("POST /get-only should NOT match a GET-only rule")
+	}
+	if _, m := tbl.Lookup("DELETE", "/any-method"); !m {
+		t.Fatalf("DELETE /any-method should match a wildcard-method rule")
+	}
+	if _, m := tbl.Lookup("get", "/get-only"); !m {
+		t.Fatalf("lowercase 'get' should match GET rule")
+	}
+}
