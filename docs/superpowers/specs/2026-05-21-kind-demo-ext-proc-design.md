@@ -128,18 +128,22 @@ Every decision is logged as a single JSON line so the presenter can tail logs an
 ## 5. Shared Route Configuration (`kind/routes.yaml`)
 
 ```yaml
-version: 1
-protected:
+version: v1
+appId: kind-demo
+defaultBehavior: deny
+routes:
   - method: GET
     path: /anything
+    behavior: protected
   - method: POST
     path: /anything
-skipped:
+    behavior: protected
   - method: GET
     path: /healthz
+    behavior: skipped
 ```
 
-`/anything` is `echo-server`'s standard "echo back the headers/body you got" endpoint, which is ideal for a demo because the response body shows the reader exactly which headers the backend received. `/healthz` is listed under `skipped:` so the demo can show a route that bypasses the sidecar entirely (per-route `ExtProcPerRoute.disabled: true` in Envoy / a route-level exemption in the EnvoyFilter).
+`/anything` is `echo-server`'s standard "echo back the headers/body you got" endpoint, which is ideal for a demo because the response body shows the reader exactly which headers the backend received. The `/healthz` rule with `behavior: skipped` marks a route that bypasses the sidecar entirely (per-route `ExtProcPerRoute.disabled: true` in Envoy / a route-level exemption in the EnvoyFilter). The schema (`version`/`appId`/`defaultBehavior`/`routes` with per-rule `behavior`) is what `permission-validation/internal/config/schema.go` on this branch enforces — `version: "v1"`, an `appId` string, a `defaultBehavior` string, and a `routes` list where each entry carries its own `behavior`.
 
 `validate-routes validate kind/routes.yaml` runs early in both `setup-*.sh` scripts and fails the run on a parse error.
 

@@ -240,15 +240,26 @@ EOF
 # Both demos consume this file:
 #   - setup-plain.sh: `validate-routes translate` → envoy.yaml → ConfigMap
 #   - setup-istio.sh: `validate-routes validate` as a lint step
-version: 1
-protected:
+#
+# Schema enforced by permission-validation/internal/config/schema.go:
+#   version: string (e.g. "v1")
+#   appId: string
+#   defaultBehavior: string ("deny" by default)
+#   routes: list of {method, path, behavior}
+#     behavior is "protected" or "skipped" per rule.
+version: v1
+appId: kind-demo
+defaultBehavior: deny
+routes:
   - method: GET
     path: /anything
+    behavior: protected
   - method: POST
     path: /anything
-skipped:
+    behavior: protected
   - method: GET
     path: /healthz
+    behavior: skipped
 ```
 
 - [ ] **Step 2: Validate against main's `validate-routes` CLI**
