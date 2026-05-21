@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pcs
+  namespace: {{ .Values.namespace }}
+  labels: { app: pcs }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: pcs } }
+  template:
+    metadata:
+      labels: { app: pcs }
+    spec:
+      containers:
+      - name: pcs
+        image: {{ .Values.images.pcs }}
+        imagePullPolicy: {{ .Values.images.pullPolicy }}
+        ports:
+        - containerPort: 8080
+          name: http
+        readinessProbe:
+          tcpSocket: { port: 8080 }
+          periodSeconds: 2
+        resources:
+          {{- toYaml .Values.resources.app | nindent 10 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pcs
+  namespace: {{ .Values.namespace }}
+spec:
+  type: ClusterIP
+  selector: { app: pcs }
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
