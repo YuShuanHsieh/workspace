@@ -13,7 +13,7 @@ HTTP filter chain.
 | `namespace.yaml` | Namespace `demo-istio`, with `istio-injection: enabled`. |
 | `echo-app.yaml` | Deployment with sidecar + echo containers + dual-port Service (8080 http, 50051 grpc-extproc). |
 | `gateway.yaml`  | Istio Gateway + VirtualService for `Host: app.local` → echo-app:8080. |
-| `envoyfilter.yaml` | The patch — splices ext_proc into istio-proxy with the `authority` HTTP/2 fix. |
+| `envoyfilter.yaml` | Literal `validate-routes translate --target=istio` output — STATIC `pv_sidecar` cluster at 127.0.0.1:50051 + `ext_proc` filter + probe-path carve-out. Regenerable. |
 | `pcs.yaml` | demo PCS Deployment + Service (HTTP :8080). |
 
 ## Install path

@@ -7,13 +7,9 @@ images:
   echoServer:           workspace/echo-server:dev
   pcs:                  workspace/pcs-ext-proc:dev
 
-# EnvoyFilter wiring. The `authority` field is critical — Istio's xDS
-# cluster_name contains `|`, which is invalid in HTTP/2 :authority,
-# so we override it explicitly.
-extProc:
-  clusterName: "outbound|50051||echo-app.demo-istio.svc.cluster.local"
-  authority:   "echo-app.demo-istio.svc.cluster.local"
-  messageTimeout: "2s"
+# The EnvoyFilter template is now literal output from
+# `validate-routes translate --target=istio` (see envoyfilter.yaml). No
+# extProc wiring lives in values.yaml — regenerate that file instead.
 
 resources:
   app: { requests: { cpu: 10m,  memory: 32Mi }, limits: { cpu: 100m, memory: 64Mi } }

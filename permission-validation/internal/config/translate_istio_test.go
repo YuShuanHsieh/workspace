@@ -101,8 +101,9 @@ func TestTranslateIstio_ProbePathRoutesHaveDirectResponseAction(t *testing.T) {
 	opts := IstioOptions{Namespace: "ns", WorkloadLabels: map[string]string{"app": "x"}}
 	b, _ := TranslateIstio(rc, opts)
 	s := string(b)
-	if !strings.Contains(s, "direct_response:") {
-		t.Fatalf("probe-path routes must include direct_response action; got:\n%s", s)
+	// One direct_response per probe path (default: 3).
+	if got, want := strings.Count(s, "direct_response:"), 3; got != want {
+		t.Fatalf("expected %d direct_response entries (one per default probe path); got %d:\n%s", want, got, s)
 	}
 	if !strings.Contains(s, "status: 200") {
 		t.Fatalf("probe-path direct_response must return 200; got:\n%s", s)
