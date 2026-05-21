@@ -36,13 +36,13 @@ helm upgrade --install istiod       "${CHARTS}/istiod-1.24.2.tgz" \
   --set "global.hub=${ISTIO_HUB}" --set "global.tag=${ISTIO_TAG}" \
   --wait
 helm upgrade --install ingressgateway "${CHARTS}/gateway-1.24.2.tgz" \
-  -n istio-system \
-  --set "service.type=NodePort" \
-  --set "service.ports[0].name=http2" \
-  --set "service.ports[0].port=80" \
-  --set "service.ports[0].targetPort=80" \
-  --set "service.ports[0].nodePort=30080" \
-  --wait
+  -n istio-system --wait --skip-schema-validation \
+  --set "global.hub=${ISTIO_HUB}" --set "global.tag=${ISTIO_TAG}" \
+  --set service.type=NodePort \
+  --set autoscaling.enabled=false \
+  --set 'service.ports[0].name=status-port,service.ports[0].port=15021,service.ports[0].targetPort=15021' \
+  --set 'service.ports[1].name=http2,service.ports[1].port=80,service.ports[1].targetPort=80,service.ports[1].nodePort=30080' \
+  --set 'resources.requests.cpu=20m,resources.requests.memory=64Mi,resources.limits.cpu=200m,resources.limits.memory=128Mi'
 
 # -- Phase A: images ----------------------------------------------------------
 if [[ -z "${SKIP_LOCAL_BUILD:-}" ]]; then
