@@ -1,0 +1,83 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: echo-app
+  namespace: {{ .Values.namespace }}
+  labels: { app: echo-app }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: echo-app } }
+  template:
+    metadata:
+      labels: { app: echo-app }
+      annotations:
+        sidecar.istio.io/inject: "false"   # Belt-and-braces. The
+                                            # namespace label already
+                                            # disables injection.
+    spec:
+      containers:
+      - name: envoy
+        image: {{ .Values.images.envoy }}
+        imagePullPolicy: {{ .Values.images.pullPolicy }}
+        command: ["envoy"]
+        args:
+        - "-c"
+        - "/etc/envoy/envoy.yaml"
+        - "--log-level"
+        - "info"
+        ports:
+        - containerPort: 8000
+          name: http
+        readinessProbe:
+          tcpSocket: { port: 8000 }
+          periodSeconds: 2
+        volumeMounts:
+        - name: envoy-config
+          mountPath: /etc/envoy
+        resources:
+          {{- toYaml .Values.resources.envoy | nindent 10 }}
+      - name: sidecar
+        image: {{ .Values.images.permissionValidation }}
+        imagePullPolicy: {{ .Values.images.pullPolicy }}
+        args:
+        - "--listen=0.0.0.0:50051"
+        - "--pcs-endpoint=http://pcs:8080"
+        - "--pcs-timeout=250ms"
+        - "--otel-disabled"
+        ports:
+        - containerPort: 50051
+          name: grpc-extproc
+        readinessProbe:
+          tcpSocket: { port: 50051 }
+          periodSeconds: 2
+        resources:
+          {{- toYaml .Values.resources.app | nindent 10 }}
+      - name: echo
+        image: {{ .Values.images.echoServer }}
+        imagePullPolicy: {{ .Values.images.pullPolicy }}
+        ports:
+        - containerPort: 8080
+          name: http-echo
+        readinessProbe:
+          tcpSocket: { port: 8080 }
+          periodSeconds: 2
+        resources:
+          {{- toYaml .Values.resources.app | nindent 10 }}
+      volumes:
+      - name: envoy-config
+        configMap:
+          name: envoy-bootstrap
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: echo-app
+  namespace: {{ .Values.namespace }}
+spec:
+  type: NodePort
+  selector: { app: echo-app }
+  ports:
+  - name: http
+    port: 8000
+    targetPort: 8000
+    nodePort: {{ .Values.nodePort }}
