@@ -155,3 +155,19 @@ func TestTranslateIstio_ContextIsSidecarInbound(t *testing.T) {
 		t.Fatalf("expected 3 SIDECAR_INBOUND contexts; got %d in:\n%s", got, b)
 	}
 }
+
+func TestTranslateIstio_RejectsEmptyNamespace(t *testing.T) {
+	rc := &RouteConfig{Version: "v1", AppID: "x", DefaultBehavior: "deny"}
+	opts := IstioOptions{WorkloadLabels: map[string]string{"app": "x"}}
+	if _, err := TranslateIstio(rc, opts); err == nil {
+		t.Fatalf("expected error for empty Namespace")
+	}
+}
+
+func TestTranslateIstio_RejectsEmptyWorkloadLabels(t *testing.T) {
+	rc := &RouteConfig{Version: "v1", AppID: "x", DefaultBehavior: "deny"}
+	opts := IstioOptions{Namespace: "ns"}
+	if _, err := TranslateIstio(rc, opts); err == nil {
+		t.Fatalf("expected error for empty WorkloadLabels")
+	}
+}
