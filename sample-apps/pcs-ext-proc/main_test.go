@@ -26,6 +26,12 @@ func TestDecide_BobCannotEditDoc1(t *testing.T) {
 	}
 }
 
+func TestDecide_BobCanReadDoc1(t *testing.T) {
+	if !decide("bob@workspace.test", "doc-1", "document", "read") {
+		t.Fatalf("expected allow, got deny")
+	}
+}
+
 func TestDecide_UnknownUserAlwaysDenied(t *testing.T) {
 	if decide("mallory@workspace.test", "doc-1", "document", "read") {
 		t.Fatalf("expected deny for unknown user, got allow")
