@@ -1,0 +1,32 @@
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: app-gateway
+  namespace: {{ .Values.namespace }}
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    - {{ .Values.gatewayHost | quote }}
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: echo-app
+  namespace: {{ .Values.namespace }}
+spec:
+  hosts:
+  - {{ .Values.gatewayHost | quote }}
+  gateways:
+  - app-gateway
+  http:
+  - route:
+    - destination:
+        host: echo-app
+        port:
+          number: 8080
