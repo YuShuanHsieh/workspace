@@ -103,15 +103,16 @@ func routeToView(r RouteRule) (routeView, error) {
 		rv.Path = strings.TrimSuffix(r.Path, "/**")
 	default:
 		rv.PathKind = "regex"
-		rv.Regex = globToRegex(r.Path)
+		rv.Regex = GlobToRegex(r.Path)
 	}
 	return rv, nil
 }
 
-// globToRegex converts a gitignore-style glob (§2.1) to an Envoy safe_regex (RE2):
+// GlobToRegex converts a gitignore-style glob (§2.1) to an Envoy safe_regex (RE2):
 // "*" → one path segment ([^/]+); "**" → zero or more segments (.*); literal
-// characters are escaped via regexp.QuoteMeta.
-func globToRegex(p string) string {
+// characters are escaped via regexp.QuoteMeta. It is also reused by the
+// internal/routes matcher so the Envoy-side and sidecar-side globs stay identical.
+func GlobToRegex(p string) string {
 	var b strings.Builder
 	b.WriteString("^")
 	i := 0

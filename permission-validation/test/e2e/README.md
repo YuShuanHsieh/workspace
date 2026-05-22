@@ -80,9 +80,23 @@ already known to be ready.
 | `TestE2E_OverLengthContextRejected` | `objectId > 1024 bytes` → `403`. |
 | `TestE2E_PCSErrorFailClosed` | PCS returns 5xx → `403` (fail-closed). |
 | `TestE2E_SkippedRouteBypassesSidecar` | `/health` (declared `skipped` in `routes.yaml`) bypasses the sidecar. |
+| `TestE2E_RoutesFile_SkippedRouteAllowsWithoutPCS` | Sidecar started with `--routes-file` short-circuits `/health` to ALLOW; fake-pcs records zero calls. |
+| `TestE2E_RoutesFile_DefaultDenyNoMatch_403WithoutPCS` | Sidecar started with `--routes-file` short-circuits a no-match path to `403` via the default-deny catch-all; fake-pcs records zero calls. |
+
+The last two tests dial a second sidecar instance (`sidecar-with-routes`,
+host port `:50052`) that loads `routes.yaml` at startup via `--routes-file`.
+The other tests still hit Envoy on `:8000`, which forwards to the original
+`sidecar` service on `:50051`.
 
 Each test calls `POST /_admin/reset` on both fake-pcs and fake-backend, then
 seeds the PCS rule it needs via `POST /_admin/rules`.
+
+### Out of scope
+
+- The Istio render target (`validate-routes translate --target=istio`) is
+  covered by unit tests in `internal/config/` and `cmd/validate-routes/`
+  plus optional `kubectl apply --dry-run=server` lint against the user's
+  own istiod. No in-CI mesh integration ships from this work.
 
 ## Poke the stack by hand
 

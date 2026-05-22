@@ -131,3 +131,76 @@ canonical flow is:
    committed `envoy.yaml`.
 5. Tell every client that produces requests to your app to send `Authorization`
    and `X-Auth-Context` per the wire format above.
+
+## Adopt in an Istio-injected pod
+
+Five-step onboarding when your app pod is already injected with
+`istio-proxy`:
+
+1. **Create a ConfigMap holding `routes.yaml`:**
+
+   ```sh
+   kubectl create configmap pv-routes -n <ns> \
+     --from-file=routes.yaml=./routes.yaml
+   ```
+
+2. **Add the `permission-validation` container to your Deployment** with
+   the ConfigMap mounted at `/etc/pv` and `--routes-file=/etc/pv/routes.yaml`
+   in its `args`. Example container snippet:
+
+   ```yaml
+   - name: pv-sidecar
+     image: <registry>/permission-validation:<tag>
+     args:
+     - "--listen=127.0.0.1:50051"     # bind only on loopback — only istio-proxy needs to reach it
+     - "--pcs-endpoint=http://permission-checking.internal:8080"
+     - "--pcs-timeout=250ms"
+     - "--routes-file=/etc/pv/routes.yaml"
+     volumeMounts:
+     - { name: pv-routes, mountPath: /etc/pv }
+   ```
+
+   And in the pod spec's `volumes`:
+
+   ```yaml
+   - name: pv-routes
+     configMap: { name: pv-routes }
+   ```
+
+3. **Render the EnvoyFilter from your `routes.yaml`:**
+
+   ```sh
+   validate-routes translate routes.yaml \
+     --target=istio \
+     --namespace <ns> \
+     --workload-label app=<appId> \
+     -o envoyfilter.yaml
+   ```
+
+4. **Apply it:**
+
+   ```sh
+   kubectl apply -f envoyfilter.yaml
+   ```
+
+5. **Verify:**
+
+   ```sh
+   istioctl proxy-config listener <pod> -n <ns> | grep ext_proc
+   ```
+
+   You should see the `envoy.filters.http.ext_proc` filter inserted on
+   the inbound listener.
+
+### Liveness/readiness probes
+
+`/healthz`, `/readyz`, and `/livez` are bypassed by default (see the
+`VIRTUAL_HOST` patch in the generated EnvoyFilter). Override with
+`--probe-paths /custom,/other` at render time. **Probe paths are
+unauthenticated** — do not route real traffic through them.
+
+### Native sidecars (Kubernetes 1.28+, Istio 1.20+)
+
+When `PILOT_ENABLE_NATIVE_SIDECARS=true`, both `istio-proxy` and
+`pv-sidecar` can become `initContainers` with `restartPolicy: Always`,
+which improves startup ordering. Not required.

@@ -108,3 +108,132 @@ func TestTranslate_StdoutWriteFailureExitsNonZero(t *testing.T) {
 	require.Equal(t, 1, code)
 	require.Contains(t, stderr.String(), "write failed")
 }
+
+func TestTranslate_TargetIstio_WritesFile(t *testing.T) {
+	tmp := t.TempDir()
+	out := filepath.Join(tmp, "envoyfilter.yaml")
+	var stderr bytes.Buffer
+	code := run(context.Background(), []string{
+		"translate", "../../testdata/routes/valid-minimal.yaml",
+		"--target=istio",
+		"--namespace=orders",
+		"--workload-label=app=orders-app",
+		"-o", out,
+	}, &bytes.Buffer{}, &stderr)
+	if code != 0 {
+		t.Fatalf("exit %d; stderr=%s", code, stderr.String())
+	}
+	b, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(b, []byte("kind: EnvoyFilter")) {
+		t.Fatalf("expected EnvoyFilter output; got:\n%s", b)
+	}
+	if !bytes.Contains(b, []byte("namespace: orders")) {
+		t.Fatalf("expected namespace: orders; got:\n%s", b)
+	}
+}
+
+func TestTranslate_TargetIstio_RequiresNamespace(t *testing.T) {
+	var stderr bytes.Buffer
+	code := run(context.Background(), []string{
+		"translate", "../../testdata/routes/valid-minimal.yaml",
+		"--target=istio",
+		"--workload-label=app=x",
+	}, &bytes.Buffer{}, &stderr)
+	if code != 2 {
+		t.Fatalf("exit: got %d, want 2; stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "namespace") {
+		t.Fatalf("stderr should mention 'namespace'; got: %s", stderr.String())
+	}
+}
+
+func TestTranslate_TargetIstio_RequiresWorkloadLabel(t *testing.T) {
+	var stderr bytes.Buffer
+	code := run(context.Background(), []string{
+		"translate", "../../testdata/routes/valid-minimal.yaml",
+		"--target=istio",
+		"--namespace=orders",
+	}, &bytes.Buffer{}, &stderr)
+	if code != 2 {
+		t.Fatalf("exit: got %d, want 2; stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "workload-label") {
+		t.Fatalf("stderr should mention 'workload-label'; got: %s", stderr.String())
+	}
+}
+
+func TestTranslate_FlagMatrixRejections(t *testing.T) {
+	cases := []struct {
+		name     string
+		args     []string
+		stderrIn string // substring expected in stderr
+	}{
+		{
+			name: "istio_rejects_backend_host",
+			args: []string{"translate", "../../testdata/routes/valid-minimal.yaml",
+				"--target=istio", "--namespace=n", "--workload-label=app=x",
+				"--backend-host=app",
+			},
+			stderrIn: "backend-host",
+		},
+		{
+			name: "istio_rejects_admin_host",
+			args: []string{"translate", "../../testdata/routes/valid-minimal.yaml",
+				"--target=istio", "--namespace=n", "--workload-label=app=x",
+				"--admin-host=0.0.0.0",
+			},
+			stderrIn: "admin-host",
+		},
+		{
+			name: "istio_rejects_access_log",
+			args: []string{"translate", "../../testdata/routes/valid-minimal.yaml",
+				"--target=istio", "--namespace=n", "--workload-label=app=x",
+				"--access-log",
+			},
+			stderrIn: "access-log",
+		},
+		{
+			name: "static_rejects_namespace",
+			args: []string{"translate", "../../testdata/routes/valid-minimal.yaml",
+				"--namespace=oops",
+			},
+			stderrIn: "namespace",
+		},
+		{
+			name: "static_rejects_workload_label",
+			args: []string{"translate", "../../testdata/routes/valid-minimal.yaml",
+				"--workload-label=app=x",
+			},
+			stderrIn: "workload-label",
+		},
+		{
+			name: "static_rejects_probe_paths",
+			args: []string{"translate", "../../testdata/routes/valid-minimal.yaml",
+				"--probe-paths=/health",
+			},
+			stderrIn: "probe-paths",
+		},
+		{
+			name: "invalid_target_value",
+			args: []string{"translate", "../../testdata/routes/valid-minimal.yaml",
+				"--target=nginx",
+			},
+			stderrIn: "target must be one of",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var stderr bytes.Buffer
+			code := run(context.Background(), tc.args, &bytes.Buffer{}, &stderr)
+			if code != 2 {
+				t.Fatalf("exit: got %d, want 2; stderr=%s", code, stderr.String())
+			}
+			if !strings.Contains(stderr.String(), tc.stderrIn) {
+				t.Fatalf("stderr missing %q; got: %s", tc.stderrIn, stderr.String())
+			}
+		})
+	}
+}

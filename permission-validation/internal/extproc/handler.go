@@ -3,11 +3,13 @@ package extproc
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"permission-validation/internal/header"
 	"permission-validation/internal/metrics"
 	"permission-validation/internal/pcs"
+	"permission-validation/internal/routes"
 )
 
 // PCS is the dependency interface for the permission checking service.
@@ -33,15 +35,18 @@ type Outcome struct {
 	Reason string
 }
 
-// Handler is the orchestration core: extract → parse → PCS → emit metrics → return Outcome.
+// Handler is the orchestration core: route-lookup → extract → parse → PCS →
+// emit metrics → return Outcome.
 type Handler struct {
-	pcs PCS
-	m   *metrics.Metrics
+	pcs   PCS
+	m     *metrics.Metrics
+	table *routes.Table // nil = Phase 1 behavior (no short-circuit)
 }
 
 // New constructs a Handler. The metrics object is required.
-func New(p PCS, m *metrics.Metrics) *Handler {
-	return &Handler{pcs: p, m: m}
+// t may be nil (Phase 1 behavior: no route-based short-circuit).
+func New(p PCS, m *metrics.Metrics, t *routes.Table) *Handler {
+	return &Handler{pcs: p, m: m, table: t}
 }
 
 // Decide consumes a lowercased header map (Envoy normalizes header casing on HTTP/2)
@@ -50,8 +55,26 @@ func (h *Handler) Decide(ctx context.Context, hdrs map[string]string) Outcome {
 	if h == nil || h.m == nil || h.pcs == nil {
 		return Outcome{Kind: OutcomeRejectError, Reason: "internal_error"}
 	}
+
 	start := time.Now()
 	defer func() { h.m.SidecarLatency(ctx, time.Since(start)) }()
+
+	if h.table != nil {
+		method := hdrs[":method"]
+		path := hdrs[":path"]
+		if i := strings.IndexByte(path, '?'); i >= 0 {
+			path = path[:i]
+		}
+		switch h.table.Lookup(method, path) {
+		case routes.DecisionAllow:
+			h.m.Decision(ctx, "allow")
+			return Outcome{Kind: OutcomeAllow}
+		case routes.DecisionDeny:
+			h.m.Decision(ctx, "deny")
+			return Outcome{Kind: OutcomeDeny}
+		}
+		// DecisionProtected → fall through to header parse + PCS path.
+	}
 
 	tok, err := header.ExtractAuth(hdrs)
 	if err != nil {

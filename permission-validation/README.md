@@ -91,19 +91,42 @@ Exits 0 if the file parses and validates, 1 otherwise; errors print to
 stderr.
 
 ```sh
+# Static target (Phase 1 — app team controls its own Envoy):
 validate-routes translate routes.yaml \
   -o envoy.yaml \
   --sidecar-host sidecar --sidecar-port 50051 \
   --backend-host orders-app --backend-port 8080 \
   --access-log
+
+# Istio target (Phase 1.5 — pv sidecar lives in an Istio-injected pod):
+validate-routes translate routes.yaml \
+  -o envoyfilter.yaml \
+  --target=istio \
+  --namespace orders \
+  --workload-label app=orders-app
 ```
 
-Renders an Envoy 1.31 static bootstrap (validates first; errors abort
-output). Omit `-o` to write to stdout. App teams put this command in CI so
-config drift fails the build instead of silently shipping a stale
-`envoy.yaml`.
+The **static** target renders an Envoy 1.31 static bootstrap (validates
+first; errors abort output). The **istio** target renders an Istio
+`EnvoyFilter` CRD with three patches scoped to `SIDECAR_INBOUND`: a STATIC
+cluster for the pv sidecar at 127.0.0.1, the `ext_proc` HTTP filter, and a
+probe-path carve-out for liveness/readiness paths. Omit `-o` to write to
+stdout. App teams put this command in CI so config drift fails the build
+instead of silently shipping a stale render.
 
-Two flags control the test/production split:
+Flag availability differs per target:
+
+| Flag | `--target=static` | `--target=istio` |
+|---|---|---|
+| `--sidecar-host` | optional (default 127.0.0.1) | not allowed (always 127.0.0.1) |
+| `--sidecar-port` | optional (default 50051) | optional (default 50051) |
+| `--backend-host`, `--backend-port`, `--admin-host`, `--access-log` | as documented | **rejected with error** |
+| `--namespace` | **rejected with error** | required |
+| `--workload-label key=value` (repeatable) | **rejected with error** | required, ≥1 |
+| `--name` | **rejected with error** | optional (defaults to `permission-validation-<appId>`) |
+| `--probe-paths <a,b,c>` | **rejected with error** | optional (defaults to `/healthz,/readyz,/livez`) |
+
+Static-target-only flags:
 
 - `--admin-host` (default `127.0.0.1`): bind address for Envoy's `:9901`
   admin interface. Defaults to loopback because that listener is
@@ -116,6 +139,27 @@ Two flags control the test/production split:
 
 See [`examples/onboarding/`](examples/onboarding/) for a committed
 production-style render and the adoption checklist.
+
+### Sidecar `--routes-file`
+
+With the **istio** target, route decisions move into the sidecar (the
+EnvoyFilter only inserts the filter; it does not duplicate the route
+table). Pass the same `routes.yaml` to the sidecar via `--routes-file`:
+
+```sh
+./permission-validation \
+  --listen 0.0.0.0:50051 \
+  --pcs-endpoint http://permission-checking.internal:8080 \
+  --pcs-timeout 250ms \
+  --routes-file /etc/pv/routes.yaml \
+  --otel-disabled
+```
+
+The sidecar parses the file at startup (fail-fast on schema error) and
+consults its compiled matcher before any header parse or PCS call:
+skipped routes and the default-deny catch-all return ALLOW/DENY
+immediately; protected matches fall through to the Phase 1 decision
+path. Without `--routes-file`, the sidecar behaves exactly as Phase 1.
 
 ## Route config
 
