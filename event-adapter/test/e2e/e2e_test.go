@@ -47,7 +47,7 @@ func TestEventDispatchPublishesResponse(t *testing.T) {
 	}
 	cfgPath := writeE2EConfig(t, app)
 	binPath := filepath.Join(t.TempDir(), "event-adapter")
-	build := exec.Command("/usr/local/go/bin/go", "build", "-o", binPath, "./cmd/event-adapter")
+	build := exec.Command("go", "build", "-o", binPath, "./cmd/event-adapter")
 	build.Dir = "../.."
 	build.Env = append(os.Environ(), "GOCACHE=/tmp/go-build")
 	if out, err := build.CombinedOutput(); err != nil {
