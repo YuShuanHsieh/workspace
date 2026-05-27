@@ -21,6 +21,7 @@ func BuildResponse(in *Event, route config.RouteConfig, status int, contentType 
 	out.SetID(deterministicResponseID(in.ID(), route))
 	out.SetType(route.Response.Type)
 	out.SetSource(route.Response.Source)
+	out.SetSubject(route.Response.Subject)
 	out.SetTime(time.Now().UTC())
 	if route.Response.DataSchema != "" {
 		out.SetDataSchema(route.Response.DataSchema)

@@ -34,6 +34,9 @@ func TestBuildResponseUsesDeterministicIDAndCausation(t *testing.T) {
 	if a.Type() != route.Response.Type || a.Source() != route.Response.Source {
 		t.Fatalf("unexpected response metadata: type=%q source=%q", a.Type(), a.Source())
 	}
+	if a.Subject() != route.Response.Subject {
+		t.Fatalf("unexpected response subject: %q", a.Subject())
+	}
 	if got := a.Extensions()["causationid"]; got != "evt-1" {
 		t.Fatalf("unexpected causationid: %v", got)
 	}
