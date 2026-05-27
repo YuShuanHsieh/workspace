@@ -125,11 +125,11 @@ Recommended pattern:
 ### Use Supported Methods And Clear Status Codes
 
 - Configure handlers with `POST`, `PUT`, or `PATCH`.
-- Return `2xx` when processing succeeded and the sidecar should publish a response event.
+- Return `2xx` when processing succeeded.
 - Return `4xx` when the event payload is invalid for your handler.
-- Return `5xx` when processing may succeed after retry.
+- Return `5xx` when processing failed and you want the publisher to observe the failure as an error response event.
 
-The implementation treats any non-`2xx` response as a dispatch failure.
+The sidecar publishes a response event for every HTTP response (success or error) and carries the status code in the `httpstatus` CloudEvent extension. The sidecar does not retry on `4xx` or `5xx` — if you need a retry on a transient failure, do it inside the handler before returning. Only network-class failures (timeout, connection refused, TLS error) are retried by the sidecar.
 
 ### Keep Handlers Fast
 

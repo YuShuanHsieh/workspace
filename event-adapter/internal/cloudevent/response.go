@@ -13,7 +13,7 @@ import (
 	"event-adapter/internal/config"
 )
 
-func BuildResponse(in *Event, route config.RouteConfig, contentType string, body []byte) (*ce.Event, error) {
+func BuildResponse(in *Event, route config.RouteConfig, status int, contentType string, body []byte) (*ce.Event, error) {
 	if in == nil {
 		return nil, fmt.Errorf("response: incoming event is nil")
 	}
@@ -38,6 +38,7 @@ func BuildResponse(in *Event, route config.RouteConfig, contentType string, body
 	if err := out.SetData(contentType, data); err != nil {
 		return nil, fmt.Errorf("response: set data: %w", err)
 	}
+	out.SetExtension("httpstatus", int32(status))
 	out.SetExtension("causationid", in.ID())
 	if corr, ok := in.Extensions()["correlationid"]; ok {
 		out.SetExtension("correlationid", corr)

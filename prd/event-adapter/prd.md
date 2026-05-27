@@ -109,10 +109,10 @@ The sidecar runs in the same Kubernetes pod as the target application server.
 5. The sidecar matches the event against route configuration using subject, CloudEvent `type`, and CloudEvent `source`.
 6. The sidecar dispatches the request to the configured local HTTP method and path.
 7. The app processes the event and returns an HTTP response.
-8. On a successful HTTP response, the sidecar wraps the response body as a new CloudEvent.
+8. On any HTTP response (success or error), the sidecar wraps the response body as a new CloudEvent and stamps the HTTP status code into the `httpstatus` extension.
 9. The sidecar publishes the response CloudEvent to the configured NATS response subject and waits for durable publish confirmation.
 10. After response publish confirmation, the sidecar acknowledges the original JetStream message.
-11. On failure, the sidecar retries according to route policy. After retry exhaustion, it publishes the failed event to the configured DLQ subject and acknowledges the original message only after DLQ publish confirmation.
+11. On network-class dispatch failure (timeout, connection refused, TLS error, transport error), the sidecar retries according to route policy. After retry exhaustion, it publishes the failed event to the configured DLQ subject and acknowledges the original message only after DLQ publish confirmation.
 
 ## 6. Route Configuration
 
@@ -188,8 +188,8 @@ Required behavior:
 - Publisher-supplied headers must not override CloudEvent, trace context, authorization, idempotency, hop-by-hop, or route-configured static headers.
 - The sidecar must support JSON `data` payloads in Phase 1. Binary payloads and `data_base64` are out of scope unless explicitly enabled by route configuration.
 - The application should return a `2xx` status code for successful processing.
-- Non-`2xx` responses are treated as dispatch failures unless a route explicitly marks additional status codes as successful.
-- The application response body becomes the `data` field of the response CloudEvent.
+- `4xx` and `5xx` responses are not retried. The sidecar publishes them to the route response subject as response events carrying the HTTP status code, so the publisher can observe the error outcome. `3xx` responses are treated the same as `2xx`.
+- The application response body becomes the `data` field of the response CloudEvent for both success and error outcomes.
 
 Required forwarded headers:
 
@@ -217,7 +217,7 @@ Publisher-supplied backend headers are forwarded after CloudEvent metadata and b
 
 ## 8. Response Event Contract
 
-The sidecar creates a new CloudEvent when the app returns a successful HTTP response.
+The sidecar creates a new CloudEvent whenever the app returns any HTTP response (successful or error). Network failures do not produce a response event; they are retried and, after retry exhaustion, sent to DLQ (see section 9).
 
 The response event must include:
 
@@ -229,10 +229,11 @@ The response event must include:
 - `datacontenttype` matching the HTTP response content type when present.
 - `dataschema` when configured for the response route.
 - Response payload in `data`.
+- A `httpstatus` extension carrying the HTTP status code returned by the app. Consumers use this to distinguish success (`2xx`/`3xx`) from error (`4xx`/`5xx`).
 - Correlation metadata copied from the incoming event where available.
 - Causation metadata that points back to the incoming event ID.
 
-The sidecar publishes the response event to the configured NATS response subject.
+The sidecar publishes the response event to the configured NATS response subject for both success and error outcomes.
 
 The response event ID must be deterministic for a given incoming event and route, or the sidecar must persist the generated response event until publish confirmation. This prevents duplicate response events when the app succeeds but the response publish or original-message acknowledgement fails.
 
@@ -246,19 +247,21 @@ Failures include:
 - No matching route.
 - HTTP timeout.
 - Connection failure to the local app server.
-- Non-success HTTP response.
 - Response event construction failure.
 - NATS response publish failure.
 - NATS DLQ publish failure.
 
+Note: an app-returned `4xx`/`5xx` HTTP status is not a failure for retry purposes. It is delivered as a response event (see section 8).
+
 Retry behavior:
 
-- Dispatch failures should retry with bounded exponential backoff.
+- Network-class dispatch failures (timeout, connection refused, TLS error, transport error) should retry with bounded exponential backoff.
+- App-returned HTTP responses, including `4xx` and `5xx`, are not retried. They are published as response events.
 - Retry count and backoff limits are route-configurable.
 - The sidecar must not retry forever.
-- After retry exhaustion, the sidecar publishes to the configured route DLQ subject.
+- After retry exhaustion of network-class failures, the sidecar publishes to the configured route DLQ subject.
 - Pre-route failures, such as invalid CloudEvents or no matching route, must publish to the configured default DLQ subject because no route-specific DLQ is available.
-- Response publish failures are retryable. The sidecar must not acknowledge the original JetStream message until response publish succeeds or the event is durably published to DLQ.
+- Response publish failures route the event to the DLQ. The sidecar must not acknowledge the original JetStream message until response publish succeeds or the event is durably published to DLQ.
 - DLQ publish failures must leave the original JetStream message unacknowledged so JetStream can redeliver it according to the durable consumer policy.
 
 DLQ events should include:

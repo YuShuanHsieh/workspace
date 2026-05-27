@@ -16,10 +16,32 @@ import (
 type fakeDispatcher struct {
 	result dispatcher.Result
 	err    error
+	calls  int
 }
 
-func (f fakeDispatcher) Dispatch(context.Context, config.RouteConfig, *clevent.Event) (dispatcher.Result, error) {
+func (f *fakeDispatcher) Dispatch(context.Context, config.RouteConfig, *clevent.Event) (dispatcher.Result, error) {
+	f.calls++
 	return f.result, f.err
+}
+
+type scriptedDispatcher struct {
+	results []dispatcher.Result
+	errs    []error
+	calls   int
+}
+
+func (s *scriptedDispatcher) Dispatch(context.Context, config.RouteConfig, *clevent.Event) (dispatcher.Result, error) {
+	i := s.calls
+	s.calls++
+	var res dispatcher.Result
+	var err error
+	if i < len(s.results) {
+		res = s.results[i]
+	}
+	if i < len(s.errs) {
+		err = s.errs[i]
+	}
+	return res, err
 }
 
 type fakePublisher struct {
@@ -56,7 +78,7 @@ func TestProcessorAcksAfterResponsePublish(t *testing.T) {
 	_ = ev.SetData("application/json", map[string]string{"taskId": "t1"})
 	pub := &fakePublisher{}
 	ack := &fakeAck{}
-	p := New(fakeDispatcher{result: dispatcher.Result{StatusCode: 200, ContentType: "application/json", Body: []byte(`{"ok":true}`)}}, pub)
+	p := New(&fakeDispatcher{result: dispatcher.Result{StatusCode: 200, ContentType: "application/json", Body: []byte(`{"ok":true}`)}}, pub)
 	route := config.RouteConfig{
 		Name:     "task-created",
 		Response: config.ResponseConfig{Type: "processed", Source: "task-service", Subject: "processed.subject"},
@@ -71,6 +93,81 @@ func TestProcessorAcksAfterResponsePublish(t *testing.T) {
 	}
 }
 
+func TestProcessorPublishesErrorResponseOnHTTPError(t *testing.T) {
+	ev := ce.New()
+	ev.SetID("evt-1")
+	ev.SetSource("workspace/task")
+	ev.SetType("com.workspace.task.created")
+	_ = ev.SetData("application/json", map[string]string{"taskId": "t1"})
+	pub := &fakePublisher{}
+	ack := &fakeAck{}
+	disp := &fakeDispatcher{result: dispatcher.Result{StatusCode: 422, ContentType: "application/json", Body: []byte(`{"error":"invalid taskId"}`)}}
+	p := New(disp, pub)
+	route := config.RouteConfig{
+		Name:     "task-created",
+		Response: config.ResponseConfig{Type: "processed", Source: "task-service", Subject: "processed.subject"},
+		Retry:    config.RetryConfig{MaxAttempts: 3, InitialBackoff: time.Millisecond, MaxBackoff: time.Millisecond},
+		DLQ:      config.DLQConfig{Subject: "dlq.subject"},
+	}
+	if err := p.Process(context.Background(), "input.subject", &clevent.Event{Event: &ev}, route, ack); err != nil {
+		t.Fatalf("Process returned error: %v", err)
+	}
+	if !ack.acked || pub.responses != 1 || pub.dlqs != 0 || disp.calls != 1 {
+		t.Fatalf("unexpected state ack=%v responses=%d dlqs=%d dispatchCalls=%d", ack.acked, pub.responses, pub.dlqs, disp.calls)
+	}
+}
+
+func TestProcessorRetriesNetworkFailureThenSucceeds(t *testing.T) {
+	ev := ce.New()
+	ev.SetID("evt-1")
+	ev.SetSource("workspace/task")
+	ev.SetType("com.workspace.task.created")
+	_ = ev.SetData("application/json", map[string]string{"taskId": "t1"})
+	pub := &fakePublisher{}
+	ack := &fakeAck{}
+	disp := &scriptedDispatcher{
+		results: []dispatcher.Result{{}, {StatusCode: 200, ContentType: "application/json", Body: []byte(`{"ok":true}`)}},
+		errs:    []error{errors.New("connection refused"), nil},
+	}
+	p := New(disp, pub)
+	route := config.RouteConfig{
+		Name:     "task-created",
+		Response: config.ResponseConfig{Type: "processed", Source: "task-service", Subject: "processed.subject"},
+		Retry:    config.RetryConfig{MaxAttempts: 3, InitialBackoff: time.Millisecond, MaxBackoff: time.Millisecond},
+		DLQ:      config.DLQConfig{Subject: "dlq.subject"},
+	}
+	if err := p.Process(context.Background(), "input.subject", &clevent.Event{Event: &ev}, route, ack); err != nil {
+		t.Fatalf("Process returned error: %v", err)
+	}
+	if !ack.acked || pub.responses != 1 || pub.dlqs != 0 || disp.calls != 2 {
+		t.Fatalf("unexpected state ack=%v responses=%d dlqs=%d dispatchCalls=%d", ack.acked, pub.responses, pub.dlqs, disp.calls)
+	}
+}
+
+func TestProcessorNetworkFailureExhaustsToDLQ(t *testing.T) {
+	ev := ce.New()
+	ev.SetID("evt-1")
+	ev.SetSource("workspace/task")
+	ev.SetType("com.workspace.task.created")
+	_ = ev.SetData("application/json", map[string]string{"taskId": "t1"})
+	pub := &fakePublisher{}
+	ack := &fakeAck{}
+	disp := &fakeDispatcher{err: errors.New("connection refused")}
+	p := New(disp, pub)
+	route := config.RouteConfig{
+		Name:     "task-created",
+		Response: config.ResponseConfig{Type: "processed", Source: "task-service", Subject: "processed.subject"},
+		Retry:    config.RetryConfig{MaxAttempts: 3, InitialBackoff: time.Millisecond, MaxBackoff: time.Millisecond},
+		DLQ:      config.DLQConfig{Subject: "dlq.subject"},
+	}
+	if err := p.Process(context.Background(), "input.subject", &clevent.Event{Event: &ev}, route, ack); err != nil {
+		t.Fatalf("Process returned error: %v", err)
+	}
+	if !ack.acked || pub.responses != 0 || pub.dlqs != 1 || disp.calls != 3 {
+		t.Fatalf("unexpected state ack=%v responses=%d dlqs=%d dispatchCalls=%d", ack.acked, pub.responses, pub.dlqs, disp.calls)
+	}
+}
+
 func TestProcessorDoesNotAckWhenDLQPublishFails(t *testing.T) {
 	ev := ce.New()
 	ev.SetID("evt-1")
@@ -79,7 +176,7 @@ func TestProcessorDoesNotAckWhenDLQPublishFails(t *testing.T) {
 	_ = ev.SetData("application/json", map[string]string{"taskId": "t1"})
 	pub := &fakePublisher{dlqErr: errors.New("nats down")}
 	ack := &fakeAck{}
-	p := New(fakeDispatcher{err: errors.New("backend down")}, pub)
+	p := New(&fakeDispatcher{err: errors.New("backend down")}, pub)
 	route := config.RouteConfig{
 		Name:     "task-created",
 		Response: config.ResponseConfig{Type: "processed", Source: "task-service", Subject: "processed.subject"},

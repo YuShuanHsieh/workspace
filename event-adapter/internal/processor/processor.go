@@ -47,32 +47,35 @@ func (p *Processor) Process(ctx context.Context, subject string, ev *clevent.Eve
 	policy := RetryPolicy{MaxAttempts: route.Retry.MaxAttempts, InitialBackoff: route.Retry.InitialBackoff, MaxBackoff: route.Retry.MaxBackoff}
 	var lastErr error
 	var lastStatus int
+	attempts := 0
 	for attempt := 1; attempt <= policy.MaxAttempts; attempt++ {
-		res, err := p.dispatcher.Dispatch(ctx, route, ev)
+		attempts = attempt
+		res, dispatchErr := p.dispatcher.Dispatch(ctx, route, ev)
+		if dispatchErr != nil {
+			lastErr = dispatchErr
+			lastStatus = 0
+			if attempt < policy.MaxAttempts {
+				timer := time.NewTimer(policy.Delay(attempt))
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return ctx.Err()
+				case <-timer.C:
+				}
+			}
+			continue
+		}
 		lastStatus = res.StatusCode
-		if err == nil && res.StatusCode >= 200 && res.StatusCode < 300 {
-			resp, err := clevent.BuildResponse(ev, route, res.ContentType, res.Body)
-			if err != nil {
-				lastErr = err
-			} else if err := p.publisher.PublishResponse(ctx, route.Response.Subject, resp); err != nil {
-				lastErr = err
-			} else {
-				return ack.Ack(ctx)
-			}
-		} else if err != nil {
-			lastErr = err
-		} else {
-			lastErr = fmt.Errorf("non-success status %d", res.StatusCode)
+		resp, buildErr := clevent.BuildResponse(ev, route, res.StatusCode, res.ContentType, res.Body)
+		if buildErr != nil {
+			lastErr = buildErr
+			break
 		}
-		if attempt < policy.MaxAttempts {
-			timer := time.NewTimer(policy.Delay(attempt))
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return ctx.Err()
-			case <-timer.C:
-			}
+		if pubErr := p.publisher.PublishResponse(ctx, route.Response.Subject, resp); pubErr != nil {
+			lastErr = pubErr
+			break
 		}
+		return ack.Ack(ctx)
 	}
 	if lastErr == nil {
 		lastErr = fmt.Errorf("dispatch failed")
@@ -81,7 +84,7 @@ func (p *Processor) Process(ctx context.Context, subject string, ev *clevent.Eve
 		OriginalEvent: ev,
 		FailureReason: lastErr.Error(),
 		HTTPStatus:    lastStatus,
-		AttemptCount:  policy.MaxAttempts,
+		AttemptCount:  attempts,
 		Timestamp:     time.Now().UTC(),
 	}
 	if err := p.publisher.PublishDLQ(ctx, route.DLQ.Subject, dlq); err != nil {

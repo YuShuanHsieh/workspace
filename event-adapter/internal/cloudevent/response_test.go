@@ -20,11 +20,11 @@ func TestBuildResponseUsesDeterministicIDAndCausation(t *testing.T) {
 		Response: config.ResponseConfig{Type: "com.workspace.task.created.processed", Source: "task-service", Subject: "t.tenant-a.app.task.event.processed"},
 	}
 	wrapped := &Event{Event: &in}
-	a, err := BuildResponse(wrapped, route, "application/json", []byte(`{"ok":true}`))
+	a, err := BuildResponse(wrapped, route, 200, "application/json", []byte(`{"ok":true}`))
 	if err != nil {
 		t.Fatalf("BuildResponse returned error: %v", err)
 	}
-	b, err := BuildResponse(wrapped, route, "application/json", []byte(`{"ok":true}`))
+	b, err := BuildResponse(wrapped, route, 200, "application/json", []byte(`{"ok":true}`))
 	if err != nil {
 		t.Fatalf("BuildResponse returned error: %v", err)
 	}
@@ -39,5 +39,28 @@ func TestBuildResponseUsesDeterministicIDAndCausation(t *testing.T) {
 	}
 	if got := a.Extensions()["correlationid"]; got != "corr-1" {
 		t.Fatalf("unexpected correlationid: %v", got)
+	}
+	if got := a.Extensions()["httpstatus"]; got != int32(200) {
+		t.Fatalf("unexpected httpstatus: %v", got)
+	}
+}
+
+func TestBuildResponseStampsErrorStatus(t *testing.T) {
+	in := ce.New()
+	in.SetID("evt-1")
+	in.SetSource("workspace/task")
+	in.SetType("com.workspace.task.created")
+
+	route := config.RouteConfig{
+		Name:     "task-created",
+		Response: config.ResponseConfig{Type: "com.workspace.task.created.processed", Source: "task-service", Subject: "t.tenant-a.app.task.event.processed"},
+	}
+	wrapped := &Event{Event: &in}
+	out, err := BuildResponse(wrapped, route, 422, "application/json", []byte(`{"error":"invalid taskId"}`))
+	if err != nil {
+		t.Fatalf("BuildResponse returned error: %v", err)
+	}
+	if got := out.Extensions()["httpstatus"]; got != int32(422) {
+		t.Fatalf("unexpected httpstatus: %v", got)
 	}
 }
