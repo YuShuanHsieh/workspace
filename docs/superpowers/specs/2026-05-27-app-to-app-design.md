@@ -17,23 +17,25 @@ This spec defines a focused, greenfield design for **app-to-app event publishing
 
 ### In scope
 
-- An **App Registry** service: HTTP CRUD over MongoDB. Owns app identity, status, and NATS NKey provisioning.
-- An **Event Marketplace** service: HTTP CRUD over MongoDB. Owns versioned, immutable event-type schemas (JSON Schema, Draft 2020-12).
 - A **Publisher/Subscriber SDK** that validates against cached schemas, builds CloudEvents envelopes, propagates W3C `traceparent`, and runs the consume-side idempotency check.
-- A **nats-adapter sidecar** (§9) providing the same capabilities to apps that cannot link the SDK. The sidecar exposes a localhost HTTP publish API and delivers consumed events to the app via webhook (CloudEvents HTTP binary binding). It is an *additional integration mode*, not a fork of the design — internally it reuses the SDK's validation, envelope, and consumer logic.
-- **NATS JetStream** as the durable transport: one stream `EVENTS` covering `events.>`, plus a `DLQ` stream covering `dlq.>`.
-- **CloudEvents 1.0** as the envelope format, with W3C distributed-tracing extension (`traceparent`/`tracestate`) and a custom `causationid` extension carried explicitly by the publisher.
-- A processed-events idempotency table colocated with each app's domain database, written transactionally with the domain change.
-- Tests: integration tests for each service, SDK unit + integration tests with real NATS and MongoDB, an end-to-end Docker Compose harness, and explicit "bad citizen" and crash-recovery scenarios.
+- A **nats-adapter sidecar** (§9) providing the same capabilities to apps that cannot link the SDK. Exposes a localhost HTTP publish API and delivers consumed events to the app via webhook (CloudEvents HTTP binary binding). Reuses the SDK internally.
+- **JetStream stream layout** required by this design: stream `EVENTS` covering `events.>`, stream `DLQ` covering `dlq.>`, plus the per-app shared durable-consumer naming convention. Stream provisioning is operated externally (see §4.1); this spec defines the required shape.
+- **CloudEvents 1.0** envelope contract, with W3C distributed-tracing extension (`traceparent`/`tracestate`) and a custom `causationid` extension carried explicitly by the publisher.
+- The **idempotency contract**: a processed-events table colocated with each app's domain database, written transactionally with the domain change. In sidecar mode, the contract states that the app's webhook handler owns this write.
+- The **DLQ contract**: subject grammar, payload shape, ACK/NAK/DLQ rules — shared between SDK and sidecar.
+- Tests: SDK unit + integration tests against real NATS and MongoDB, sidecar integration tests with a scripted fake HTTP app, an end-to-end Docker Compose harness, and explicit "bad citizen" and crash-recovery scenarios.
 
 ### Out of scope
 
+- **App Registry** and **Event Marketplace** — both already exist as external platform services. This spec defines the **contract** the SDK and sidecar consume from them (§4.1) but not their internal design, storage, schemas, or onboarding/registration flows.
+- Provisioning of NATS users/NKeys for apps — handled by the existing App Registry.
+- Creation and lifecycle management of JetStream streams — operated externally. This spec specifies the required *shape* (subject grammar, stream names, consumer naming), not the provisioning mechanism.
 - Multi-tenant isolation (no `tenant_id` plumbing, no NATS Accounts per tenant).
 - Targeted command (A → B) semantics. All app-to-app communication in this design is **pub/sub broadcast**.
 - Browser/WebSocket gateways and end-user-initiated flows.
 - Large-payload references / object storage / presigned uploads.
-- Per-event-type publisher allowlists. Any **registered, active** app may publish any **registered, active** event type. Schema is enforced; identity is recorded.
-- Workspace Core / validator pool / sidecar topology from the broader Workspace PRD. The SDK is the single integration point in this iteration.
+- Per-event-type publisher allowlists. Any **active** app may publish any **active** event type. Schema is enforced; identity is recorded.
+- Workspace Core / validator pool topology from the broader Workspace PRD.
 - Capacity planning. No scale target was given by the source PRD; see Open Questions.
 
 ## 3. Interaction model
@@ -42,50 +44,56 @@ This spec defines a focused, greenfield design for **app-to-app event publishing
 
 This is deliberately simpler than the workspace PRD's command/event split. There are no targeted commands in this design — if `tasks` wants `crm` to do something, `tasks` publishes an event and `crm` subscribes. There is no "target app" field in the envelope.
 
-Schemas are owned by whichever app registered them ("registered_by_app"), but ownership is metadata, not an authorization gate.
+Schemas are owned by whichever app registered them (per Marketplace records), but ownership is metadata, not an authorization gate.
 
 ## 4. Components
 
-Five units, each independently testable.
+Split into **external dependencies** (what we consume) and **what we build**.
 
-### 4.1 App Registry service
+### 4.1 External dependencies (out of scope; contracts we consume)
 
-- HTTP CRUD over MongoDB collection `apps`.
-- Record: `{ app_id, name, public_key, owner_team, status, nkey_user, created_at, updated_at }`.
-- `status ∈ { active, suspended, retired }`. Only `active` apps may publish or subscribe.
-- Onboarding flow provisions a NATS NKey/user with publish + subscribe scopes on `events.>`, and publish + subscribe on `dlq.<app_id>.>` (so the app's subscriber SDK can route rejections to its own DLQ subjects).
-- Exposes a list/diff endpoint the SDK polls (or NATS KV watch) for cache invalidation.
+These services and infrastructure exist already. This spec records only the *contract* the SDK and sidecar assume — sufficient detail to reason about behavior, integration, and failure modes. Their internal design is owned elsewhere.
 
-### 4.2 Event Marketplace service
+**App Registry.** Authoritative source for app identity and status.
 
-- HTTP CRUD over MongoDB collection `event_types`.
-- Record: `{ _id: <subject>+<version>, subject, schema_version, schema, registered_by_app, status, created_at }`.
-- Subject grammar: `events.<event_type>` where `<event_type>` is dotted lowercase (e.g. `events.task.created`).
-- Schemas are **immutable per version**. Breaking change → new version (`"1.0"` → `"2.0"`). Old subscribers keep working until they upgrade.
-- On register, validates: caller's app is `active` in Registry; JSON Schema is well-formed; subject matches grammar; `(subject, schema_version)` is unique.
-- Same list/diff or NATS KV watch endpoint for SDK cache invalidation.
+| Assumption | Required for |
+|---|---|
+| Per app: `{ app_id, status ∈ {active, suspended, retired}, nats_identity }`. Only `active` apps may publish or subscribe. | Source check (§5.2 step 2); publish-side identity. |
+| A list-or-diff read API that the SDK can fetch on boot and watch for changes (NATS KV watch or HTTP polling — concrete mechanism is the Registry's choice; SDK abstracts over it). | SDK cache (§4.2). |
+| Out-of-band onboarding provisions a NATS user/NKey whose grants cover publish + subscribe on `events.>` and publish + subscribe on `dlq.<app_id>.>`. | Sidecar/SDK can write rejections to their own DLQ subjects. |
 
-### 4.3 NATS JetStream
+**Event Marketplace.** Authoritative source for event-type schemas.
 
-- One durable stream `EVENTS`, subjects `events.>`, file storage, replication R3, retention by time and/or max-bytes.
-- One durable stream `DLQ`, subjects `dlq.>`, longer retention for inspection and replay.
-- Per-app durable consumers under naming `<app_id>.<group>`. Each app's replicas attach to a single shared durable consumer so JetStream distributes deliveries across them (one in-flight delivery per message).
-- NATS auth restricts publish/subscribe on `events.>` to active app NKeys.
+| Assumption | Required for |
+|---|---|
+| Per event type version: `{ subject, schema_version, schema (JSON Schema Draft 2020-12), status ∈ {active, deprecated, retired} }`. Versions are immutable. | Publish validation; consume validation; `dataschema` URI resolution (§6). |
+| Subject grammar `events.<event_type>` (dotted lowercase). | Subject construction in publish path (§5.1). |
+| A list-or-diff read API the SDK can fetch on boot and watch for changes — same shape as the Registry's. | SDK cache (§4.2). |
 
-### 4.4 Publisher/Subscriber SDK
+**NATS JetStream cluster.** Operated as platform infrastructure. Required shape:
 
-One library (per language) used by every app. Boundary responsibilities only — does not own domain logic.
+- Stream `EVENTS`, subjects `events.>`, durable, replicated. Retention parameters are an ops decision.
+- Stream `DLQ`, subjects `dlq.>`, longer retention than `EVENTS`.
+- Per-app shared durable consumers, naming `<app_id>.<group>`. Each app's replicas attach to a single shared durable consumer so JetStream distributes deliveries (one in-flight delivery per message).
+- NATS auth restricts publish on `events.>` to active app NKeys.
+
+### 4.2 Publisher/Subscriber SDK (what we build)
+
+One library (per supported language) used by every app that can link it. Boundary responsibilities only — does not own domain logic.
 
 Boot:
 
 - Fetches all `active` apps and all `active` event-type schemas from Registry and Marketplace.
-- Maintains a local cache; refreshes on KV watch (preferred) or short HTTP poll.
-- Fails closed on cache miss + service unreachable: publish/consume both reject rather than proceed unvalidated.
+- Maintains a local cache; refreshes on the dependency's change-feed mechanism (KV watch preferred; HTTP poll fallback).
+- Fails closed on cache miss + dependency unreachable: publish/consume both reject rather than proceed unvalidated.
 
-Publish path (see §5.3).
-Subscribe path (see §5.4).
+Publish path: §5.1. Subscribe path: §5.2.
 
-### 4.5 Processed-events table (per app)
+### 4.3 nats-adapter sidecar (what we build)
+
+A separately-deployable process for apps that cannot link the SDK. Reuses the SDK internally. Detailed in §9.
+
+### 4.4 Processed-events table (per app)
 
 Lives in each app's domain MongoDB. Requires a MongoDB deployment that supports multi-document transactions (replica set or sharded cluster) — a standalone `mongod` is not sufficient. Schema:
 
@@ -102,30 +110,12 @@ Written inside the same transaction as the domain change. This is the only place
 
 ## 5. Data flow
 
-### 5.1 Onboarding an app
+Onboarding an app (App Registry) and registering an event type (Event Marketplace) happen **out-of-band** in the external services and are out of scope for this spec (§4.1). The flows below assume:
 
-```
-Team ─HTTP─▶ App Registry  ──┐
-                              ├─▶ MongoDB `apps`
-                              └─▶ NATS user/NKey provisioned
-                                  with publish/subscribe on `events.>`
-```
+- The publishing app is `active` in the App Registry and holds a valid NATS NKey.
+- The event type is `active` in the Event Marketplace at the version the publisher uses.
 
-Result: app has an `app_id`, an NKey, and `status: active`.
-
-### 5.2 Registering an event type
-
-```
-Team ─HTTP─▶ Event Marketplace
-              │
-              ├─ verify caller's app_id is `active` (App Registry)
-              ├─ validate JSON Schema well-formedness (Draft 2020-12)
-              ├─ enforce subject grammar: events.<event_type>
-              ├─ enforce (subject, schema_version) uniqueness
-              └─▶ MongoDB `event_types`
-```
-
-### 5.3 Publishing an event
+### 5.1 Publishing an event
 
 ```
 App A code
@@ -146,7 +136,7 @@ Notes:
 - `traceparent` and `tracestate` are extracted automatically from the active OTel span — this is normal OTel propagation, not business causation.
 - The SDK awaits PubAck before returning. Apps wrap `publish()` in their own outbox if at-least-once-from-domain-DB is required.
 
-### 5.4 Consuming an event
+### 5.2 Consuming an event
 
 ```
 JetStream ─pull─▶ SDK consumer loop (durable consumer "<app_id>.<group>")
@@ -168,7 +158,7 @@ JetStream ─pull─▶ SDK consumer loop (durable consumer "<app_id>.<group>")
                           → publish to `dlq.<app_id>.<group>` + ACK original
 ```
 
-### 5.5 End-to-end trace propagation
+### 5.3 End-to-end trace propagation
 
 A's HTTP request creates an OTel span → `publish()` injects current `traceparent` into the envelope → JetStream → B's consumer extracts `traceparent` → continues the span as a child → B's handler creates its own spans.
 
@@ -221,21 +211,22 @@ payload: {
 
 Ops tooling against the `DLQ` stream covers inspect / replay / discard.
 
-### Explicitly not handled (deferred)
+### Explicitly not handled (external concerns)
 
-- App Registry outage during onboarding — onboarding fails; existing publish/subscribe traffic continues from caches.
-- MongoDB outage on Marketplace — SDK serves from cache; new schemas can't be registered until Mongo is back.
+- App Registry outage — SDK serves from last-known-good cache; publish/consume continues for already-known apps. Caller-driven onboarding (an external flow) fails. SDK behavior on prolonged outage is "fail closed for unknown identities, fail open for cached ones."
+- Event Marketplace outage — SDK serves from cache; publish/consume continues for already-known event types; an unknown event type causes a publish-side fail-closed. Schema registration (an external flow) is unavailable.
 - NATS cluster outage — upstream NATS HA is the platform's responsibility.
 
 ## 8. Testing strategy
 
 | Unit | Test type | Covers |
 |---|---|---|
-| App Registry | Integration (real MongoDB via testcontainers) | CRUD lifecycle, status transitions, NKey provisioning, duplicate `app_id` rejection. |
-| Event Marketplace | Integration (real MongoDB) | Schema register/get/version, JSON Schema well-formedness, subject grammar, owner-app `active` precondition, immutability of versions. |
-| SDK publisher | Unit + integration (real Marketplace + real NATS) | Envelope construction; schema validation; explicit causation handling; error classification; cache behavior; PubAck path; cache-miss-and-fetch; Marketplace-down fail-closed. |
-| SDK subscriber | Unit + integration (real NATS + real Mongo) | Envelope sanity; source check against cached registry; schema validation; idempotency lookup; DLQ routing; NAK backoff; trace propagation across publish→consume. |
-| End-to-end | Docker Compose harness | App A publishes → App B receives; `traceparent` + `causationid` preserved; second delivery suppressed; schema bump; old version still consumable. |
+| SDK publisher | Unit + integration (fake Registry/Marketplace + real NATS) | Envelope construction; schema validation; explicit causation handling; error classification; cache behavior; PubAck path; cache-miss-and-fetch; dependency-unreachable fail-closed. |
+| SDK subscriber | Unit + integration (fake Registry/Marketplace + real NATS + real Mongo) | Envelope sanity; source check against cached registry; schema validation; idempotency lookup; DLQ routing; NAK backoff; trace propagation across publish→consume. |
+| nats-adapter sidecar | Integration (fake Registry/Marketplace + real NATS + scripted fake HTTP app) | Localhost publish API; CloudEvents HTTP-binary delivery; status-code → ACK/NAK/DLQ mapping; webhook timeout; trace header in/out. |
+| End-to-end | Docker Compose harness (real NATS + Mongo, fake Registry/Marketplace, two demo apps — one SDK-linked, one sidecar) | App A publishes → App B receives; `traceparent` + `causationid` preserved; second delivery suppressed; schema bump; old version still consumable; sidecar app interoperates with SDK app. |
+
+Registry and Marketplace are stubbed in tests with a fake that returns canned `apps`/`event_types` snapshots and supports change notifications. Their real implementations are out of scope (§4.1) and have their own test suites.
 
 Two scenarios called out explicitly:
 
@@ -285,7 +276,7 @@ Sidecar listens on `127.0.0.1` only. App talks to it over localhost. The sidecar
 
 Headers: optional `traceparent` / `tracestate` (sidecar uses them if present; otherwise starts a fresh trace).
 
-Sidecar runs the same flow as SDK publish (§5.3): cache lookup, schema validation, envelope construction, JetStream PubAck, fail-closed on cache miss + Marketplace unreachable.
+Sidecar runs the same flow as SDK publish (§5.1): cache lookup, schema validation, envelope construction, JetStream PubAck, fail-closed on cache miss + Marketplace unreachable.
 
 Response: `200 { "event_id": "...", "stream_seq": 123 }` on success; `4xx { "reason": "..." }` on schema mismatch or unknown event type; `503` on Marketplace unreachable + cache miss.
 
@@ -339,7 +330,7 @@ DLQ subject and record format match §7 — `dlq.<app_id>.<group>`, original env
 
 ### 9.5 Idempotency contract
 
-The SDK design (§5.4) writes the `processed_events` row inside the app's DB transaction. The sidecar cannot be inside the app's DB transaction. The contract therefore shifts:
+The SDK design (§5.2) writes the `processed_events` row inside the app's DB transaction. The sidecar cannot be inside the app's DB transaction. The contract therefore shifts:
 
 - The sidecar passes `event_id` in `ce-id`.
 - The app's webhook handler is responsible for the idempotency check: lookup → domain write → `processed_events` insert, all in one **local** transaction.
@@ -366,11 +357,9 @@ This is the same correctness contract as SDK mode; only the boundary moves from 
 
 ## 10. Open Questions
 
-1. **Scale target.** The source PRD names none. Without a target we can't size NATS, MongoDB, or stream retention. Needs an answer before capacity planning.
-2. **Cache invalidation transport.** NATS KV watch or HTTP poll? KV watch is cleaner if NATS is already the dependency; poll is simpler operationally. Default in this design is KV watch.
-3. **NKey vs. JWT auth at NATS.** NKey is simpler; JWT (with operator/account/user) is more granular. NKey is the default here; revisit if per-event-type ACLs are added later.
-4. **Schema deprecation policy.** Versions are immutable, but a `status: deprecated` flag could warn subscribers without breaking them. Not in scope for v1; flagged here.
-5. **Outbox SDK helper.** App-side outboxes are the publisher's responsibility today. A shared outbox helper could be added later if every app reinvents the pattern.
+1. **Scale target.** The source PRD names none. Without a target we cannot size NATS streams or set retention/backoff defaults. Needs an answer before capacity planning.
+2. **Concrete change-feed mechanism exposed by Registry and Marketplace.** The SDK assumes a list-or-diff read with change notifications, abstracted over the transport. The concrete API (NATS KV watch vs. HTTP long-poll vs. server-sent events) is the external services' decision; the SDK needs only an adapter interface. Confirm the interface before SDK implementation.
+3. **Outbox SDK helper.** App-side outboxes are the publisher's responsibility today. A shared outbox helper could be added later if every app reinvents the pattern.
 
 ## 11. References
 
