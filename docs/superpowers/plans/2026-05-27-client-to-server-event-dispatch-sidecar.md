@@ -20,6 +20,7 @@
 - Phase 1 uses NATS JetStream durable consumers only. Queue subscriptions are not implemented.
 - Route matching uses exact subject, exact CloudEvent `type`, and exact CloudEvent `source`. NATS wildcards stay out of Phase 1 implementation until the PRD open question is resolved.
 - Response event IDs are deterministic by default: `sha256(incomingID + "\n" + routeName + "\n" + responseType + "\n" + responseSubject)`, encoded as lowercase hex with prefix `evt_`.
+- Publisher-supplied backend HTTP headers are carried in the CloudEvent `dispatchheaders` extension and forwarded only when the matched route lists the header in `dispatch.forwardHeaders`.
 - Phase 1 supports JSON CloudEvent `data` payloads. `data_base64` is rejected unless a future route field enables binary payloads.
 - The sidecar dispatches only to `127.0.0.1`, `localhost`, or loopback IPs. Non-loopback app base URLs fail config validation.
 - Permission evaluation is not implemented in this sidecar.
@@ -271,6 +272,9 @@ routes:
       method: POST
       path: /events/task-created
       timeout: 2s
+      forwardHeaders:
+        - X-Workspace-Actor-Id
+        - X-Workspace-Tenant-Id
     response:
       type: com.workspace.task.created.processed
       source: task-service
@@ -359,10 +363,11 @@ type MatchConfig struct {
 }
 
 type DispatchConfig struct {
-	Method  string            `yaml:"method"`
-	Path    string            `yaml:"path"`
-	Timeout time.Duration     `yaml:"timeout"`
-	Headers map[string]string `yaml:"headers"`
+	Method         string            `yaml:"method"`
+	Path           string            `yaml:"path"`
+	Timeout        time.Duration     `yaml:"timeout"`
+	Headers        map[string]string `yaml:"headers"`
+	ForwardHeaders []string          `yaml:"forwardHeaders"`
 }
 
 type ResponseConfig struct {
@@ -453,6 +458,18 @@ func TestValidateRejectsStaticHeaderOverride(t *testing.T) {
 		t.Fatalf("expected reserved header error, got %v", errs[0])
 	}
 }
+
+func TestValidateRejectsReservedForwardHeader(t *testing.T) {
+	cfg := validConfig()
+	cfg.Routes[0].Dispatch.ForwardHeaders = []string{"Authorization"}
+	errs := Validate(cfg)
+	if len(errs) == 0 {
+		t.Fatal("expected validation error")
+	}
+	if !strings.Contains(errs[0].Error(), "reserved header") {
+		t.Fatalf("expected reserved header error, got %v", errs[0])
+	}
+}
 ```
 
 - [ ] **Step 4: Implement validation**
@@ -486,7 +503,9 @@ var reservedHeaders = map[string]bool{
 	"ce-id": true, "ce-type": true, "ce-source": true, "ce-specversion": true,
 	"ce-subject": true, "ce-time": true, "ce-datacontenttype": true, "ce-dataschema": true,
 	"ce-correlationid": true, "ce-causationid": true, "idempotency-key": true,
-	"traceparent": true, "authorization": true,
+	"traceparent": true, "authorization": true, "connection": true, "keep-alive": true,
+	"proxy-authenticate": true, "proxy-authorization": true, "te": true, "trailer": true,
+	"transfer-encoding": true, "upgrade": true,
 }
 
 func Validate(cfg *Config) []error {
@@ -557,6 +576,15 @@ func validateRoute(prefix string, r RouteConfig) []error {
 	for name := range r.Dispatch.Headers {
 		if reservedHeaders[strings.ToLower(name)] {
 			errs = append(errs, ValidationError{Path: prefix + ".dispatch.headers." + name, Msg: "reserved header cannot be overridden"})
+		}
+	}
+	for _, name := range r.Dispatch.ForwardHeaders {
+		if name == "" {
+			errs = append(errs, ValidationError{Path: prefix + ".dispatch.forwardHeaders", Msg: "header names must be non-empty"})
+			continue
+		}
+		if reservedHeaders[strings.ToLower(name)] {
+			errs = append(errs, ValidationError{Path: prefix + ".dispatch.forwardHeaders." + name, Msg: "reserved header cannot be forwarded from publisher"})
 		}
 	}
 	if r.Response.Type == "" {
@@ -885,11 +913,17 @@ func TestDispatchForwardsDataAndHeaders(t *testing.T) {
 	var gotBody string
 	var gotID string
 	var gotIdempotency string
+	var gotActor string
+	var gotTenant string
+	var gotIgnored string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		gotBody = string(body)
 		gotID = r.Header.Get("ce-id")
 		gotIdempotency = r.Header.Get("Idempotency-Key")
+		gotActor = r.Header.Get("X-Workspace-Actor-Id")
+		gotTenant = r.Header.Get("X-Workspace-Tenant-Id")
+		gotIgnored = r.Header.Get("X-Not-Allowlisted")
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"ok":true}`))
@@ -903,10 +937,18 @@ func TestDispatchForwardsDataAndHeaders(t *testing.T) {
 	if err := ev.SetData("application/json", map[string]string{"taskId": "t1"}); err != nil {
 		t.Fatal(err)
 	}
+	ev.SetExtension("dispatchheaders", map[string]any{
+		"X-Workspace-Actor-Id": "user-1",
+		"X-Workspace-Tenant-Id": "tenant-a",
+		"X-Not-Allowlisted": "drop-me",
+	})
 
 	d := New(server.URL, http.DefaultClient)
 	res, err := d.Dispatch(context.Background(), config.RouteConfig{
-		Dispatch: config.DispatchConfig{Method: "POST", Path: "/", Timeout: time.Second},
+		Dispatch: config.DispatchConfig{
+			Method: "POST", Path: "/", Timeout: time.Second,
+			ForwardHeaders: []string{"X-Workspace-Actor-Id", "X-Workspace-Tenant-Id"},
+		},
 	}, &ev)
 	if err != nil {
 		t.Fatalf("Dispatch returned error: %v", err)
@@ -919,6 +961,12 @@ func TestDispatchForwardsDataAndHeaders(t *testing.T) {
 	}
 	if gotID != "evt-1" || gotIdempotency != "evt-1" {
 		t.Fatalf("missing id headers: ce-id=%q idempotency=%q", gotID, gotIdempotency)
+	}
+	if gotActor != "user-1" || gotTenant != "tenant-a" {
+		t.Fatalf("missing publisher headers: actor=%q tenant=%q", gotActor, gotTenant)
+	}
+	if gotIgnored != "" {
+		t.Fatalf("non-allowlisted publisher header was forwarded: %q", gotIgnored)
 	}
 }
 ```
@@ -981,6 +1029,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, route config.RouteConfig, ev 
 		return Result{}, fmt.Errorf("dispatcher: create request: %w", err)
 	}
 	setCloudEventHeaders(req, ev)
+	setPublisherHeaders(req, route, ev)
 	for k, v := range route.Dispatch.Headers {
 		req.Header.Set(k, v)
 	}
@@ -1015,7 +1064,36 @@ func setCloudEventHeaders(req *http.Request, ev *ce.Event) {
 		req.Header.Set("ce-dataschema", ev.DataSchema())
 	}
 	for name, value := range ev.Extensions() {
+		if strings.EqualFold(name, "dispatchheaders") {
+			continue
+		}
 		req.Header.Set("ce-"+strings.ToLower(name), fmt.Sprint(value))
+	}
+}
+
+func setPublisherHeaders(req *http.Request, route config.RouteConfig, ev *ce.Event) {
+	raw, ok := ev.Extensions()["dispatchheaders"]
+	if !ok {
+		return
+	}
+	values, ok := raw.(map[string]any)
+	if !ok {
+		return
+	}
+	allowed := map[string]string{}
+	for _, name := range route.Dispatch.ForwardHeaders {
+		allowed[strings.ToLower(name)] = name
+	}
+	for name, value := range values {
+		canonical, ok := allowed[strings.ToLower(name)]
+		if !ok {
+			continue
+		}
+		text, ok := value.(string)
+		if !ok {
+			continue
+		}
+		req.Header.Set(canonical, text)
 	}
 }
 ```
@@ -1909,6 +1987,9 @@ routes:
       method: POST
       path: /events/task-created
       timeout: 2s
+      forwardHeaders:
+        - X-Workspace-Actor-Id
+        - X-Workspace-Tenant-Id
     response:
       type: com.workspace.task.created.processed
       source: task-service
@@ -2049,7 +2130,7 @@ func TestEventDispatchPublishesResponse(t *testing.T) {
 		_ = cmd.Wait()
 	})
 	waitForLine(t, output, "processing 1 route")
-	input := []byte(`{"specversion":"1.0","id":"evt-e2e-1","source":"workspace/task","type":"com.workspace.task.created","datacontenttype":"application/json","data":{"taskId":"task-1"}}`)
+	input := []byte(`{"specversion":"1.0","id":"evt-e2e-1","source":"workspace/task","type":"com.workspace.task.created","datacontenttype":"application/json","dispatchheaders":{"X-Workspace-Actor-Id":"user-1","X-Workspace-Tenant-Id":"tenant-a"},"data":{"taskId":"task-1"}}`)
 	if _, err := js.Publish("t.tenant-a.app.task.event.created", input); err != nil {
 		t.Fatalf("publish input: %v", err)
 	}
@@ -2226,6 +2307,10 @@ nats --server nats://127.0.0.1:4222 pub t.tenant-a.app.task.event.created '{
   "source": "workspace/task",
   "type": "com.workspace.task.created",
   "datacontenttype": "application/json",
+  "dispatchheaders": {
+    "X-Workspace-Actor-Id": "user-1",
+    "X-Workspace-Tenant-Id": "tenant-a"
+  },
   "data": {"taskId": "task-1"}
 }'
 ```
@@ -2248,6 +2333,8 @@ This example runs a local app handler and a client-to-server sidecar.
    `./examples/onboarding/publish.sh`
 
 The sidecar forwards CloudEvent `data` to `/events/task-created`, publishes a response CloudEvent to `t.tenant-a.app.task.event.processed`, and acknowledges the original message only after response publish confirmation.
+
+Publisher-supplied backend HTTP headers must be sent in the CloudEvent `dispatchheaders` extension and listed in the route's `dispatch.forwardHeaders` allowlist before the sidecar forwards them to the app handler.
 ```
 
 - [ ] **Step 5: Run verification commands**

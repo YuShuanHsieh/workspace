@@ -144,6 +144,9 @@ routes:
       method: POST
       path: /events/task-created
       timeout: 2s
+      forwardHeaders:
+        - X-Workspace-Actor-Id
+        - X-Workspace-Tenant-Id
     response:
       type: com.workspace.task.created.processed
       source: task-service
@@ -162,7 +165,7 @@ The final implementation may adjust field names, but the PRD requires these conc
 - NATS JetStream connection, stream, durable consumer, acknowledgement settings, and default DLQ subject for pre-route failures.
 - One or more route entries.
 - Match rules using NATS subject and CloudEvent attributes.
-- Dispatch method, path, timeout, and optional static headers.
+- Dispatch method, path, timeout, optional static headers, and an allowlist of publisher-supplied HTTP headers that may be forwarded to the app backend.
 - Response CloudEvent type, source, and publish subject.
 - Retry policy.
 - DLQ subject.
@@ -179,6 +182,10 @@ Required behavior:
 - The sidecar forwards selected CloudEvent metadata using the CloudEvents HTTP protocol binding. Standard CloudEvent attributes use `ce-` headers, and extension attributes use `ce-<extension-name>` headers.
 - The sidecar must forward the incoming event `id` as `ce-id` and as the `Idempotency-Key` value unless the incoming event already contains an explicit idempotency extension mapped by the route.
 - The sidecar must preserve `datacontenttype`, `dataschema`, and extension attributes that are required for correlation, causation, tenant identity, and app identity.
+- The publisher may provide backend-required HTTP headers in a CloudEvent extension named `dispatchheaders`. The extension value must be a JSON object whose keys are HTTP header names and whose values are strings.
+- The sidecar forwards publisher-supplied `dispatchheaders` only when the header name is explicitly listed in the matched route's `dispatch.forwardHeaders` allowlist.
+- The sidecar must treat `dispatchheaders` as sidecar control metadata and must not forward it to the backend as a `ce-dispatchheaders` header.
+- Publisher-supplied headers must not override CloudEvent, trace context, authorization, idempotency, hop-by-hop, or route-configured static headers.
 - The sidecar must support JSON `data` payloads in Phase 1. Binary payloads and `data_base64` are out of scope unless explicitly enabled by route configuration.
 - The application should return a `2xx` status code for successful processing.
 - Non-`2xx` responses are treated as dispatch failures unless a route explicitly marks additional status codes as successful.
@@ -206,7 +213,7 @@ ce-causationid
 traceparent
 ```
 
-The sidecar may add route-configured static headers, but static headers must not override CloudEvent, trace context, authorization, or idempotency headers.
+Publisher-supplied backend headers are forwarded after CloudEvent metadata and before route-configured static headers. If the same non-reserved header appears in both `dispatchheaders` and static route headers, the static route header wins.
 
 ## 8. Response Event Contract
 
