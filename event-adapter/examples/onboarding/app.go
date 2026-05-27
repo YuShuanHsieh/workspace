@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 )
 
@@ -21,5 +22,7 @@ func main() {
 			"tenantId":       r.Header.Get("X-Workspace-Tenant-Id"),
 		})
 	})
-	_ = http.ListenAndServe("127.0.0.1:8080", nil)
+	if err := http.ListenAndServe("127.0.0.1:8080", nil); err != nil {
+		log.Fatal(err)
+	}
 }
