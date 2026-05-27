@@ -1,4 +1,4 @@
-# Product Requirements Document: Client-to-Server Event Dispatch Sidecar
+# Product Requirements Document: event-adapter Event Dispatch Sidecar
 
 **Status:** Draft
 **Target Audience:** Platform Team, Application Development Teams

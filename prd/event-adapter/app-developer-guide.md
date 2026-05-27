@@ -1,4 +1,4 @@
-# App Developer Guide: Integrating the Client-to-Server Event Dispatch Sidecar
+# App Developer Guide: Integrating the event-adapter sidecar
 
 **Audience:** Application developers exposing HTTP handlers for platform events.
 **Scope:** Phase 1 inbound delivery only: NATS JetStream CloudEvent -> sidecar -> app HTTP endpoint -> response CloudEvent -> NATS.

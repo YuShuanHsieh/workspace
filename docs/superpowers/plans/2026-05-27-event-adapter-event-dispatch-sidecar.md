@@ -1,4 +1,4 @@
-# Client-to-Server Event Dispatch Sidecar Implementation Plan
+# event-adapter Event Dispatch Sidecar Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -2320,9 +2320,9 @@ nats --server nats://127.0.0.1:4222 pub t.tenant-a.app.task.event.created '{
 Create `examples/onboarding/README.md`:
 
 ```markdown
-# Client-to-server onboarding example
+# event-adapter onboarding example
 
-This example runs a local app handler and a event-adapter sidecar.
+This example runs a local app handler and an event-adapter sidecar.
 
 1. Start NATS JetStream.
 2. Start the fake app:
