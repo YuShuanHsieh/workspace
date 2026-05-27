@@ -2,7 +2,11 @@ package processor
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
+	"strings"
+	"syscall"
 	"time"
 
 	ce "github.com/cloudevents/sdk-go/v2/event"
@@ -54,7 +58,7 @@ func (p *Processor) Process(ctx context.Context, subject string, ev *clevent.Eve
 		if dispatchErr != nil {
 			lastErr = dispatchErr
 			lastStatus = 0
-			if attempt < policy.MaxAttempts {
+			if attempt < policy.MaxAttempts && isNetworkError(dispatchErr) {
 				timer := time.NewTimer(policy.Delay(attempt))
 				select {
 				case <-ctx.Done():
@@ -62,8 +66,9 @@ func (p *Processor) Process(ctx context.Context, subject string, ev *clevent.Eve
 					return ctx.Err()
 				case <-timer.C:
 				}
+				continue
 			}
-			continue
+			break
 		}
 		lastStatus = res.StatusCode
 		resp, buildErr := clevent.BuildResponse(ev, route, res.StatusCode, res.ContentType, res.Body)
@@ -91,4 +96,33 @@ func (p *Processor) Process(ctx context.Context, subject string, ev *clevent.Eve
 		return fmt.Errorf("publish dlq: %w", err)
 	}
 	return ack.Ack(ctx)
+}
+
+func isNetworkError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) ||
+		errors.Is(err, syscall.ECONNREFUSED) ||
+		errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, syscall.ECONNABORTED) ||
+		errors.Is(err, syscall.ETIMEDOUT) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	type temporary interface {
+		Temporary() bool
+	}
+	var tempErr temporary
+	if errors.As(err, &tempErr) && tempErr.Temporary() {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "connection refused") ||
+		strings.Contains(msg, "connection reset") ||
+		strings.Contains(msg, "connection aborted") ||
+		strings.Contains(msg, "i/o timeout")
 }

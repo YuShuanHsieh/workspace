@@ -168,6 +168,30 @@ func TestProcessorNetworkFailureExhaustsToDLQ(t *testing.T) {
 	}
 }
 
+func TestProcessorDoesNotRetryNonNetworkDispatchError(t *testing.T) {
+	ev := ce.New()
+	ev.SetID("evt-1")
+	ev.SetSource("workspace/task")
+	ev.SetType("com.workspace.task.created")
+	_ = ev.SetData("application/json", map[string]string{"taskId": "t1"})
+	pub := &fakePublisher{}
+	ack := &fakeAck{}
+	disp := &fakeDispatcher{err: errors.New("invalid request body")}
+	p := New(disp, pub)
+	route := config.RouteConfig{
+		Name:     "task-created",
+		Response: config.ResponseConfig{Type: "processed", Source: "task-service", Subject: "processed.subject"},
+		Retry:    config.RetryConfig{MaxAttempts: 3, InitialBackoff: time.Millisecond, MaxBackoff: time.Millisecond},
+		DLQ:      config.DLQConfig{Subject: "dlq.subject"},
+	}
+	if err := p.Process(context.Background(), "input.subject", &clevent.Event{Event: &ev}, route, ack); err != nil {
+		t.Fatalf("Process returned error: %v", err)
+	}
+	if !ack.acked || pub.responses != 0 || pub.dlqs != 1 || disp.calls != 1 {
+		t.Fatalf("unexpected state ack=%v responses=%d dlqs=%d dispatchCalls=%d", ack.acked, pub.responses, pub.dlqs, disp.calls)
+	}
+}
+
 func TestProcessorDoesNotAckWhenDLQPublishFails(t *testing.T) {
 	ev := ce.New()
 	ev.SetID("evt-1")
