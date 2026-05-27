@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParseValidConfig(t *testing.T) {
 	raw := []byte(`
@@ -63,5 +66,8 @@ unknown: true
 `))
 	if err == nil {
 		t.Fatal("expected unknown field error")
+	}
+	if !strings.Contains(err.Error(), "field unknown") {
+		t.Fatalf("expected unknown-field error, got: %v", err)
 	}
 }

@@ -3,6 +3,7 @@ package dispatcher
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -19,6 +20,8 @@ type Result struct {
 	Body        []byte
 }
 
+var ErrNilEvent = errors.New("dispatcher: nil event")
+
 type Dispatcher struct {
 	baseURL string
 	client  *http.Client
@@ -32,6 +35,9 @@ func New(baseURL string, client *http.Client) *Dispatcher {
 }
 
 func (d *Dispatcher) Dispatch(ctx context.Context, route config.RouteConfig, ev *clevent.Event) (Result, error) {
+	if ev == nil || ev.Event == nil {
+		return Result{}, ErrNilEvent
+	}
 	body, err := clevent.JSONDataBytes(ev)
 	if err != nil {
 		return Result{}, err

@@ -3,6 +3,7 @@ package dispatcher
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"testing"
@@ -63,6 +64,14 @@ func TestDispatchForwardsDataAndHeaders(t *testing.T) {
 	}
 	if gotIgnored != "" {
 		t.Fatalf("non-allowlisted publisher header was forwarded: %q", gotIgnored)
+	}
+}
+
+func TestDispatchRejectsNilEvent(t *testing.T) {
+	d := New("http://127.0.0.1:8080", nil)
+	_, err := d.Dispatch(context.Background(), config.RouteConfig{}, nil)
+	if !errors.Is(err, ErrNilEvent) {
+		t.Fatalf("expected ErrNilEvent, got %v", err)
 	}
 }
 

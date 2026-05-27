@@ -44,6 +44,9 @@ func (c *Client) Close() {
 }
 
 func (c *Client) PublishResponse(ctx context.Context, subject string, ev *ce.Event) error {
+	if ev == nil {
+		return fmt.Errorf("nats: publish response: nil event")
+	}
 	body, err := json.Marshal(ev)
 	if err != nil {
 		return fmt.Errorf("nats: marshal response: %w", err)
@@ -83,6 +86,9 @@ func (m Message) Ack(ctx context.Context) error {
 }
 
 func FetchOne(ctx context.Context, sub *nats.Subscription) (Message, error) {
+	if sub == nil {
+		return Message{}, fmt.Errorf("nats: subscription is nil")
+	}
 	msgs, err := sub.Fetch(1, nats.Context(ctx))
 	if err != nil {
 		return Message{}, err
