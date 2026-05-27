@@ -89,13 +89,17 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			ev, err := clevent.Parse(msg.Data)
 			if err != nil {
 				m.InvalidCloudEvent(ctx, "parse_error")
-				publishDefaultDLQ(ctx, js, cfg, nil, err.Error())
+				if err := publishDefaultDLQAndAck(ctx, js, cfg, nil, err.Error(), msg, msg.Subject, stderr); err != nil {
+					fmt.Fprintf(stderr, "publish dlq %s: %v\n", msg.Subject, err)
+				}
 				continue
 			}
 			route, ok := matcher.Match(msg.Subject, ev)
 			if !ok {
 				m.RouteMatchFailure(ctx)
-				publishDefaultDLQ(ctx, js, cfg, ev, "no matching route")
+				if err := publishDefaultDLQAndAck(ctx, js, cfg, ev, "no matching route", msg, msg.Subject, stderr); err != nil {
+					fmt.Fprintf(stderr, "publish dlq %s: %v\n", msg.Subject, err)
+				}
 				continue
 			}
 			m.EventConsumed(ctx, route.Name)
@@ -125,12 +129,26 @@ func loadConfig(path string) (*config.Config, error) {
 	return cfg, nil
 }
 
-func publishDefaultDLQ(ctx context.Context, js *natsjs.Client, cfg *config.Config, ev *clevent.Event, reason string) {
+type dlqPublisher interface {
+	PublishDLQ(context.Context, string, processor.DLQEvent) error
+}
+
+func publishDefaultDLQAndAck(ctx context.Context, pub dlqPublisher, cfg *config.Config, ev *clevent.Event, reason string, ack processor.Acker, subject string, stderr io.Writer) error {
+	if err := publishDefaultDLQ(ctx, pub, cfg, ev, reason); err != nil {
+		return err
+	}
+	if err := ack.Ack(ctx); err != nil {
+		fmt.Fprintf(stderr, "ack %s: %v\n", subject, err)
+	}
+	return nil
+}
+
+func publishDefaultDLQ(ctx context.Context, pub dlqPublisher, cfg *config.Config, ev *clevent.Event, reason string) error {
 	dlq := processor.DLQEvent{
 		OriginalEvent: ev,
 		FailureReason: reason,
 		Timestamp:     time.Now().UTC(),
 		SidecarAppID:  cfg.App.ID,
 	}
-	_ = js.PublishDLQ(ctx, cfg.NATS.DefaultDLQSubject, dlq)
+	return pub.PublishDLQ(ctx, cfg.NATS.DefaultDLQSubject, dlq)
 }
