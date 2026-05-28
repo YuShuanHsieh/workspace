@@ -102,6 +102,15 @@ func setPublisherHeaders(req *http.Request, route config.RouteConfig, ev *cleven
 	if len(ev.DispatchHeaders) == 0 {
 		return
 	}
+	if len(route.Dispatch.ForwardHeaders) == 0 {
+		for name, value := range ev.DispatchHeaders {
+			if config.IsReservedHeader(name) {
+				continue
+			}
+			req.Header.Set(name, value)
+		}
+		return
+	}
 	allowed := map[string]string{}
 	for _, name := range route.Dispatch.ForwardHeaders {
 		allowed[strings.ToLower(name)] = name
@@ -109,6 +118,9 @@ func setPublisherHeaders(req *http.Request, route config.RouteConfig, ev *cleven
 	for name, value := range ev.DispatchHeaders {
 		canonical, ok := allowed[strings.ToLower(name)]
 		if !ok {
+			continue
+		}
+		if config.IsReservedHeader(canonical) {
 			continue
 		}
 		req.Header.Set(canonical, value)

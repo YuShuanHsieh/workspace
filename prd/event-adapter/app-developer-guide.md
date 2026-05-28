@@ -200,7 +200,7 @@ Important fields:
 - `dispatch.path` must start with `/` and match an endpoint your app exposes.
 - `dispatch.timeout` should be shorter than the JetStream acknowledgement window.
 - `dispatch.headers` defines static headers the sidecar adds to app requests. These cannot override reserved CloudEvent, authorization, idempotency, trace, or hop-by-hop headers.
-- `dispatch.forwardHeaders` allowlists publisher-supplied backend headers from the CloudEvent `dispatchheaders` extension.
+- `dispatch.forwardHeaders` is an optional allowlist restricting which publisher-supplied `dispatchheaders` are forwarded. By default (field omitted or empty), the sidecar forwards every header in `dispatchheaders` except reserved names (CloudEvent metadata, `Idempotency-Key`, `Authorization`, trace context (`traceparent`), hop-by-hop). Set this list only when a route needs to lock forwarding down to a specific set of headers.
 - `response.type` and `response.subject` define what the sidecar publishes after success.
 - `response.dataschema` is optional and sets the response CloudEvent `dataschema`.
 - `retry` controls bounded retry before DLQ.
@@ -274,7 +274,7 @@ curl -i \
   --data '{"taskId":"task-456","title":"Review onboarding request","assigneeId":"user-789"}'
 ```
 
-When testing through the sidecar instead of calling the app directly, publisher-supplied backend headers must be placed in the CloudEvent `dispatchheaders` extension and must also be listed in `dispatch.forwardHeaders`.
+When testing through the sidecar instead of calling the app directly, publisher-supplied backend headers must be placed in the CloudEvent `dispatchheaders` extension. They are forwarded by default; if the route declares `dispatch.forwardHeaders`, only headers on that allowlist are forwarded.
 
 ## 8. Operational Expectations
 

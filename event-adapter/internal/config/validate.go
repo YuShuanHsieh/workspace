@@ -20,6 +20,12 @@ func (e ValidationError) Error() string {
 	return e.Path + ": " + e.Msg
 }
 
+// IsReservedHeader reports whether name (case-insensitive) is a header the
+// sidecar reserves and must never accept from a publisher's dispatchheaders.
+func IsReservedHeader(name string) bool {
+	return reservedHeaders[strings.ToLower(name)]
+}
+
 var reservedHeaders = map[string]bool{
 	"ce-id":               true,
 	"ce-type":             true,

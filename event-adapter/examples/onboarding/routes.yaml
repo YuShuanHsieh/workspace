@@ -19,9 +19,6 @@ routes:
       method: POST
       path: /events/task-created
       timeout: 2s
-      forwardHeaders:
-        - X-Workspace-Actor-Id
-        - X-Workspace-Tenant-Id
     response:
       type: com.workspace.task.created.processed
       source: task-service
