@@ -183,7 +183,8 @@ Required behavior:
 - The sidecar must forward the incoming event `id` as `ce-id` and as the `Idempotency-Key` value unless the incoming event already contains an explicit idempotency extension mapped by the route.
 - The sidecar must preserve `datacontenttype`, `dataschema`, and extension attributes that are required for correlation, causation, tenant identity, and app identity.
 - The publisher may provide backend-required HTTP headers in a CloudEvent extension named `dispatchheaders`. The extension value must be a JSON object whose keys are HTTP header names and whose values are strings.
-- The sidecar forwards publisher-supplied `dispatchheaders` only when the header name is explicitly listed in the matched route's `dispatch.forwardHeaders` allowlist.
+- By default, the sidecar forwards every header in `dispatchheaders` to the backend, except names on the reserved-header set (CloudEvent metadata, `Idempotency-Key`, `Authorization`, hop-by-hop headers). Reserved names are dropped at runtime regardless of configuration.
+- A route may set `dispatch.forwardHeaders` as an opt-in allowlist to restrict which `dispatchheaders` are forwarded for that route. When the list is set, only listed names are forwarded; when it is empty or omitted, the default-forward behavior applies.
 - The sidecar must treat `dispatchheaders` as sidecar control metadata and must not forward it to the backend as a `ce-dispatchheaders` header.
 - Publisher-supplied headers must not override CloudEvent, trace context, authorization, idempotency, hop-by-hop, or route-configured static headers.
 - The sidecar must support JSON `data` payloads in Phase 1. Binary payloads and `data_base64` are out of scope unless explicitly enabled by route configuration.
@@ -213,7 +214,7 @@ ce-causationid
 traceparent
 ```
 
-Publisher-supplied backend headers are forwarded after CloudEvent metadata and before route-configured static headers. If the same non-reserved header appears in both `dispatchheaders` and static route headers, the static route header wins.
+Publisher-supplied `dispatchheaders` are applied after CloudEvent metadata and before route-configured static headers. Reserved-set names are dropped at runtime even if they appear in `dispatchheaders`. If the same non-reserved header appears in both `dispatchheaders` and static route headers, the static route header wins.
 
 ## 8. Response Event Contract
 

@@ -67,6 +67,77 @@ func TestDispatchForwardsDataAndHeaders(t *testing.T) {
 	}
 }
 
+func TestDispatchForwardsAllDispatchHeadersWhenAllowlistEmpty(t *testing.T) {
+	var headers http.Header
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		headers = r.Header.Clone()
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(bytes.NewBufferString(`{"ok":true}`)),
+		}, nil
+	})}
+
+	ev, err := clevent.Parse([]byte(`{"specversion":"1.0","id":"evt-2","source":"workspace/task","type":"com.workspace.task.created","datacontenttype":"application/json","dispatchheaders":{"X-Workspace-Actor-Id":"user-1","X-Workspace-Tenant-Id":"tenant-a","X-Custom-Trace":"abc"},"data":{"taskId":"t1"}}`))
+	if err != nil {
+		t.Fatalf("parse event: %v", err)
+	}
+
+	d := New("http://127.0.0.1:8080", client)
+	_, err = d.Dispatch(context.Background(), config.RouteConfig{
+		Dispatch: config.DispatchConfig{Method: "POST", Path: "/", Timeout: time.Second},
+	}, ev)
+	if err != nil {
+		t.Fatalf("Dispatch returned error: %v", err)
+	}
+	if got := headers.Get("X-Workspace-Actor-Id"); got != "user-1" {
+		t.Fatalf("expected actor forwarded by default, got %q", got)
+	}
+	if got := headers.Get("X-Workspace-Tenant-Id"); got != "tenant-a" {
+		t.Fatalf("expected tenant forwarded by default, got %q", got)
+	}
+	if got := headers.Get("X-Custom-Trace"); got != "abc" {
+		t.Fatalf("expected custom header forwarded by default, got %q", got)
+	}
+}
+
+func TestDispatchDropsReservedDispatchHeadersAtRuntime(t *testing.T) {
+	var headers http.Header
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		headers = r.Header.Clone()
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(bytes.NewBufferString(`{"ok":true}`)),
+		}, nil
+	})}
+
+	ev, err := clevent.Parse([]byte(`{"specversion":"1.0","id":"evt-3","source":"workspace/task","type":"com.workspace.task.created","datacontenttype":"application/json","dispatchheaders":{"Authorization":"Bearer attacker","Idempotency-Key":"attacker-key","ce-id":"spoof","X-Workspace-Actor-Id":"user-1"},"data":{"taskId":"t1"}}`))
+	if err != nil {
+		t.Fatalf("parse event: %v", err)
+	}
+
+	d := New("http://127.0.0.1:8080", client)
+	_, err = d.Dispatch(context.Background(), config.RouteConfig{
+		Dispatch: config.DispatchConfig{Method: "POST", Path: "/", Timeout: time.Second},
+	}, ev)
+	if err != nil {
+		t.Fatalf("Dispatch returned error: %v", err)
+	}
+	if got := headers.Get("Authorization"); got != "" {
+		t.Fatalf("Authorization must not be forwarded from publisher: %q", got)
+	}
+	if got := headers.Get("Idempotency-Key"); got != "evt-3" {
+		t.Fatalf("publisher must not override Idempotency-Key: %q", got)
+	}
+	if got := headers.Get("ce-id"); got != "evt-3" {
+		t.Fatalf("publisher must not override ce-id: %q", got)
+	}
+	if got := headers.Get("X-Workspace-Actor-Id"); got != "user-1" {
+		t.Fatalf("non-reserved publisher header should still forward: %q", got)
+	}
+}
+
 func TestDispatchRejectsNilEvent(t *testing.T) {
 	d := New("http://127.0.0.1:8080", nil)
 	_, err := d.Dispatch(context.Background(), config.RouteConfig{}, nil)

@@ -9,4 +9,4 @@ This example runs a local app handler and an event-adapter sidecar.
 
 The sidecar forwards CloudEvent `data` to `/events/task-created`, publishes a response CloudEvent to `t.tenant-a.app.task.event.processed`, and acknowledges the original message only after response publish confirmation.
 
-Publisher-supplied backend HTTP headers must be sent in the CloudEvent `dispatchheaders` extension and listed in the route's `dispatch.forwardHeaders` allowlist before the sidecar forwards them to the app handler.
+Publisher-supplied backend HTTP headers should be sent in the CloudEvent `dispatchheaders` extension. By default the sidecar forwards every key in `dispatchheaders` to the app handler, except reserved names (CloudEvent metadata, `Idempotency-Key`, `Authorization`, hop-by-hop). Set `dispatch.forwardHeaders` on a route only when you need to restrict forwarding to a specific allowlist.
