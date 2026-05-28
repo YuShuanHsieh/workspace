@@ -1,0 +1,35 @@
+app:
+  id: task-service
+  httpBaseURL: http://127.0.0.1:18080
+nats:
+  url: nats://127.0.0.1:4222
+  stream: workspace-events
+  durableConsumer: task-service-dispatcher
+  ackWait: 30s
+  maxDeliver: 5
+  maxAckPending: 1024
+  defaultDLQSubject: dlq.tenant-a.task-service
+routes:
+  - name: task-created
+    match:
+      subject: t.tenant-a.app.task.event.created
+      type: com.workspace.task.created
+      source: workspace/task
+    dispatch:
+      method: POST
+      path: /events/task-created
+      timeout: 2s
+      forwardHeaders:
+        - X-Workspace-Actor-Id
+        - X-Workspace-Tenant-Id
+    response:
+      type: com.workspace.task.created.processed
+      source: task-service
+      subject: t.tenant-a.app.task.event.processed
+    retry:
+      maxAttempts: 3
+      initialBackoff: 100ms
+      maxBackoff: 2s
+    dlq:
+      subject: dlq.tenant-a.task-service
+

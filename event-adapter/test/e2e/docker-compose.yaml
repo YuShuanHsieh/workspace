@@ -1,0 +1,7 @@
+services:
+  nats:
+    image: nats:2.11
+    command: ["-js", "-sd", "/data"]
+    ports:
+      - "4222:4222"
+
