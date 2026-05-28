@@ -183,7 +183,7 @@ Required behavior:
 - The sidecar must forward the incoming event `id` as `ce-id` and as the `Idempotency-Key` value unless the incoming event already contains an explicit idempotency extension mapped by the route.
 - The sidecar must preserve `datacontenttype`, `dataschema`, and extension attributes that are required for correlation, causation, tenant identity, and app identity.
 - The publisher may provide backend-required HTTP headers in a CloudEvent extension named `dispatchheaders`. The extension value must be a JSON object whose keys are HTTP header names and whose values are strings.
-- By default, the sidecar forwards every header in `dispatchheaders` to the backend, except names on the reserved-header set (CloudEvent metadata, `Idempotency-Key`, `Authorization`, hop-by-hop headers). Reserved names are dropped at runtime regardless of configuration.
+- By default, the sidecar forwards every header in `dispatchheaders` to the backend, except names on the reserved-header set (CloudEvent metadata, `Idempotency-Key`, `Authorization`, trace context (`traceparent`), hop-by-hop headers). Reserved names are dropped at runtime regardless of configuration.
 - A route may set `dispatch.forwardHeaders` as an opt-in allowlist to restrict which `dispatchheaders` are forwarded for that route. When the list is set, only listed names are forwarded; when it is empty or omitted, the default-forward behavior applies.
 - The sidecar must treat `dispatchheaders` as sidecar control metadata and must not forward it to the backend as a `ce-dispatchheaders` header.
 - Publisher-supplied headers must not override CloudEvent, trace context, authorization, idempotency, hop-by-hop, or route-configured static headers.
