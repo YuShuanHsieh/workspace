@@ -1,8 +1,8 @@
 app:
   id: task-service
-  httpBaseURL: http://127.0.0.1:18080
+  httpBaseURL: http://mock-app:18080
 nats:
-  url: nats://127.0.0.1:4222
+  url: nats://nats:4222
   stream: workspace-events
   durableConsumer: task-service-dispatcher
   ackWait: 30s

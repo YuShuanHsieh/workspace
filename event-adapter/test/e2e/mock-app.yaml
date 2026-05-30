@@ -1,0 +1,11 @@
+addr: 0.0.0.0:18080
+
+handlers:
+  - method: POST
+    path: /events/task-created
+    requireHeaders:
+      - X-Workspace-Actor-Id
+    response:
+      status: 200
+      contentType: application/json
+      body: '{"ok":true}'

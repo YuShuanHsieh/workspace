@@ -1,0 +1,10 @@
+FROM golang:1.25-alpine AS builder
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN go build -o /mock-app ./cmd/mock-app
+
+FROM alpine:3.20
+COPY --from=builder /mock-app /usr/local/bin/mock-app
+ENTRYPOINT ["mock-app"]
