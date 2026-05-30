@@ -64,7 +64,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, route config.RouteConfig, ev 
 	if err != nil {
 		return Result{}, fmt.Errorf("dispatcher: http call: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return Result{}, fmt.Errorf("dispatcher: read response: %w", err)

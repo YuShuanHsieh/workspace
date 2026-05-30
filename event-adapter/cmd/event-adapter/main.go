@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -28,8 +29,9 @@ type options struct {
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-	os.Exit(run(ctx, os.Args[1:], os.Stdout, os.Stderr))
+	code := run(ctx, os.Args[1:], os.Stdout, os.Stderr)
+	stop()
+	os.Exit(code)
 }
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -42,7 +44,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
-		if err == flag.ErrHelp {
+		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
 		return 2
@@ -124,7 +126,7 @@ func loadConfig(path string) (*config.Config, error) {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
 	if errs := config.Validate(cfg); len(errs) > 0 {
-		return nil, fmt.Errorf("validate config: %v", errs[0])
+		return nil, fmt.Errorf("validate config: %w", errs[0])
 	}
 	return cfg, nil
 }
