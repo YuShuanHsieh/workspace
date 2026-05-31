@@ -43,8 +43,9 @@ linters:
         - G115
         # G114: examples/onboarding/app.go is a local smoke-test helper, not production code.
         - G114
-        # G706: mock-app intentionally logs every incoming request (method, path, headers, body)
-        # so developers can inspect what the sidecar sends. Log injection is by design.
+        # G705/G706: mock-app intentionally logs every incoming request (method, path, headers, body)
+        # so developers can inspect what the sidecar sends. Taint tracking of request data is by design.
+        - G705
         - G706
 
     revive:

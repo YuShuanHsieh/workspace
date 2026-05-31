@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"cmp"
 	"context"
 	"flag"
 	"fmt"
@@ -24,9 +26,9 @@ type Config struct {
 
 // Handler declares a single HTTP endpoint, its required headers, and the fixed response.
 type Handler struct {
-	Method         string         `yaml:"method"`
-	Path           string         `yaml:"path"`
-	RequireHeaders []string       `yaml:"requireHeaders"`
+	Method         string          `yaml:"method"`
+	Path           string          `yaml:"path"`
+	RequireHeaders []string        `yaml:"requireHeaders"`
 	Response       HandlerResponse `yaml:"response"`
 }
 
@@ -46,20 +48,17 @@ func main() {
 	if err != nil {
 		log.Fatalf("read config: %v", err)
 	}
+	dec := yaml.NewDecoder(bytes.NewReader(raw))
+	dec.KnownFields(true)
 	var cfg Config
-	if err := yaml.Unmarshal(raw, &cfg); err != nil {
+	if err := dec.Decode(&cfg); err != nil {
 		log.Fatalf("parse config: %v", err)
 	}
-	if *addrOverride != "" {
-		cfg.Addr = *addrOverride
-	}
-	if cfg.Addr == "" {
-		cfg.Addr = "0.0.0.0:18080"
-	}
+
+	cfg.Addr = cmp.Or(*addrOverride, cfg.Addr, "0.0.0.0:18080")
 
 	mux := http.NewServeMux()
 	for _, h := range cfg.Handlers {
-		h := h // capture
 		pattern := fmt.Sprintf("%s %s", strings.ToUpper(h.Method), h.Path)
 		mux.HandleFunc(pattern, makeHandler(h))
 	}
@@ -104,10 +103,7 @@ func makeHandler(h Handler) http.HandlerFunc {
 		if h.Response.ContentType != "" {
 			w.Header().Set("Content-Type", h.Response.ContentType)
 		}
-		status := h.Response.Status
-		if status == 0 {
-			status = http.StatusOK
-		}
+		status := cmp.Or(h.Response.Status, http.StatusOK)
 		w.WriteHeader(status)
 		if h.Response.Body != "" {
 			_, _ = fmt.Fprint(w, h.Response.Body)
@@ -117,11 +113,13 @@ func makeHandler(h Handler) http.HandlerFunc {
 }
 
 func logRequest(r *http.Request, body []byte) {
-	log.Printf("→ %s %s", r.Method, r.URL.Path)
+	var b bytes.Buffer
+	fmt.Fprintf(&b, "→ %s %s\n", r.Method, r.URL.Path)
 	for name, vals := range r.Header {
-		log.Printf("  %s: %s", name, strings.Join(vals, ", "))
+		fmt.Fprintf(&b, "  %s: %s\n", name, strings.Join(vals, ", "))
 	}
 	if len(body) > 0 {
-		log.Printf("  body: %s", body)
+		fmt.Fprintf(&b, "  body: %s\n", body)
 	}
+	log.Print(b.String())
 }

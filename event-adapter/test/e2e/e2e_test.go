@@ -33,24 +33,7 @@ func TestEventDispatchPublishesResponse(t *testing.T) {
 		t.Fatalf("jetstream: %v", err)
 	}
 
-	// Ensure the stream exists (nats-setup in compose creates it; this is a
-	// safety net for reruns or partial teardowns).
-	_, err = js.AddStream(&nats.StreamConfig{
-		Name: "workspace-events",
-		Subjects: []string{
-			"t.tenant-a.app.task.event.created",
-			"t.tenant-a.app.task.event.processed",
-			"dlq.tenant-a.task-service",
-		},
-	})
-	if err != nil {
-		t.Fatalf("ensure stream: %v", err)
-	}
-
-	// Purge leftover messages so each test run starts clean.
-	if err := js.PurgeStream("workspace-events"); err != nil {
-		t.Fatalf("purge stream: %v", err)
-	}
+	ensureEmptyStream(t, js)
 
 	sub, err := js.SubscribeSync("t.tenant-a.app.task.event.processed")
 	if err != nil {
@@ -58,12 +41,18 @@ func TestEventDispatchPublishesResponse(t *testing.T) {
 	}
 	defer func() { _ = sub.Unsubscribe() }()
 
-	// Publish the fixture CloudEvent. The id "evt-manual-1" must match the
-	// causation assertion below so both the test and the fixture file stay in sync.
+	// Read the fixture and extract its id so the causation assertion derives
+	// from the same source of truth rather than a duplicated string literal.
 	fixture, err := os.ReadFile("fixtures/task-created.json")
 	if err != nil {
 		t.Fatalf("read fixture: %v", err)
 	}
+	var input map[string]any
+	if err := json.Unmarshal(fixture, &input); err != nil {
+		t.Fatalf("parse fixture: %v", err)
+	}
+	inputID, _ := input["id"].(string)
+
 	if _, err := js.Publish("t.tenant-a.app.task.event.created", fixture); err != nil {
 		t.Fatalf("publish input event: %v", err)
 	}
@@ -80,7 +69,28 @@ func TestEventDispatchPublishesResponse(t *testing.T) {
 	if got := response["type"]; got != "com.workspace.task.created.processed" {
 		t.Errorf("response type = %v, want com.workspace.task.created.processed", got)
 	}
-	if got := response["causationid"]; got != "evt-manual-1" {
-		t.Errorf("causationid = %v, want evt-manual-1", got)
+	if got := response["causationid"]; got != inputID {
+		t.Errorf("causationid = %v, want %v (from fixture id)", got, inputID)
+	}
+}
+
+// ensureEmptyStream guarantees the workspace-events stream exists and is empty.
+// nats-setup in docker compose creates it on first run; this is a safety net
+// for reruns and partial teardowns.
+func ensureEmptyStream(t *testing.T, js nats.JetStreamContext) {
+	t.Helper()
+	_, err := js.AddStream(&nats.StreamConfig{
+		Name: "workspace-events",
+		Subjects: []string{
+			"t.tenant-a.app.task.event.created",
+			"t.tenant-a.app.task.event.processed",
+			"dlq.tenant-a.task-service",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ensure stream: %v", err)
+	}
+	if err := js.PurgeStream("workspace-events"); err != nil {
+		t.Fatalf("purge stream: %v", err)
 	}
 }
