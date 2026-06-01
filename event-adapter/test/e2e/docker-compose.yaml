@@ -26,6 +26,7 @@ services:
           --max-bytes=-1 \
           --max-age=0s \
           --replicas=1 \
+          --defaults \
           2>/dev/null && echo "stream created" || echo "stream already exists"
 
   mock-app:
@@ -42,6 +43,7 @@ services:
     build:
       context: ../..
       dockerfile: test/e2e/Dockerfile.event-adapter
+    network_mode: "service:mock-app"
     volumes:
       - ./routes.yaml:/config/routes.yaml:ro
     command: ["--config", "/config/routes.yaml"]

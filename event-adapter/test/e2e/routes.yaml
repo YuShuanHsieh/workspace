@@ -1,6 +1,6 @@
 app:
   id: task-service
-  httpBaseURL: http://mock-app:18080
+  httpBaseURL: http://127.0.0.1:18080
 nats:
   url: nats://nats:4222
   stream: workspace-events

@@ -5,6 +5,7 @@ package e2e
 import (
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -87,7 +88,7 @@ func ensureEmptyStream(t *testing.T, js nats.JetStreamContext) {
 			"dlq.tenant-a.task-service",
 		},
 	})
-	if err != nil {
+	if err != nil && !strings.Contains(err.Error(), "stream name already in use") {
 		t.Fatalf("ensure stream: %v", err)
 	}
 	if err := js.PurgeStream("workspace-events"); err != nil {
