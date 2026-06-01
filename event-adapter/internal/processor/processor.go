@@ -70,6 +70,9 @@ func (p *Processor) Process(ctx context.Context, subject string, ev *clevent.Eve
 
 	resp, buildErr := clevent.BuildResponse(ev, route, res.StatusCode, res.ContentType, res.Body)
 	if buildErr != nil {
+		if delivery < policy.MaxAttempts {
+			return msg.Nak(ctx, policy.Delay(delivery))
+		}
 		return p.toDLQ(ctx, route, ev, buildErr.Error(), res.StatusCode, delivery, msg)
 	}
 

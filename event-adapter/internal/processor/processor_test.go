@@ -24,26 +24,6 @@ func (f *fakeDispatcher) Dispatch(context.Context, config.RouteConfig, *clevent.
 	return f.result, f.err
 }
 
-type scriptedDispatcher struct {
-	results []dispatcher.Result
-	errs    []error
-	calls   int
-}
-
-func (s *scriptedDispatcher) Dispatch(context.Context, config.RouteConfig, *clevent.Event) (dispatcher.Result, error) {
-	i := s.calls
-	s.calls++
-	var res dispatcher.Result
-	var err error
-	if i < len(s.results) {
-		res = s.results[i]
-	}
-	if i < len(s.errs) {
-		err = s.errs[i]
-	}
-	return res, err
-}
-
 type fakePublisher struct {
 	responseErr error
 	dlqErr      error
@@ -177,5 +157,31 @@ func TestProcessorDoesNotAckWhenDLQPublishFails(t *testing.T) {
 	}
 	if h.acked != 0 {
 		t.Fatalf("must not ack when DLQ publish fails, got acked=%d", h.acked)
+	}
+}
+
+func TestProcessorNaksWhenResponsePublishFailsWithRetriesRemaining(t *testing.T) {
+	pub := &fakePublisher{responseErr: errors.New("nats down")}
+	h := &fakeHandle{deliveries: 1}
+	disp := &fakeDispatcher{result: dispatcher.Result{StatusCode: 200, ContentType: "application/json", Body: []byte(`{"ok":true}`)}}
+	p := New(disp, pub)
+	if err := p.Process(context.Background(), "input.subject", newTestEvent(t), testRoute(3), h); err != nil {
+		t.Fatalf("Process returned error: %v", err)
+	}
+	if h.naked != 1 || h.acked != 0 || pub.dlqs != 0 {
+		t.Fatalf("expected nak on response publish failure, got ack=%d nak=%d dlqs=%d", h.acked, h.naked, pub.dlqs)
+	}
+}
+
+func TestProcessorSendsToDLQWhenResponsePublishFailsAndExhausted(t *testing.T) {
+	pub := &fakePublisher{responseErr: errors.New("nats down")}
+	h := &fakeHandle{deliveries: 3}
+	disp := &fakeDispatcher{result: dispatcher.Result{StatusCode: 200, ContentType: "application/json", Body: []byte(`{"ok":true}`)}}
+	p := New(disp, pub)
+	if err := p.Process(context.Background(), "input.subject", newTestEvent(t), testRoute(3), h); err != nil {
+		t.Fatalf("Process returned error: %v", err)
+	}
+	if h.acked != 1 || h.naked != 0 || pub.dlqs != 1 {
+		t.Fatalf("expected dlq+ack when exhausted, got ack=%d nak=%d dlqs=%d", h.acked, h.naked, pub.dlqs)
 	}
 }
