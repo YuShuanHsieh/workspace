@@ -5,23 +5,28 @@ import (
 	"event-adapter/internal/config"
 )
 
+type matchKey struct {
+	subject string
+	typ     string
+	source  string
+}
+
 type Matcher struct {
-	routes []config.RouteConfig
+	index map[matchKey]config.RouteConfig
 }
 
 func New(routes []config.RouteConfig) *Matcher {
-	copied := append([]config.RouteConfig(nil), routes...)
-	return &Matcher{routes: copied}
+	index := make(map[matchKey]config.RouteConfig, len(routes))
+	for _, r := range routes {
+		index[matchKey{subject: r.Match.Subject, typ: r.Match.Type, source: r.Match.Source}] = r
+	}
+	return &Matcher{index: index}
 }
 
 func (m *Matcher) Match(subject string, ev *clevent.Event) (config.RouteConfig, bool) {
 	if ev == nil {
 		return config.RouteConfig{}, false
 	}
-	for _, r := range m.routes {
-		if r.Match.Subject == subject && r.Match.Type == ev.Type() && r.Match.Source == ev.Source() {
-			return r, true
-		}
-	}
-	return config.RouteConfig{}, false
+	r, ok := m.index[matchKey{subject: subject, typ: ev.Type(), source: ev.Source()}]
+	return r, ok
 }
