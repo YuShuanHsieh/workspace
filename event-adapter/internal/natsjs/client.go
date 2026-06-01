@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	ce "github.com/cloudevents/sdk-go/v2/event"
 	"github.com/nats-io/nats.go"
@@ -18,9 +19,10 @@ type Client struct {
 }
 
 type Message struct {
-	Subject string
-	Data    []byte
-	msg     *nats.Msg
+	Subject      string
+	Data         []byte
+	NumDelivered uint64
+	msg          *nats.Msg
 }
 
 func Connect(cfg config.NATSConfig) (*Client, error) {
@@ -70,10 +72,19 @@ func (c *Client) PublishDLQ(ctx context.Context, subject string, dlq processor.D
 	return nil
 }
 
-func (c *Client) PullSubscribe(subject string, durable string) (*nats.Subscription, error) {
-	sub, err := c.js.PullSubscribe(subject, durable)
+func (c *Client) SubscribeWildcard(cfg config.NATSConfig) (*nats.Subscription, error) {
+	sub, err := c.js.PullSubscribe(
+		cfg.FilterSubject,
+		cfg.DurableConsumer,
+		nats.BindStream(cfg.Stream),
+		nats.AckExplicit(),
+		nats.ManualAck(),
+		nats.AckWait(cfg.AckWait),
+		nats.MaxAckPending(cfg.MaxAckPending),
+		nats.MaxDeliver(cfg.MaxDeliver),
+	)
 	if err != nil {
-		return nil, fmt.Errorf("nats: pull subscribe: %w", err)
+		return nil, fmt.Errorf("nats: wildcard subscribe: %w", err)
 	}
 	return sub, nil
 }
@@ -85,18 +96,34 @@ func (m Message) Ack(ctx context.Context) error {
 	return m.msg.Ack(nats.Context(ctx))
 }
 
-func FetchOne(ctx context.Context, sub *nats.Subscription) (Message, error) {
+func (m Message) Nak(ctx context.Context, delay time.Duration) error {
+	if m.msg == nil {
+		return fmt.Errorf("nats: message is nil")
+	}
+	return m.msg.NakWithDelay(delay, nats.Context(ctx))
+}
+
+func (m Message) Deliveries() uint64 {
+	return m.NumDelivered
+}
+
+func FetchBatch(ctx context.Context, sub *nats.Subscription, batch int) ([]Message, error) {
 	if sub == nil {
-		return Message{}, fmt.Errorf("nats: subscription is nil")
+		return nil, fmt.Errorf("nats: subscription is nil")
 	}
-	msgs, err := sub.Fetch(1, nats.Context(ctx))
+	raw, err := sub.Fetch(batch, nats.Context(ctx))
 	if err != nil {
-		return Message{}, err
+		return nil, err
 	}
-	if len(msgs) == 0 {
-		return Message{}, fmt.Errorf("nats: no messages fetched")
+	out := make([]Message, 0, len(raw))
+	for _, m := range raw {
+		var delivered uint64
+		if md, mErr := m.Metadata(); mErr == nil {
+			delivered = md.NumDelivered
+		}
+		out = append(out, Message{Subject: m.Subject, Data: m.Data, NumDelivered: delivered, msg: m})
 	}
-	return Message{Subject: msgs[0].Subject, Data: msgs[0].Data, msg: msgs[0]}, nil
+	return out, nil
 }
 
 func BuildDLQPayload(dlq processor.DLQEvent) ([]byte, error) {

@@ -61,9 +61,16 @@ func TestPublishResponseRejectsNilEvent(t *testing.T) {
 	}
 }
 
-func TestFetchOneRejectsNilSubscription(t *testing.T) {
-	_, err := FetchOne(context.Background(), nil)
+func TestFetchBatchRejectsNilSubscription(t *testing.T) {
+	_, err := FetchBatch(context.Background(), nil, 10)
 	if err == nil || !strings.Contains(err.Error(), "subscription is nil") {
 		t.Fatalf("expected nil subscription error, got %v", err)
+	}
+}
+
+func TestMessageNakRejectsNilMessage(t *testing.T) {
+	err := Message{}.Nak(context.Background(), 0)
+	if err == nil || !strings.Contains(err.Error(), "message is nil") {
+		t.Fatalf("expected nil message error, got %v", err)
 	}
 }
