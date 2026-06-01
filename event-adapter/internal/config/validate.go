@@ -70,6 +70,15 @@ func Validate(cfg *Config) []error {
 	if cfg.NATS.DurableConsumer == "" {
 		errs = append(errs, ValidationError{Path: "nats.durableConsumer", Msg: "is required"})
 	}
+	if cfg.NATS.FilterSubject == "" {
+		errs = append(errs, ValidationError{Path: "nats.filterSubject", Msg: "is required"})
+	}
+	if cfg.NATS.WorkerPoolSize <= 0 {
+		errs = append(errs, ValidationError{Path: "nats.workerPoolSize", Msg: "must be positive"})
+	}
+	if cfg.NATS.FetchBatch <= 0 {
+		errs = append(errs, ValidationError{Path: "nats.fetchBatch", Msg: "must be positive"})
+	}
 	if cfg.NATS.AckWait <= 0 {
 		errs = append(errs, ValidationError{Path: "nats.ackWait", Msg: "must be positive"})
 	}
