@@ -29,6 +29,12 @@ type Acker interface {
 	Ack(context.Context) error
 }
 
+type MessageHandle interface {
+	Acker
+	Nak(context.Context, time.Duration) error
+	Deliveries() uint64
+}
+
 type Processor struct {
 	dispatcher Dispatcher
 	publisher  Publisher
@@ -47,48 +53,41 @@ func New(d Dispatcher, p Publisher) *Processor {
 	return &Processor{dispatcher: d, publisher: p}
 }
 
-func (p *Processor) Process(ctx context.Context, subject string, ev *clevent.Event, route config.RouteConfig, ack Acker) error {
+func (p *Processor) Process(ctx context.Context, subject string, ev *clevent.Event, route config.RouteConfig, msg MessageHandle) error {
 	policy := RetryPolicy{MaxAttempts: route.Retry.MaxAttempts, InitialBackoff: route.Retry.InitialBackoff, MaxBackoff: route.Retry.MaxBackoff}
-	var lastErr error
-	var lastStatus int
-	attempts := 0
-	for attempt := 1; attempt <= policy.MaxAttempts; attempt++ {
-		attempts = attempt
-		res, dispatchErr := p.dispatcher.Dispatch(ctx, route, ev)
-		if dispatchErr != nil {
-			lastErr = dispatchErr
-			lastStatus = 0
-			if attempt < policy.MaxAttempts && isNetworkError(dispatchErr) {
-				timer := time.NewTimer(policy.Delay(attempt))
-				select {
-				case <-ctx.Done():
-					timer.Stop()
-					return ctx.Err()
-				case <-timer.C:
-				}
-				continue
-			}
-			break
-		}
-		lastStatus = res.StatusCode
-		resp, buildErr := clevent.BuildResponse(ev, route, res.StatusCode, res.ContentType, res.Body)
-		if buildErr != nil {
-			lastErr = buildErr
-			break
-		}
-		if pubErr := p.publisher.PublishResponse(ctx, route.Response.Subject, resp); pubErr != nil {
-			lastErr = pubErr
-			break
-		}
-		return ack.Ack(ctx)
+	delivery := int(msg.Deliveries())
+	if delivery < 1 {
+		delivery = 1
 	}
-	if lastErr == nil {
-		lastErr = fmt.Errorf("dispatch failed")
+
+	res, dispatchErr := p.dispatcher.Dispatch(ctx, route, ev)
+	if dispatchErr != nil {
+		if isNetworkError(dispatchErr) && delivery < policy.MaxAttempts {
+			return msg.Nak(ctx, policy.Delay(delivery))
+		}
+		return p.toDLQ(ctx, route, ev, dispatchErr.Error(), 0, delivery, msg)
 	}
+
+	resp, buildErr := clevent.BuildResponse(ev, route, res.StatusCode, res.ContentType, res.Body)
+	if buildErr != nil {
+		return p.toDLQ(ctx, route, ev, buildErr.Error(), res.StatusCode, delivery, msg)
+	}
+
+	if pubErr := p.publisher.PublishResponse(ctx, route.Response.Subject, resp); pubErr != nil {
+		if delivery < policy.MaxAttempts {
+			return msg.Nak(ctx, policy.Delay(delivery))
+		}
+		return p.toDLQ(ctx, route, ev, pubErr.Error(), res.StatusCode, delivery, msg)
+	}
+
+	return msg.Ack(ctx)
+}
+
+func (p *Processor) toDLQ(ctx context.Context, route config.RouteConfig, ev *clevent.Event, reason string, status, attempts int, ack Acker) error {
 	dlq := DLQEvent{
 		OriginalEvent: ev,
-		FailureReason: lastErr.Error(),
-		HTTPStatus:    lastStatus,
+		FailureReason: reason,
+		HTTPStatus:    status,
 		AttemptCount:  attempts,
 		Timestamp:     time.Now().UTC(),
 	}
