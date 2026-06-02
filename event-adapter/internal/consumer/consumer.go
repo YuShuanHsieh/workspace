@@ -83,6 +83,10 @@ func (c *Consumer) Run(ctx context.Context) {
 	for ctx.Err() == nil {
 		msgs, err := natsjs.FetchBatch(ctx, c.sub, c.batch)
 		if err != nil {
+			if ctx.Err() == nil {
+				fmt.Fprintf(c.stderr, "fetch batch: %v\n", err)
+				time.Sleep(100 * time.Millisecond)
+			}
 			continue
 		}
 		for _, m := range msgs {

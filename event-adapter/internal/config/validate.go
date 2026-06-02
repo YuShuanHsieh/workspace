@@ -88,14 +88,30 @@ func Validate(cfg *Config) []error {
 	if cfg.NATS.MaxAckPending <= 0 {
 		errs = append(errs, ValidationError{Path: "nats.maxAckPending", Msg: "must be positive"})
 	}
+	if cfg.NATS.FetchBatch > 0 && cfg.NATS.WorkerPoolSize > 0 && cfg.NATS.FetchBatch > cfg.NATS.WorkerPoolSize {
+		errs = append(errs, ValidationError{Path: "nats.fetchBatch", Msg: "must not exceed nats.workerPoolSize"})
+	}
+	if cfg.NATS.WorkerPoolSize > 0 && cfg.NATS.MaxAckPending > 0 && cfg.NATS.WorkerPoolSize > cfg.NATS.MaxAckPending {
+		errs = append(errs, ValidationError{Path: "nats.workerPoolSize", Msg: "must not exceed nats.maxAckPending"})
+	}
 	if cfg.NATS.DefaultDLQSubject == "" {
 		errs = append(errs, ValidationError{Path: "nats.defaultDLQSubject", Msg: "is required"})
 	}
 	if len(cfg.Routes) == 0 {
 		errs = append(errs, ValidationError{Path: "routes", Msg: "must contain at least one route"})
 	}
+	seen := make(map[[3]string]int, len(cfg.Routes))
 	for i, r := range cfg.Routes {
 		errs = append(errs, validateRoute(fmt.Sprintf("routes[%d]", i), r)...)
+		key := [3]string{r.Match.Subject, r.Match.Type, r.Match.Source}
+		if j, ok := seen[key]; ok {
+			errs = append(errs, ValidationError{
+				Path: fmt.Sprintf("routes[%d].match", i),
+				Msg:  fmt.Sprintf("duplicate match tuple already defined at routes[%d]", j),
+			})
+		} else {
+			seen[key] = i
+		}
 	}
 	return errs
 }

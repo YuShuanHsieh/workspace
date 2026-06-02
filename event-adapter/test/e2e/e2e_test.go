@@ -104,9 +104,9 @@ func TestEventDispatchHandlesBurst(t *testing.T) {
 		}
 	}
 
-	received := 0
+	seen := make(map[string]struct{}, burst)
 	deadline := time.Now().Add(15 * time.Second)
-	for received < burst && time.Now().Before(deadline) {
+	for len(seen) < burst && time.Now().Before(deadline) {
 		msg, err := sub.NextMsg(2 * time.Second)
 		if err != nil {
 			continue
@@ -115,10 +115,14 @@ func TestEventDispatchHandlesBurst(t *testing.T) {
 		if jErr := json.Unmarshal(msg.Data, &got); jErr != nil {
 			t.Fatalf("response not json: %v", jErr)
 		}
-		received++
+		id, _ := got["causationid"].(string)
+		if id == "" {
+			t.Fatalf("missing causationid in response: %v", got)
+		}
+		seen[id] = struct{}{}
 	}
-	if received != burst {
-		t.Fatalf("expected %d responses, got %d", burst, received)
+	if len(seen) != burst {
+		t.Fatalf("expected %d unique responses, got %d", burst, len(seen))
 	}
 }
 

@@ -11,7 +11,7 @@ func validConfig() *Config {
 		App: AppConfig{ID: "task-service", HTTPBaseURL: "http://127.0.0.1:8080"},
 		NATS: NATSConfig{
 			URL: "nats://nats:4222", Stream: "workspace-events", DurableConsumer: "task-service-dispatcher",
-			FilterSubject: "t.tenant-a.app.task.event.created", WorkerPoolSize: 16, FetchBatch: 64,
+			FilterSubject: "t.tenant-a.app.task.event.created", WorkerPoolSize: 16, FetchBatch: 16,
 			AckWait: 30 * time.Second, MaxDeliver: 5, MaxAckPending: 1024, DefaultDLQSubject: "dlq.tenant-a.task-service",
 		},
 		Routes: []RouteConfig{{
@@ -91,5 +91,40 @@ func TestValidateRejectsNonPositiveFetchBatch(t *testing.T) {
 	errs := Validate(cfg)
 	if len(errs) == 0 || !strings.Contains(errs[0].Error(), "nats.fetchBatch") {
 		t.Fatalf("expected fetchBatch error, got %v", errs)
+	}
+}
+
+func TestValidateRejectsFetchBatchExceedingWorkerPoolSize(t *testing.T) {
+	cfg := validConfig()
+	cfg.NATS.FetchBatch = cfg.NATS.WorkerPoolSize + 1
+	errs := Validate(cfg)
+	if len(errs) == 0 || !strings.Contains(errs[0].Error(), "nats.fetchBatch") {
+		t.Fatalf("expected fetchBatch error, got %v", errs)
+	}
+}
+
+func TestValidateRejectsWorkerPoolSizeExceedingMaxAckPending(t *testing.T) {
+	cfg := validConfig()
+	cfg.NATS.WorkerPoolSize = cfg.NATS.MaxAckPending + 1
+	cfg.NATS.FetchBatch = cfg.NATS.WorkerPoolSize
+	errs := Validate(cfg)
+	if len(errs) == 0 || !strings.Contains(errs[0].Error(), "nats.workerPoolSize") {
+		t.Fatalf("expected workerPoolSize error, got %v", errs)
+	}
+}
+
+func TestValidateRejectsDuplicateMatchTuple(t *testing.T) {
+	cfg := validConfig()
+	cfg.Routes = append(cfg.Routes, cfg.Routes[0])
+	errs := Validate(cfg)
+	found := false
+	for _, e := range errs {
+		if strings.Contains(e.Error(), "duplicate match tuple") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected duplicate match tuple error, got %v", errs)
 	}
 }
