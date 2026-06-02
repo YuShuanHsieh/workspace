@@ -23,6 +23,9 @@ type NATSConfig struct {
 	URL               string        `yaml:"url"`
 	Stream            string        `yaml:"stream"`
 	DurableConsumer   string        `yaml:"durableConsumer"`
+	FilterSubject     string        `yaml:"filterSubject"`
+	WorkerPoolSize    int           `yaml:"workerPoolSize"`
+	FetchBatch        int           `yaml:"fetchBatch"`
 	AckWait           time.Duration `yaml:"ackWait"`
 	MaxDeliver        int           `yaml:"maxDeliver"`
 	MaxAckPending     int           `yaml:"maxAckPending"`

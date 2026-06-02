@@ -5,6 +5,7 @@ package e2e
 import (
 	"encoding/json"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -72,6 +73,56 @@ func TestEventDispatchPublishesResponse(t *testing.T) {
 	}
 	if got := response["causationid"]; got != inputID {
 		t.Errorf("causationid = %v, want %v (from fixture id)", got, inputID)
+	}
+}
+
+func TestEventDispatchHandlesBurst(t *testing.T) {
+	nc, err := nats.Connect("nats://127.0.0.1:4222")
+	if err != nil {
+		t.Fatalf("connect nats: %v", err)
+	}
+	defer nc.Close()
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Fatalf("jetstream: %v", err)
+	}
+	ensureEmptyStream(t, js)
+
+	sub, err := js.SubscribeSync("t.tenant-a.app.task.event.processed")
+	if err != nil {
+		t.Fatalf("subscribe responses: %v", err)
+	}
+	defer func() { _ = sub.Unsubscribe() }()
+
+	const burst = 25
+	for i := 0; i < burst; i++ {
+		payload := []byte(`{"specversion":"1.0","id":"burst-` + strconv.Itoa(i) +
+			`","source":"workspace/task","type":"com.workspace.task.created",` +
+			`"datacontenttype":"application/json","data":{"taskId":"t1"}}`)
+		if _, err := js.Publish("t.tenant-a.app.task.event.created", payload); err != nil {
+			t.Fatalf("publish %d: %v", i, err)
+		}
+	}
+
+	seen := make(map[string]struct{}, burst)
+	deadline := time.Now().Add(15 * time.Second)
+	for len(seen) < burst && time.Now().Before(deadline) {
+		msg, err := sub.NextMsg(2 * time.Second)
+		if err != nil {
+			continue
+		}
+		var got map[string]any
+		if jErr := json.Unmarshal(msg.Data, &got); jErr != nil {
+			t.Fatalf("response not json: %v", jErr)
+		}
+		id, _ := got["causationid"].(string)
+		if id == "" {
+			t.Fatalf("missing causationid in response: %v", got)
+		}
+		seen[id] = struct{}{}
+	}
+	if len(seen) != burst {
+		t.Fatalf("expected %d unique responses, got %d", burst, len(seen))
 	}
 }
 

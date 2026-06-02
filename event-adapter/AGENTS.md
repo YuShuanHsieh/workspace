@@ -56,12 +56,14 @@ routes:
 
 - NATS message is **ack'd only after** the response CloudEvent is published (or DLQ write confirmed).
 - Exhausted retries (`maxDeliver` reached) → publish to `dlq.subject` → ack original.
-- App HTTP non-2xx → retry with exponential backoff up to `maxAttempts`.
+- App HTTP non-2xx → wrap status + body as response CloudEvent, publish, ack. No retry.
+- Network/transport error → retry with exponential backoff up to `maxAttempts`, then DLQ.
 
 ## Testing
 
 ```sh
 go test ./...    # unit tests (no NATS needed)
+go test $(go list ./... | grep -v 'cmd/mock-app\|examples') -cover    # coverage (excludes non-production packages)
 ```
 
 E2e (requires Docker / NATS):

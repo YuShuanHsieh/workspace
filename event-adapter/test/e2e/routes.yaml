@@ -5,6 +5,9 @@ nats:
   url: nats://nats:4222
   stream: workspace-events
   durableConsumer: task-service-dispatcher
+  filterSubject: t.tenant-a.app.task.event.created
+  workerPoolSize: 16
+  fetchBatch: 64
   ackWait: 30s
   maxDeliver: 5
   maxAckPending: 1024
