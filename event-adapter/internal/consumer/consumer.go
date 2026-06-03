@@ -2,6 +2,7 @@ package consumer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -83,10 +84,11 @@ func (c *Consumer) Run(ctx context.Context) {
 	for ctx.Err() == nil {
 		msgs, err := natsjs.FetchBatch(ctx, c.sub, c.batch)
 		if err != nil {
-			if ctx.Err() == nil {
-				fmt.Fprintf(c.stderr, "fetch batch: %v\n", err)
-				time.Sleep(100 * time.Millisecond)
+			if ctx.Err() != nil || isEmptyPoll(err) {
+				continue
 			}
+			fmt.Fprintf(c.stderr, "fetch batch: %v\n", err)
+			time.Sleep(100 * time.Millisecond)
 			continue
 		}
 		for _, m := range msgs {
@@ -99,6 +101,13 @@ func (c *Consumer) Run(ctx context.Context) {
 
 	close(jobs)
 	wg.Wait()
+}
+
+// isEmptyPoll reports whether err signals a pull-fetch that returned no messages
+// before its deadline — normal behavior when the JetStream queue is idle, not a
+// real failure. NATS surfaces this as context.DeadlineExceeded or nats.ErrTimeout.
+func isEmptyPoll(err error) bool {
+	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, nats.ErrTimeout)
 }
 
 func (c *Consumer) work(ctx context.Context, jobs <-chan job, wg *sync.WaitGroup) {
