@@ -7,7 +7,7 @@ nats:
   durableConsumer: task-service-dispatcher
   filterSubject: t.tenant-a.app.task.event.created
   workerPoolSize: 16
-  fetchBatch: 64
+  fetchBatch: 16
   ackWait: 30s
   maxDeliver: 5
   maxAckPending: 1024
