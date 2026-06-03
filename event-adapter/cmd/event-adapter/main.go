@@ -65,7 +65,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 	mp := metric.NewMeterProvider()
 	m := metrics.New(mp.Meter("event-adapter"))
-	matcher := router.New(cfg.Routes)
+	matcher, err := router.New(cfg.Routes)
+	if err != nil {
+		fmt.Fprintf(stderr, "build router: %v\n", err)
+		return 1
+	}
 	httpDispatcher := dispatcher.New(cfg.App.HTTPBaseURL, nil)
 	proc := processor.New(httpDispatcher, js)
 

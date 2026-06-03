@@ -164,7 +164,7 @@ The final implementation may adjust field names, but the PRD requires these conc
 - Application identity and local HTTP base URL.
 - NATS JetStream connection, stream, durable consumer, acknowledgement settings, and default DLQ subject for pre-route failures.
 - One or more route entries.
-- Match rules using the CloudEvent `type`.
+- Match rules using the CloudEvent `type`. `match.subject` and `match.source` are optional and do not affect matching; they may be omitted unless kept for documentation.
 - Dispatch method, path, timeout, optional static headers, and an allowlist of publisher-supplied HTTP headers that may be forwarded to the app backend.
 - Response CloudEvent type, source, and publish subject.
 - Retry policy.

@@ -1,6 +1,8 @@
 package router
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	ce "github.com/cloudevents/sdk-go/v2/event"
@@ -14,7 +16,10 @@ func TestMatchByType(t *testing.T) {
 		Name:  "task-created",
 		Match: config.MatchConfig{Type: "com.workspace.task.created"},
 	}
-	m := New([]config.RouteConfig{route})
+	m, err := New([]config.RouteConfig{route})
+	if err != nil {
+		t.Fatal(err)
+	}
 	ev := ce.New()
 	ev.SetID("evt-1")
 	ev.SetSource("workspace/task")
@@ -33,7 +38,10 @@ func TestMatchIgnoresSource(t *testing.T) {
 		Name:  "task-created",
 		Match: config.MatchConfig{Type: "com.workspace.task.created", Source: "workspace/task"},
 	}
-	m := New([]config.RouteConfig{route})
+	m, err := New([]config.RouteConfig{route})
+	if err != nil {
+		t.Fatal(err)
+	}
 	ev := ce.New()
 	ev.SetID("evt-1")
 	ev.SetSource("some-other-source")
@@ -52,7 +60,10 @@ func TestMatchIgnoresSubject(t *testing.T) {
 		Name:  "task-created",
 		Match: config.MatchConfig{Type: "com.workspace.task.created", Subject: "t.tenant-a.app.task.event.created"},
 	}
-	m := New([]config.RouteConfig{route})
+	m, err := New([]config.RouteConfig{route})
+	if err != nil {
+		t.Fatal(err)
+	}
 	ev := ce.New()
 	ev.SetID("evt-1")
 	ev.SetSource("workspace/task")
@@ -69,20 +80,23 @@ func TestMatchIgnoresSubject(t *testing.T) {
 func TestMatchIndexedAcrossManyRoutes(t *testing.T) {
 	routes := make([]config.RouteConfig, 0, 100)
 	for i := 0; i < 100; i++ {
-		name := "route-" + string(rune('a'+i%26))
+		name := fmt.Sprintf("route-%d", i)
 		routes = append(routes, config.RouteConfig{
 			Name:  name,
 			Match: config.MatchConfig{Type: "type." + name},
 		})
 	}
-	m := New(routes)
+	m, err := New(routes)
+	if err != nil {
+		t.Fatal(err)
+	}
 	ev := ce.New()
 	ev.SetID("evt-1")
-	ev.SetSource("src/route-z")
-	ev.SetType("type.route-z")
+	ev.SetSource("src/route-77")
+	ev.SetType("type.route-77")
 	got, ok := m.Match(&clevent.Event{Event: &ev})
-	if !ok || got.Name != "route-z" {
-		t.Fatalf("expected route-z, got ok=%v name=%q", ok, got.Name)
+	if !ok || got.Name != "route-77" {
+		t.Fatalf("expected route-77, got ok=%v name=%q", ok, got.Name)
 	}
 }
 
@@ -91,12 +105,29 @@ func TestMatchIndexedRejectsWrongType(t *testing.T) {
 		Name:  "task-created",
 		Match: config.MatchConfig{Type: "t"},
 	}
-	m := New([]config.RouteConfig{route})
+	m, err := New([]config.RouteConfig{route})
+	if err != nil {
+		t.Fatal(err)
+	}
 	ev := ce.New()
 	ev.SetID("evt-1")
 	ev.SetSource("src")
 	ev.SetType("WRONG")
 	if _, ok := m.Match(&clevent.Event{Event: &ev}); ok {
 		t.Fatal("expected no match for wrong type")
+	}
+}
+
+func TestNewRejectsDuplicateType(t *testing.T) {
+	routes := []config.RouteConfig{
+		{Name: "route-a", Match: config.MatchConfig{Type: "com.workspace.task.created"}},
+		{Name: "route-b", Match: config.MatchConfig{Type: "com.workspace.task.created"}},
+	}
+	_, err := New(routes)
+	if err == nil {
+		t.Fatal("expected error for duplicate match type")
+	}
+	if !strings.Contains(err.Error(), "com.workspace.task.created") {
+		t.Fatalf("expected error to name the duplicate type, got %v", err)
 	}
 }
