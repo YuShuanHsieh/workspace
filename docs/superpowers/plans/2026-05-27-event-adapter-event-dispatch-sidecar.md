@@ -18,7 +18,7 @@
 ## Scope Decisions
 
 - Phase 1 uses NATS JetStream durable consumers only. Queue subscriptions are not implemented.
-- Route matching uses exact subject, exact CloudEvent `type`, and exact CloudEvent `source`. NATS wildcards stay out of Phase 1 implementation until the PRD open question is resolved.
+- Route matching uses the exact CloudEvent `type` only. Subject scoping is handled by the NATS consumer filter subject, and `source` is not used for matching.
 - Response event IDs are deterministic by default: `sha256(incomingID + "\n" + routeName + "\n" + responseType + "\n" + responseSubject)`, encoded as lowercase hex with prefix `evt_`.
 - Publisher-supplied backend HTTP headers are carried in the CloudEvent `dispatchheaders` extension and forwarded only when the matched route lists the header in `dispatch.forwardHeaders`.
 - Phase 1 supports JSON CloudEvent `data` payloads. `data_base64` is rejected unless a future route field enables binary payloads.

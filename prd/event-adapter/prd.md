@@ -94,7 +94,7 @@ The sidecar runs in the same Kubernetes pod as the target application server.
 
 1. **NATS JetStream Consumer:** Connects to NATS with platform-provided credentials and consumes configured subjects through a JetStream durable consumer.
 2. **CloudEvent Validator:** Verifies the event is valid enough for routing and dispatch. At minimum, the sidecar must require `id`, `source`, `specversion`, `type`, and payload presence when the route expects a body.
-3. **Route Matcher:** Maps the NATS subject and CloudEvent attributes, such as `type` and `source`, to a configured HTTP route.
+3. **Route Matcher:** Maps the CloudEvent `type` to a configured HTTP route.
 4. **HTTP Dispatcher:** Sends the event payload to the configured local HTTP server path with the configured method, timeout, and headers.
 5. **Response Event Builder:** Wraps the HTTP response body as the `data` field of a new CloudEvent with configured response metadata.
 6. **NATS Publisher:** Publishes the response CloudEvent to the configured NATS subject and confirms durable publication before acknowledging the original event.
@@ -106,7 +106,7 @@ The sidecar runs in the same Kubernetes pod as the target application server.
 2. The sidecar connects to NATS JetStream and binds to a configured durable consumer.
 3. JetStream delivers a CloudEvent to the sidecar and keeps it unacknowledged while processing is in progress.
 4. The sidecar validates the CloudEvent envelope.
-5. The sidecar matches the event against route configuration using subject, CloudEvent `type`, and CloudEvent `source`.
+5. The sidecar matches the event against route configuration using the CloudEvent `type`.
 6. The sidecar dispatches the request to the configured local HTTP method and path.
 7. The app processes the event and returns an HTTP response.
 8. On any HTTP response (success or error), the sidecar wraps the response body as a new CloudEvent and stamps the HTTP status code into the `httpstatus` extension.
@@ -164,7 +164,7 @@ The final implementation may adjust field names, but the PRD requires these conc
 - Application identity and local HTTP base URL.
 - NATS JetStream connection, stream, durable consumer, acknowledgement settings, and default DLQ subject for pre-route failures.
 - One or more route entries.
-- Match rules using NATS subject and CloudEvent attributes.
+- Match rules using the CloudEvent `type`.
 - Dispatch method, path, timeout, optional static headers, and an allowlist of publisher-supplied HTTP headers that may be forwarded to the app backend.
 - Response CloudEvent type, source, and publish subject.
 - Retry policy.
@@ -361,6 +361,6 @@ These targets should be validated with load tests before production rollout.
 
 ## 16. Open Questions
 
-1. Should route matching require exact subject matches only, or support NATS wildcards?
+1. Resolved: route matching is by CloudEvent `type` only. Subject scoping is handled by the NATS consumer filter subject, so route matching no longer uses `subject` or `source`.
 2. What is the default `ackWait`, `maxDeliver`, and `maxAckPending` policy for pilot applications?
 3. Should Phase 1 allow non-deterministic response event IDs only when a durable sidecar response outbox is enabled?

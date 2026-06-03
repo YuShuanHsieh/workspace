@@ -38,9 +38,9 @@ Your app only handles the local HTTP request. Everything before and after that b
 
 Identify the CloudEvent types your app should consume. For each event, record:
 
-- Incoming NATS subject.
-- CloudEvent `type`.
-- CloudEvent `source`.
+- Incoming NATS subject (scopes the consumer filter subject).
+- CloudEvent `type` (the route match key).
+- CloudEvent `source` (optional; not used for matching).
 - Local HTTP method and path.
 - Response CloudEvent `type`.
 - Response publish subject.
@@ -56,7 +56,7 @@ Response type:    com.workspace.task.created.processed
 Response subject: t.tenant-a.app.task.event.processed
 ```
 
-Phase 1 route matching is exact. The incoming NATS subject, CloudEvent `type`, and CloudEvent `source` must all match one configured route. NATS wildcards are not supported in this implementation.
+Phase 1 route matching is by CloudEvent `type`. The `type` must match exactly one configured route. The NATS filter subject already scopes which messages reach the sidecar, so `subject` and `source` are not used for matching.
 
 ### Step 2: Add an HTTP Handler
 
@@ -195,7 +195,7 @@ Important fields:
 
 - `app.httpBaseURL` must use `http` and must point to `127.0.0.1`, `localhost`, or another loopback IP. External hosts fail validation.
 - `nats.stream` and `nats.durableConsumer` configure JetStream durable consumption. Queue subscriptions are not part of Phase 1.
-- `match` must identify the CloudEvents this route accepts with exact `subject`, `type`, and `source` values.
+- `match` must set `type` to identify the CloudEvents this route accepts. `subject` and `source` are optional and not used for matching.
 - `dispatch.method` must be `POST`, `PUT`, or `PATCH`.
 - `dispatch.path` must start with `/` and match an endpoint your app exposes.
 - `dispatch.timeout` should be shorter than the JetStream acknowledgement window.
@@ -254,7 +254,7 @@ Before asking the platform team to enable the route in a shared environment, ver
 - Replaying the same `ce-id` does not duplicate side effects.
 - The response body is valid JSON for the expected response event.
 - The route path and method match the app endpoint.
-- The route uses exact incoming subject, type, and source values.
+- The route uses the CloudEvent `type` to match.
 - The app base URL uses `http://127.0.0.1`, `http://localhost`, or another loopback IP.
 - Timeout settings are realistic for the handler.
 - Logs include event ID, event type, and correlation ID when present.
@@ -296,7 +296,7 @@ The sidecar exposes delivery metrics, retry metrics, DLQ metrics, and publish me
 - Returning `200 OK` before the business operation is durable.
 - Using event payload fields instead of `ce-id` or `Idempotency-Key` for deduplication.
 - Treating duplicate delivery as an error.
-- Expecting wildcard subject matches in Phase 1.
+- Assuming `subject` or `source` affect route matching — only the CloudEvent `type` is matched.
 - Configuring `app.httpBaseURL` to a Kubernetes service name or external host instead of loopback.
 - Sending CloudEvents with `data_base64`.
 - Forgetting to update route config when renaming an HTTP path.
@@ -311,8 +311,8 @@ Use this checklist when submitting a new route:
 Service name:
 Owner:
 Incoming NATS subject:
-Incoming CloudEvent type:
-Incoming CloudEvent source:
+Incoming CloudEvent type (route match key):
+Incoming CloudEvent source (optional):
 HTTP method and path:
 Expected request payload schema:
 Response CloudEvent type:

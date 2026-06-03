@@ -21,7 +21,7 @@ type Processor interface {
 }
 
 type Matcher interface {
-	Match(subject string, ev *clevent.Event) (config.RouteConfig, bool)
+	Match(ev *clevent.Event) (config.RouteConfig, bool)
 }
 
 type DLQPublisher interface {
@@ -124,7 +124,7 @@ func (c *Consumer) handle(ctx context.Context, j job) {
 		c.toDefaultDLQ(ctx, nil, err.Error(), j.subject, j.handle)
 		return
 	}
-	route, ok := c.matcher.Match(j.subject, ev)
+	route, ok := c.matcher.Match(ev)
 	if !ok {
 		c.metrics.RouteMatchFailure(ctx)
 		c.toDefaultDLQ(ctx, ev, "no matching route", j.subject, j.handle)

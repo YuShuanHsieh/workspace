@@ -9,17 +9,17 @@ import (
 	"event-adapter/internal/config"
 )
 
-func TestMatchExactSubjectTypeSource(t *testing.T) {
+func TestMatchByType(t *testing.T) {
 	route := config.RouteConfig{
 		Name:  "task-created",
-		Match: config.MatchConfig{Subject: "t.tenant-a.app.task.event.created", Type: "com.workspace.task.created", Source: "workspace/task"},
+		Match: config.MatchConfig{Type: "com.workspace.task.created"},
 	}
 	m := New([]config.RouteConfig{route})
 	ev := ce.New()
 	ev.SetID("evt-1")
 	ev.SetSource("workspace/task")
 	ev.SetType("com.workspace.task.created")
-	got, ok := m.Match("t.tenant-a.app.task.event.created", &clevent.Event{Event: &ev})
+	got, ok := m.Match(&clevent.Event{Event: &ev})
 	if !ok {
 		t.Fatal("expected match")
 	}
@@ -28,19 +28,41 @@ func TestMatchExactSubjectTypeSource(t *testing.T) {
 	}
 }
 
-func TestMatchRejectsWrongSource(t *testing.T) {
+func TestMatchIgnoresSource(t *testing.T) {
 	route := config.RouteConfig{
 		Name:  "task-created",
-		Match: config.MatchConfig{Subject: "t.tenant-a.app.task.event.created", Type: "com.workspace.task.created", Source: "workspace/task"},
+		Match: config.MatchConfig{Type: "com.workspace.task.created", Source: "workspace/task"},
 	}
 	m := New([]config.RouteConfig{route})
 	ev := ce.New()
 	ev.SetID("evt-1")
-	ev.SetSource("other")
+	ev.SetSource("some-other-source")
 	ev.SetType("com.workspace.task.created")
-	_, ok := m.Match("t.tenant-a.app.task.event.created", &clevent.Event{Event: &ev})
-	if ok {
-		t.Fatal("expected no match")
+	got, ok := m.Match(&clevent.Event{Event: &ev})
+	if !ok {
+		t.Fatal("expected match: source must be ignored")
+	}
+	if got.Name != "task-created" {
+		t.Fatalf("unexpected route: %s", got.Name)
+	}
+}
+
+func TestMatchIgnoresSubject(t *testing.T) {
+	route := config.RouteConfig{
+		Name:  "task-created",
+		Match: config.MatchConfig{Type: "com.workspace.task.created", Subject: "t.tenant-a.app.task.event.created"},
+	}
+	m := New([]config.RouteConfig{route})
+	ev := ce.New()
+	ev.SetID("evt-1")
+	ev.SetSource("workspace/task")
+	ev.SetType("com.workspace.task.created")
+	got, ok := m.Match(&clevent.Event{Event: &ev})
+	if !ok {
+		t.Fatal("expected match: subject must be ignored")
+	}
+	if got.Name != "task-created" {
+		t.Fatalf("unexpected route: %s", got.Name)
 	}
 }
 
@@ -49,12 +71,8 @@ func TestMatchIndexedAcrossManyRoutes(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		name := "route-" + string(rune('a'+i%26))
 		routes = append(routes, config.RouteConfig{
-			Name: name,
-			Match: config.MatchConfig{
-				Subject: "t.app." + name + ".created",
-				Type:    "type." + name,
-				Source:  "src/" + name,
-			},
+			Name:  name,
+			Match: config.MatchConfig{Type: "type." + name},
 		})
 	}
 	m := New(routes)
@@ -62,7 +80,7 @@ func TestMatchIndexedAcrossManyRoutes(t *testing.T) {
 	ev.SetID("evt-1")
 	ev.SetSource("src/route-z")
 	ev.SetType("type.route-z")
-	got, ok := m.Match("t.app.route-z.created", &clevent.Event{Event: &ev})
+	got, ok := m.Match(&clevent.Event{Event: &ev})
 	if !ok || got.Name != "route-z" {
 		t.Fatalf("expected route-z, got ok=%v name=%q", ok, got.Name)
 	}
@@ -71,14 +89,14 @@ func TestMatchIndexedAcrossManyRoutes(t *testing.T) {
 func TestMatchIndexedRejectsWrongType(t *testing.T) {
 	route := config.RouteConfig{
 		Name:  "task-created",
-		Match: config.MatchConfig{Subject: "s", Type: "t", Source: "src"},
+		Match: config.MatchConfig{Type: "t"},
 	}
 	m := New([]config.RouteConfig{route})
 	ev := ce.New()
 	ev.SetID("evt-1")
 	ev.SetSource("src")
 	ev.SetType("WRONG")
-	if _, ok := m.Match("s", &clevent.Event{Event: &ev}); ok {
+	if _, ok := m.Match(&clevent.Event{Event: &ev}); ok {
 		t.Fatal("expected no match for wrong type")
 	}
 }

@@ -32,7 +32,7 @@ type fakeMatcher struct {
 	ok    bool
 }
 
-func (f *fakeMatcher) Match(string, *clevent.Event) (config.RouteConfig, bool) {
+func (f *fakeMatcher) Match(*clevent.Event) (config.RouteConfig, bool) {
 	return f.route, f.ok
 }
 
