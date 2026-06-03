@@ -2,12 +2,15 @@ package consumer
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	ce "github.com/cloudevents/sdk-go/v2/event"
+	"github.com/nats-io/nats.go"
 
 	clevent "event-adapter/internal/cloudevent"
 	"event-adapter/internal/config"
@@ -84,6 +87,28 @@ func validEventBytes(t *testing.T) []byte {
 
 func testConsumer(proc Processor, matcher Matcher, dlq DLQPublisher) *Consumer {
 	return New(nil, proc, matcher, dlq, noopMetrics{}, config.Config{}, 4, 4, nil)
+}
+
+func TestIsEmptyPoll(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"context deadline exceeded", context.DeadlineExceeded, true},
+		{"nats timeout", nats.ErrTimeout, true},
+		{"wrapped deadline exceeded", fmt.Errorf("fetch batch: %w", context.DeadlineExceeded), true},
+		{"wrapped nats timeout", fmt.Errorf("fetch batch: %w", nats.ErrTimeout), true},
+		{"real error", errors.New("connection refused"), false},
+		{"nil", nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isEmptyPoll(tc.err); got != tc.want {
+				t.Fatalf("isEmptyPoll(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
 }
 
 func TestHandleParseErrorGoesToDefaultDLQAndAcks(t *testing.T) {
