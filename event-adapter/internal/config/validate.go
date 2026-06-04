@@ -48,6 +48,7 @@ var reservedHeaders = map[string]bool{
 	"trailer":             true,
 	"transfer-encoding":   true,
 	"upgrade":             true,
+	"cookie":              true,
 }
 
 func Validate(cfg *Config) []error {

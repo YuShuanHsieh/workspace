@@ -128,3 +128,12 @@ func TestValidateRejectsDuplicateMatchTuple(t *testing.T) {
 		t.Fatalf("expected duplicate match tuple error, got %v", errs)
 	}
 }
+
+func TestCookieIsReservedHeader(t *testing.T) {
+	if !IsReservedHeader("Cookie") {
+		t.Fatal("expected Cookie to be a reserved header")
+	}
+	if !IsReservedHeader("cookie") {
+		t.Fatal("expected reserved-header check to be case-insensitive for cookie")
+	}
+}
