@@ -24,7 +24,7 @@ type Config struct {
 	Handlers []Handler `yaml:"handlers"`
 }
 
-// Handler declares a single HTTP endpoint, its required headers, and the fixed response.
+// Handler declares a single HTTP endpoint, its required headers and cookies, and the fixed response.
 type Handler struct {
 	Method         string          `yaml:"method"`
 	Path           string          `yaml:"path"`
