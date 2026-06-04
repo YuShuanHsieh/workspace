@@ -201,6 +201,7 @@ Important fields:
 - `dispatch.timeout` should be shorter than the JetStream acknowledgement window.
 - `dispatch.headers` defines static headers the sidecar adds to app requests. These cannot override reserved CloudEvent, authorization, idempotency, trace, or hop-by-hop headers.
 - `dispatch.forwardHeaders` is an optional allowlist restricting which publisher-supplied `dispatchheaders` are forwarded. By default (field omitted or empty), the sidecar forwards every header in `dispatchheaders` except reserved names (CloudEvent metadata, `Idempotency-Key`, `Authorization`, trace context (`traceparent`), hop-by-hop). Set this list only when a route needs to lock forwarding down to a specific set of headers.
+- `dispatchcookies` is an optional top-level CloudEvent field (a `name → value` object) for forwarding HTTP cookies to your app, e.g. session or CSRF tokens. The sidecar attaches each entry as a request cookie via `http.AddCookie`. Cookies are forwarded as-is with no per-route allowlist; cookie attributes (path, domain, secure, httponly) are not supported. The `Cookie` header is reserved, so cookies must be sent through `dispatchcookies`, not `dispatchheaders`.
 - `response.type` and `response.subject` define what the sidecar publishes after success.
 - `response.dataschema` is optional and sets the response CloudEvent `dataschema`.
 - `retry` controls bounded retry before DLQ.

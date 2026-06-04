@@ -186,6 +186,7 @@ Required behavior:
 - By default, the sidecar forwards every header in `dispatchheaders` to the backend, except names on the reserved-header set (CloudEvent metadata, `Idempotency-Key`, `Authorization`, trace context (`traceparent`), hop-by-hop headers). Reserved names are dropped at runtime regardless of configuration.
 - A route may set `dispatch.forwardHeaders` as an opt-in allowlist to restrict which `dispatchheaders` are forwarded for that route. When the list is set, only listed names are forwarded; when it is empty or omitted, the default-forward behavior applies.
 - The sidecar must treat `dispatchheaders` as sidecar control metadata and must not forward it to the backend as a `ce-dispatchheaders` header.
+- Publishers may also supply a `dispatchcookies` object (`name → value`) to forward HTTP cookies (e.g. session tokens) onto the outbound request. Cookies are forwarded as-is; the `Cookie` header is reserved so `dispatchcookies` is the only path.
 - Publisher-supplied headers must not override CloudEvent, trace context, authorization, idempotency, hop-by-hop, or route-configured static headers.
 - The sidecar must support JSON `data` payloads in Phase 1. Binary payloads and `data_base64` are out of scope unless explicitly enabled by route configuration.
 - The application should return a `2xx` status code for successful processing.
