@@ -146,6 +146,38 @@ func TestDispatchRejectsNilEvent(t *testing.T) {
 	}
 }
 
+func TestDispatchForwardsPublisherCookies(t *testing.T) {
+	var gotSession, gotCSRF string
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if c, err := r.Cookie("session"); err == nil {
+			gotSession = c.Value
+		}
+		if c, err := r.Cookie("csrf-token"); err == nil {
+			gotCSRF = c.Value
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(bytes.NewBufferString(`{"ok":true}`)),
+		}, nil
+	})}
+
+	ev, err := clevent.Parse([]byte(`{"specversion":"1.0","id":"evt-ck","source":"workspace/task","type":"com.workspace.task.created","datacontenttype":"application/json","dispatchcookies":{"session":"abc123","csrf-token":"xyz789"},"data":{"taskId":"t1"}}`))
+	if err != nil {
+		t.Fatalf("parse event: %v", err)
+	}
+
+	d := New("http://127.0.0.1:8080", client)
+	if _, err := d.Dispatch(context.Background(), config.RouteConfig{
+		Dispatch: config.DispatchConfig{Method: "POST", Path: "/", Timeout: time.Second},
+	}, ev); err != nil {
+		t.Fatalf("Dispatch returned error: %v", err)
+	}
+	if gotSession != "abc123" || gotCSRF != "xyz789" {
+		t.Fatalf("cookies not forwarded: session=%q csrf=%q", gotSession, gotCSRF)
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
