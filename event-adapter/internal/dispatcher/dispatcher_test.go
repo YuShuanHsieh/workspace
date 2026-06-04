@@ -182,6 +182,33 @@ func TestDispatchForwardsPublisherCookies(t *testing.T) {
 	}
 }
 
+func TestDispatchAddsNoCookieHeaderWhenDispatchCookiesAbsent(t *testing.T) {
+	var gotCookies []*http.Cookie
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		gotCookies = r.Cookies()
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(bytes.NewBufferString(`{"ok":true}`)),
+		}, nil
+	})}
+
+	ev, err := clevent.Parse([]byte(`{"specversion":"1.0","id":"evt-nock","source":"workspace/task","type":"com.workspace.task.created","datacontenttype":"application/json","data":{"taskId":"t1"}}`))
+	if err != nil {
+		t.Fatalf("parse event: %v", err)
+	}
+
+	d := New("http://127.0.0.1:8080", client)
+	if _, err := d.Dispatch(context.Background(), config.RouteConfig{
+		Dispatch: config.DispatchConfig{Method: "POST", Path: "/", Timeout: time.Second},
+	}, ev); err != nil {
+		t.Fatalf("Dispatch returned error: %v", err)
+	}
+	if len(gotCookies) != 0 {
+		t.Fatalf("expected no cookies on request, got %d: %+v", len(gotCookies), gotCookies)
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
