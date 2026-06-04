@@ -29,6 +29,7 @@ type Handler struct {
 	Method         string          `yaml:"method"`
 	Path           string          `yaml:"path"`
 	RequireHeaders []string        `yaml:"requireHeaders"`
+	RequireCookies []string        `yaml:"requireCookies"`
 	Response       HandlerResponse `yaml:"response"`
 }
 
@@ -94,6 +95,15 @@ func makeHandler(h Handler) http.HandlerFunc {
 		for _, name := range h.RequireHeaders {
 			if r.Header.Get(name) == "" {
 				msg := fmt.Sprintf("missing required header: %s", name)
+				log.Printf("  ✗ %s", msg)
+				http.Error(w, msg, http.StatusBadRequest)
+				return
+			}
+		}
+
+		for _, name := range h.RequireCookies {
+			if _, err := r.Cookie(name); err != nil {
+				msg := fmt.Sprintf("missing required cookie: %s", name)
 				log.Printf("  ✗ %s", msg)
 				http.Error(w, msg, http.StatusBadRequest)
 				return
