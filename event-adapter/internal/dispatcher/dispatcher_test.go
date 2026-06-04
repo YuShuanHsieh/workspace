@@ -147,7 +147,7 @@ func TestDispatchRejectsNilEvent(t *testing.T) {
 }
 
 func TestDispatchForwardsPublisherCookies(t *testing.T) {
-	var gotSession, gotCSRF string
+	var gotSession, gotCSRF, gotLeak string
 	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		if c, err := r.Cookie("session"); err == nil {
 			gotSession = c.Value
@@ -155,6 +155,7 @@ func TestDispatchForwardsPublisherCookies(t *testing.T) {
 		if c, err := r.Cookie("csrf-token"); err == nil {
 			gotCSRF = c.Value
 		}
+		gotLeak = r.Header.Get("ce-dispatchcookies")
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Header:     http.Header{"Content-Type": []string{"application/json"}},
@@ -175,6 +176,9 @@ func TestDispatchForwardsPublisherCookies(t *testing.T) {
 	}
 	if gotSession != "abc123" || gotCSRF != "xyz789" {
 		t.Fatalf("cookies not forwarded: session=%q csrf=%q", gotSession, gotCSRF)
+	}
+	if gotLeak != "" {
+		t.Fatalf("dispatchcookies leaked as ce-dispatchcookies header: %q", gotLeak)
 	}
 }
 
