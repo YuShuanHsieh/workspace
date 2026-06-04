@@ -496,7 +496,7 @@ Publishers may also supply a `dispatchcookies` object (`name → value`) to forw
 
 In `event-adapter/examples/onboarding/README.md`, find where the example event JSON / `dispatchheaders` is shown. Add a short note and example:
 
-```markdown
+````markdown
 To forward cookies (e.g. a session token), add a `dispatchcookies` object to the event:
 
 ```json
@@ -507,7 +507,7 @@ To forward cookies (e.g. a session token), add a `dispatchcookies` object to the
 ```
 
 The sidecar attaches each entry as a `Cookie` on the request to your app.
-```
+````
 
 - [ ] **Step 4: Commit**
 

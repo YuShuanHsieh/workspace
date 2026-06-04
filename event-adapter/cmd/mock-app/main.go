@@ -126,10 +126,25 @@ func logRequest(r *http.Request, body []byte) {
 	var b bytes.Buffer
 	fmt.Fprintf(&b, "→ %s %s\n", r.Method, r.URL.Path)
 	for name, vals := range r.Header {
+		if isSensitiveHeader(name) {
+			fmt.Fprintf(&b, "  %s: [REDACTED]\n", name)
+			continue
+		}
 		fmt.Fprintf(&b, "  %s: %s\n", name, strings.Join(vals, ", "))
 	}
 	if len(body) > 0 {
 		fmt.Fprintf(&b, "  body: %s\n", body)
 	}
 	log.Print(b.String())
+}
+
+func isSensitiveHeader(name string) bool {
+	switch {
+	case strings.EqualFold(name, "Cookie"),
+		strings.EqualFold(name, "Set-Cookie"),
+		strings.EqualFold(name, "Authorization"):
+		return true
+	default:
+		return false
+	}
 }

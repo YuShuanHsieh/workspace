@@ -31,7 +31,7 @@ event decoding, attach the cookies to the outbound HTTP request, and reserve the
 - **Approach B — reuse `dispatchheaders` with a `Cookie` header.** Least code,
   but cookies are structured and multi-value, so publishers would hand-assemble
   `name=value; name2=value2` strings — error prone. It also leaves the reserved
-  header gap open, which the issue explicitly wants closed. Rejected.
+  header gap open, which the issue explicitly wants to be closed. Rejected.
 - **Approach C — `dispatchcookies` plus a per-route allowlist.** More control,
   but the issue marks a per-route `forwardCookies` allowlist as out of scope
   ("can be added later if needed"). Rejected as premature (YAGNI).
