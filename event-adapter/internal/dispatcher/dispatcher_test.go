@@ -146,6 +146,69 @@ func TestDispatchRejectsNilEvent(t *testing.T) {
 	}
 }
 
+func TestDispatchForwardsPublisherCookies(t *testing.T) {
+	var gotSession, gotCSRF, gotLeak string
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if c, err := r.Cookie("session"); err == nil {
+			gotSession = c.Value
+		}
+		if c, err := r.Cookie("csrf-token"); err == nil {
+			gotCSRF = c.Value
+		}
+		gotLeak = r.Header.Get("ce-dispatchcookies")
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(bytes.NewBufferString(`{"ok":true}`)),
+		}, nil
+	})}
+
+	ev, err := clevent.Parse([]byte(`{"specversion":"1.0","id":"evt-ck","source":"workspace/task","type":"com.workspace.task.created","datacontenttype":"application/json","dispatchcookies":{"session":"abc123","csrf-token":"xyz789"},"data":{"taskId":"t1"}}`))
+	if err != nil {
+		t.Fatalf("parse event: %v", err)
+	}
+
+	d := New("http://127.0.0.1:8080", client)
+	if _, err := d.Dispatch(context.Background(), config.RouteConfig{
+		Dispatch: config.DispatchConfig{Method: "POST", Path: "/", Timeout: time.Second},
+	}, ev); err != nil {
+		t.Fatalf("Dispatch returned error: %v", err)
+	}
+	if gotSession != "abc123" || gotCSRF != "xyz789" {
+		t.Fatalf("cookies not forwarded: session=%q csrf=%q", gotSession, gotCSRF)
+	}
+	if gotLeak != "" {
+		t.Fatalf("dispatchcookies leaked as ce-dispatchcookies header: %q", gotLeak)
+	}
+}
+
+func TestDispatchAddsNoCookieHeaderWhenDispatchCookiesAbsent(t *testing.T) {
+	var gotCookies []*http.Cookie
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		gotCookies = r.Cookies()
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(bytes.NewBufferString(`{"ok":true}`)),
+		}, nil
+	})}
+
+	ev, err := clevent.Parse([]byte(`{"specversion":"1.0","id":"evt-nock","source":"workspace/task","type":"com.workspace.task.created","datacontenttype":"application/json","data":{"taskId":"t1"}}`))
+	if err != nil {
+		t.Fatalf("parse event: %v", err)
+	}
+
+	d := New("http://127.0.0.1:8080", client)
+	if _, err := d.Dispatch(context.Background(), config.RouteConfig{
+		Dispatch: config.DispatchConfig{Method: "POST", Path: "/", Timeout: time.Second},
+	}, ev); err != nil {
+		t.Fatalf("Dispatch returned error: %v", err)
+	}
+	if len(gotCookies) != 0 {
+		t.Fatalf("expected no cookies on request, got %d: %+v", len(gotCookies), gotCookies)
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {

@@ -24,11 +24,12 @@ type Config struct {
 	Handlers []Handler `yaml:"handlers"`
 }
 
-// Handler declares a single HTTP endpoint, its required headers, and the fixed response.
+// Handler declares a single HTTP endpoint, its required headers and cookies, and the fixed response.
 type Handler struct {
 	Method         string          `yaml:"method"`
 	Path           string          `yaml:"path"`
 	RequireHeaders []string        `yaml:"requireHeaders"`
+	RequireCookies []string        `yaml:"requireCookies"`
 	Response       HandlerResponse `yaml:"response"`
 }
 
@@ -100,6 +101,15 @@ func makeHandler(h Handler) http.HandlerFunc {
 			}
 		}
 
+		for _, name := range h.RequireCookies {
+			if _, err := r.Cookie(name); err != nil {
+				msg := fmt.Sprintf("missing required cookie: %s", name)
+				log.Printf("  ✗ %s", msg)
+				http.Error(w, msg, http.StatusBadRequest)
+				return
+			}
+		}
+
 		if h.Response.ContentType != "" {
 			w.Header().Set("Content-Type", h.Response.ContentType)
 		}
@@ -116,10 +126,25 @@ func logRequest(r *http.Request, body []byte) {
 	var b bytes.Buffer
 	fmt.Fprintf(&b, "→ %s %s\n", r.Method, r.URL.Path)
 	for name, vals := range r.Header {
+		if isSensitiveHeader(name) {
+			fmt.Fprintf(&b, "  %s: [REDACTED]\n", name)
+			continue
+		}
 		fmt.Fprintf(&b, "  %s: %s\n", name, strings.Join(vals, ", "))
 	}
 	if len(body) > 0 {
 		fmt.Fprintf(&b, "  body: %s\n", body)
 	}
 	log.Print(b.String())
+}
+
+func isSensitiveHeader(name string) bool {
+	switch {
+	case strings.EqualFold(name, "Cookie"),
+		strings.EqualFold(name, "Set-Cookie"),
+		strings.EqualFold(name, "Authorization"):
+		return true
+	default:
+		return false
+	}
 }

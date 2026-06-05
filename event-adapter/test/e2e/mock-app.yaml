@@ -5,6 +5,8 @@ handlers:
     path: /events/task-created
     requireHeaders:
       - X-Workspace-Actor-Id
+    requireCookies:
+      - session
     response:
       status: 200
       contentType: application/json

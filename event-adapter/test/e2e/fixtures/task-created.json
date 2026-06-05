@@ -8,5 +8,8 @@
     "X-Workspace-Actor-Id": "user-1",
     "X-Workspace-Tenant-Id": "tenant-a"
   },
+  "dispatchcookies": {
+    "session": "sess-abc123"
+  },
   "data": {"taskId": "task-1"}
 }

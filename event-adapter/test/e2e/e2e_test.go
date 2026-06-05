@@ -55,6 +55,15 @@ func TestEventDispatchPublishesResponse(t *testing.T) {
 	}
 	inputID, _ := input["id"].(string)
 
+	// The fixture carries a dispatchcookies.session value, and mock-app.yaml
+	// declares requireCookies: [session]. mock-app returns 400 when that cookie
+	// is missing, which fails the dispatch and yields no response CloudEvent. So
+	// a received response below proves the cookie survived the full round-trip.
+	cookies, _ := input["dispatchcookies"].(map[string]any)
+	if _, ok := cookies["session"]; !ok {
+		t.Fatalf("fixture must carry dispatchcookies.session to exercise cookie forwarding")
+	}
+
 	if _, err := js.Publish("t.tenant-a.app.task.event.created", fixture); err != nil {
 		t.Fatalf("publish input event: %v", err)
 	}

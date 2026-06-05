@@ -57,6 +57,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, route config.RouteConfig, ev 
 	}
 	setCloudEventHeaders(req, ev)
 	setPublisherHeaders(req, route, ev)
+	setPublisherCookies(req, ev)
 	for k, v := range route.Dispatch.Headers {
 		req.Header.Set(k, v)
 	}
@@ -91,7 +92,7 @@ func setCloudEventHeaders(req *http.Request, ev *clevent.Event) {
 		req.Header.Set("ce-dataschema", ev.DataSchema())
 	}
 	for name, value := range ev.Extensions() {
-		if strings.EqualFold(name, "dispatchheaders") {
+		if strings.EqualFold(name, "dispatchheaders") || strings.EqualFold(name, "dispatchcookies") {
 			continue
 		}
 		req.Header.Set("ce-"+strings.ToLower(name), fmt.Sprint(value))
@@ -124,5 +125,11 @@ func setPublisherHeaders(req *http.Request, route config.RouteConfig, ev *cleven
 			continue
 		}
 		req.Header.Set(canonical, value)
+	}
+}
+
+func setPublisherCookies(req *http.Request, ev *clevent.Event) {
+	for name, value := range ev.DispatchCookies {
+		req.AddCookie(&http.Cookie{Name: name, Value: value})
 	}
 }
