@@ -100,14 +100,14 @@ func Validate(cfg *Config) []error {
 	if len(cfg.Routes) == 0 {
 		errs = append(errs, ValidationError{Path: "routes", Msg: "must contain at least one route"})
 	}
-	seen := make(map[[3]string]int, len(cfg.Routes))
+	seen := make(map[string]int, len(cfg.Routes))
 	for i, r := range cfg.Routes {
 		errs = append(errs, validateRoute(fmt.Sprintf("routes[%d]", i), r)...)
-		key := [3]string{r.Match.Subject, r.Match.Type, r.Match.Source}
+		key := r.Match.Type
 		if j, ok := seen[key]; ok {
 			errs = append(errs, ValidationError{
 				Path: fmt.Sprintf("routes[%d].match", i),
-				Msg:  fmt.Sprintf("duplicate match tuple already defined at routes[%d]", j),
+				Msg:  fmt.Sprintf("duplicate match type already defined at routes[%d]", j),
 			})
 		} else {
 			seen[key] = i
@@ -121,14 +121,8 @@ func validateRoute(prefix string, r RouteConfig) []error {
 	if r.Name == "" {
 		errs = append(errs, ValidationError{Path: prefix + ".name", Msg: "is required"})
 	}
-	if r.Match.Subject == "" {
-		errs = append(errs, ValidationError{Path: prefix + ".match.subject", Msg: "is required"})
-	}
 	if r.Match.Type == "" {
 		errs = append(errs, ValidationError{Path: prefix + ".match.type", Msg: "is required"})
-	}
-	if r.Match.Source == "" {
-		errs = append(errs, ValidationError{Path: prefix + ".match.source", Msg: "is required"})
 	}
 	if r.Dispatch.Method != http.MethodPost && r.Dispatch.Method != http.MethodPut && r.Dispatch.Method != http.MethodPatch {
 		errs = append(errs, ValidationError{Path: prefix + ".dispatch.method", Msg: "must be POST, PUT, or PATCH"})

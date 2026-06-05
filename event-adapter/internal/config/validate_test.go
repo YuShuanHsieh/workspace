@@ -113,18 +113,30 @@ func TestValidateRejectsWorkerPoolSizeExceedingMaxAckPending(t *testing.T) {
 	}
 }
 
-func TestValidateRejectsDuplicateMatchTuple(t *testing.T) {
+func TestValidateAllowsOptionalSubjectAndSource(t *testing.T) {
 	cfg := validConfig()
-	cfg.Routes = append(cfg.Routes, cfg.Routes[0])
+	cfg.Routes[0].Match.Subject = ""
+	cfg.Routes[0].Match.Source = ""
+	if errs := Validate(cfg); len(errs) != 0 {
+		t.Fatalf("expected no errors with optional subject/source, got %v", errs)
+	}
+}
+
+func TestValidateRejectsDuplicateType(t *testing.T) {
+	cfg := validConfig()
+	dup := cfg.Routes[0]
+	dup.Match.Subject = "different.subject"
+	dup.Match.Source = "different/source"
+	cfg.Routes = append(cfg.Routes, dup)
 	errs := Validate(cfg)
 	found := false
 	for _, e := range errs {
-		if strings.Contains(e.Error(), "duplicate match tuple") {
+		if strings.Contains(e.Error(), "duplicate match type") {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Fatalf("expected duplicate match tuple error, got %v", errs)
+		t.Fatalf("expected duplicate match type error, got %v", errs)
 	}
 }

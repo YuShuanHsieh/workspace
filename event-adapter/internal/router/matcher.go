@@ -1,32 +1,31 @@
 package router
 
 import (
+	"fmt"
+
 	clevent "event-adapter/internal/cloudevent"
 	"event-adapter/internal/config"
 )
 
-type matchKey struct {
-	subject string
-	typ     string
-	source  string
-}
-
 type Matcher struct {
-	index map[matchKey]config.RouteConfig
+	index map[string]config.RouteConfig
 }
 
-func New(routes []config.RouteConfig) *Matcher {
-	index := make(map[matchKey]config.RouteConfig, len(routes))
+func New(routes []config.RouteConfig) (*Matcher, error) {
+	index := make(map[string]config.RouteConfig, len(routes))
 	for _, r := range routes {
-		index[matchKey{subject: r.Match.Subject, typ: r.Match.Type, source: r.Match.Source}] = r
+		if existing, ok := index[r.Match.Type]; ok {
+			return nil, fmt.Errorf("duplicate match type %q for routes %q and %q", r.Match.Type, existing.Name, r.Name)
+		}
+		index[r.Match.Type] = r
 	}
-	return &Matcher{index: index}
+	return &Matcher{index: index}, nil
 }
 
-func (m *Matcher) Match(subject string, ev *clevent.Event) (config.RouteConfig, bool) {
+func (m *Matcher) Match(ev *clevent.Event) (config.RouteConfig, bool) {
 	if ev == nil {
 		return config.RouteConfig{}, false
 	}
-	r, ok := m.index[matchKey{subject: subject, typ: ev.Type(), source: ev.Source()}]
+	r, ok := m.index[ev.Type()]
 	return r, ok
 }
