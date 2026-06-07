@@ -67,3 +67,59 @@ func TestBuildResponseStampsErrorStatus(t *testing.T) {
 		t.Fatalf("unexpected httpstatus: %v", got)
 	}
 }
+
+func mustEvent(t *testing.T, s string) *Event {
+	t.Helper()
+	ev, err := Parse([]byte(s))
+	if err != nil {
+		t.Fatalf("parse event: %v", err)
+	}
+	return ev
+}
+
+func TestBuildReplySuccess(t *testing.T) {
+	in := mustEvent(t, `{"specversion":"1.0","id":"req-1","source":"client","type":"com.x.request","datacontenttype":"application/json","data":{"a":1},"correlationid":"corr-9"}`)
+	reply := config.ReplyConfig{Source: "upload-service", Type: "com.x.reply"}
+	out, err := BuildReply(in, reply, "upload-presign", 200, "application/json", []byte(`{"url":"https://s3/put"}`))
+	if err != nil {
+		t.Fatalf("BuildReply: %v", err)
+	}
+	if out.Type() != "com.x.reply" {
+		t.Errorf("type = %q", out.Type())
+	}
+	if out.Source() != "upload-service" {
+		t.Errorf("source = %q", out.Source())
+	}
+	if out.Subject() != "" {
+		t.Errorf("reply must have no subject, got %q", out.Subject())
+	}
+	if got := out.Extensions()["httpstatus"]; got != int32(200) {
+		t.Errorf("httpstatus = %v", got)
+	}
+	if got := out.Extensions()["causationid"]; got != "req-1" {
+		t.Errorf("causationid = %v", got)
+	}
+	if got := out.Extensions()["correlationid"]; got != "corr-9" {
+		t.Errorf("correlationid = %v", got)
+	}
+}
+
+func TestBuildErrorReply(t *testing.T) {
+	out := BuildErrorReply("upload-service", 400, "bad cloudevent")
+	if out.Type() != ErrorReplyType {
+		t.Errorf("type = %q, want %q", out.Type(), ErrorReplyType)
+	}
+	if out.Source() != "upload-service" {
+		t.Errorf("source = %q", out.Source())
+	}
+	if got := out.Extensions()["httpstatus"]; got != int32(400) {
+		t.Errorf("httpstatus = %v", got)
+	}
+	var data map[string]string
+	if err := out.DataAs(&data); err != nil {
+		t.Fatalf("data: %v", err)
+	}
+	if data["error"] != "bad cloudevent" {
+		t.Errorf("error body = %v", data)
+	}
+}
