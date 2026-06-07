@@ -135,6 +135,42 @@ func TestEventDispatchHandlesBurst(t *testing.T) {
 	}
 }
 
+func TestRequestReplyPresign(t *testing.T) {
+	nc, err := nats.Connect("nats://127.0.0.1:4222")
+	if err != nil {
+		t.Fatalf("connect nats: %v", err)
+	}
+	defer nc.Close()
+
+	fixture, err := os.ReadFile("fixtures/upload-presign.json")
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+
+	msg, err := nc.Request("q.tenant-a.app.uploads.request", fixture, 15*time.Second)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+
+	var reply map[string]any
+	if err := json.Unmarshal(msg.Data, &reply); err != nil {
+		t.Fatalf("decode reply: %v", err)
+	}
+	if reply["type"] != "com.workspace.uploads.presign.reply" {
+		t.Errorf("type = %v", reply["type"])
+	}
+	if reply["causationid"] != "req-presign-1" {
+		t.Errorf("causationid = %v", reply["causationid"])
+	}
+	if reply["httpstatus"].(float64) != 200 {
+		t.Errorf("httpstatus = %v", reply["httpstatus"])
+	}
+	data, _ := reply["data"].(map[string]any)
+	if data["uploadId"] != "up-1" {
+		t.Errorf("data.uploadId = %v, want up-1", data["uploadId"])
+	}
+}
+
 // ensureEmptyStream guarantees the workspace-events stream exists and is empty.
 // nats-setup in docker compose creates it on first run; this is a safety net
 // for reruns and partial teardowns.

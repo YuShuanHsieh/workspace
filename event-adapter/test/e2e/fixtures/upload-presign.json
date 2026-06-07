@@ -1,0 +1,8 @@
+{
+  "specversion": "1.0",
+  "id": "req-presign-1",
+  "source": "workspace/uploads-client",
+  "type": "com.workspace.uploads.presign.request",
+  "datacontenttype": "application/json",
+  "data": {"filename": "photo.jpg", "contentType": "image/jpeg", "size": 20480}
+}

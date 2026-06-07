@@ -57,6 +57,14 @@ docker compose -f test/e2e/docker-compose.yaml down
 
 The `//go:build e2e` tag means `go test ./...` (no tag) skips this suite.
 
+## TestRequestReplyPresign
+
+Exercises the request-reply responder. Sends a `com.workspace.uploads.presign.request`
+CloudEvent via `nats request` to `q.tenant-a.app.uploads.request`; the adapter
+dispatches to the mock-app `/requests/upload-presign` handler and replies on the
+request inbox. Asserts the reply CloudEvent type, `causationid`, `httpstatus=200`,
+and the presigned `uploadId` from the mock response.
+
 ## Services
 
 | Service | Port | Description |
