@@ -71,7 +71,7 @@ func Validate(cfg *Config) []error {
 	requestsEnabled := cfg.Requests != nil
 
 	if !jetStreamEnabled && !requestsEnabled {
-		errs = append(errs, ValidationError{Path: "routes", Msg: "at least one of routes or requests must be configured"})
+		errs = append(errs, ValidationError{Path: "", Msg: "at least one of routes or requests must be configured"})
 	}
 
 	if jetStreamEnabled {
