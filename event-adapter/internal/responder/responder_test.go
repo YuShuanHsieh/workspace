@@ -5,8 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/nats-io/nats.go"
 
 	clevent "event-adapter/internal/cloudevent"
 	"event-adapter/internal/config"
@@ -23,13 +27,32 @@ func (f fakeDispatcher) Dispatch(_ context.Context, _ config.DispatchConfig, _ *
 	return f.res, f.err
 }
 
-type fakeMetrics struct{ received, dispatchErr, noReply, invalid int }
+type fakeMetrics struct {
+	mu                                      sync.Mutex
+	received, dispatchErr, noReply, invalid int
+}
 
-func (f *fakeMetrics) RequestReceived(context.Context, string)                    { f.received++ }
+func (f *fakeMetrics) RequestReceived(context.Context, string) {
+	f.mu.Lock()
+	f.received++
+	f.mu.Unlock()
+}
 func (f *fakeMetrics) RequestReplyLatency(context.Context, string, time.Duration) {}
-func (f *fakeMetrics) RequestDispatchError(context.Context, string)               { f.dispatchErr++ }
-func (f *fakeMetrics) RequestNoReply(context.Context)                             { f.noReply++ }
-func (f *fakeMetrics) InvalidRequestEvent(context.Context, string)                { f.invalid++ }
+func (f *fakeMetrics) RequestDispatchError(context.Context, string) {
+	f.mu.Lock()
+	f.dispatchErr++
+	f.mu.Unlock()
+}
+func (f *fakeMetrics) RequestNoReply(context.Context) {
+	f.mu.Lock()
+	f.noReply++
+	f.mu.Unlock()
+}
+func (f *fakeMetrics) InvalidRequestEvent(context.Context, string) {
+	f.mu.Lock()
+	f.invalid++
+	f.mu.Unlock()
+}
 
 func newResponder(d Dispatcher, m Metrics) *Responder {
 	matcher, _ := newTestMatcher()
@@ -150,5 +173,111 @@ func TestHandleNoReplyToIsDropped(t *testing.T) {
 	}
 	if met.noReply != 1 {
 		t.Errorf("noReply = %d", met.noReply)
+	}
+}
+
+// fakeSubscriber records the handler passed to SubscribeRequests and signals
+// readiness once it has been captured.
+type fakeSubscriber struct {
+	mu      sync.Mutex
+	handler func(natsjs.RequestMsg)
+	ready   chan struct{}
+}
+
+func newFakeSubscriber() *fakeSubscriber {
+	return &fakeSubscriber{ready: make(chan struct{})}
+}
+
+func (f *fakeSubscriber) SubscribeRequests(_, _ string, h func(natsjs.RequestMsg)) (*nats.Subscription, error) {
+	f.mu.Lock()
+	f.handler = h
+	f.mu.Unlock()
+	close(f.ready)
+	return &nats.Subscription{}, nil
+}
+
+func TestRunDispatchesAndShutsDown(t *testing.T) {
+	const n = 5
+
+	d := fakeDispatcher{res: dispatcher.Result{StatusCode: 200, ContentType: "application/json", Body: []byte(`{"ok":true}`)}}
+	r := newResponder(d, &fakeMetrics{})
+
+	sub := newFakeSubscriber()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() { done <- r.Run(ctx, sub) }()
+
+	// Wait for the handler to be captured.
+	select {
+	case <-sub.ready:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler not captured within 2s")
+	}
+	sub.mu.Lock()
+	handler := sub.handler
+	sub.mu.Unlock()
+	if handler == nil {
+		t.Fatal("handler is nil after ready")
+	}
+
+	// Drive n requests concurrently through the captured handler. The handler
+	// only enqueues onto the worker pool, so synchronize on the replies (which
+	// the workers emit) rather than on the enqueue returning.
+	validReq := []byte(`{"specversion":"1.0","id":"req-1","source":"c","type":"com.x.request","data":{"k":1}}`)
+	var (
+		replied  int64
+		repliedG sync.WaitGroup
+		mu       sync.Mutex
+		sample   []byte
+	)
+	repliedG.Add(n)
+	for i := 0; i < n; i++ {
+		go func() {
+			handler(natsjs.RequestMsg{
+				ReplyTo: "_INBOX.x",
+				Data:    validReq,
+				Respond: func(b []byte) error {
+					mu.Lock()
+					if sample == nil {
+						cp := make([]byte, len(b))
+						copy(cp, b)
+						sample = cp
+					}
+					mu.Unlock()
+					atomic.AddInt64(&replied, 1)
+					repliedG.Done()
+					return nil
+				},
+			})
+		}()
+	}
+	// Wait until every request has been processed and replied to by a worker.
+	repliedG.Wait()
+
+	if got := atomic.LoadInt64(&replied); got != n {
+		t.Fatalf("replied = %d, want %d", got, n)
+	}
+
+	mu.Lock()
+	s := sample
+	mu.Unlock()
+	reply := decode(t, s)
+	if reply["httpstatus"].(float64) != 200 {
+		t.Errorf("httpstatus = %v, want 200", reply["httpstatus"])
+	}
+
+	// Trigger shutdown.
+	cancel()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Run returned error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not shut down")
 	}
 }
