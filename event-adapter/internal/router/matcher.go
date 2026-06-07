@@ -29,3 +29,26 @@ func (m *Matcher) Match(ev *clevent.Event) (config.RouteConfig, bool) {
 	r, ok := m.index[ev.Type()]
 	return r, ok
 }
+
+type RequestMatcher struct {
+	index map[string]config.RequestRouteConfig
+}
+
+func NewRequests(routes []config.RequestRouteConfig) (*RequestMatcher, error) {
+	index := make(map[string]config.RequestRouteConfig, len(routes))
+	for _, r := range routes {
+		if existing, ok := index[r.Match.Type]; ok {
+			return nil, fmt.Errorf("duplicate request match type %q for routes %q and %q", r.Match.Type, existing.Name, r.Name)
+		}
+		index[r.Match.Type] = r
+	}
+	return &RequestMatcher{index: index}, nil
+}
+
+func (m *RequestMatcher) Match(ev *clevent.Event) (config.RequestRouteConfig, bool) {
+	if ev == nil {
+		return config.RequestRouteConfig{}, false
+	}
+	r, ok := m.index[ev.Type()]
+	return r, ok
+}
