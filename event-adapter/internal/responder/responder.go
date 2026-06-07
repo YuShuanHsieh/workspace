@@ -46,7 +46,6 @@ type Responder struct {
 	metrics Metrics
 	appID   string
 	cfg     *config.RequestsConfig
-	routes  map[string]config.RequestRouteConfig
 	stderr  io.Writer
 }
 
@@ -54,13 +53,7 @@ func New(matcher Matcher, disp Dispatcher, metrics Metrics, appID string, cfg *c
 	if stderr == nil {
 		stderr = io.Discard
 	}
-	routes := make(map[string]config.RequestRouteConfig)
-	if cfg != nil {
-		for _, rt := range cfg.Routes {
-			routes[rt.Name] = rt
-		}
-	}
-	return &Responder{matcher: matcher, disp: disp, metrics: metrics, appID: appID, cfg: cfg, routes: routes, stderr: stderr}
+	return &Responder{matcher: matcher, disp: disp, metrics: metrics, appID: appID, cfg: cfg, stderr: stderr}
 }
 
 // Run subscribes and processes requests on a bounded worker pool until ctx is
@@ -110,17 +103,11 @@ func (r *Responder) handle(ctx context.Context, m natsjs.RequestMsg) {
 		r.respond(m, clevent.BuildErrorReply(r.appID, http.StatusBadRequest, err.Error()))
 		return
 	}
-	matched, ok := r.matcher.Match(ev)
+	route, ok := r.matcher.Match(ev)
 	if !ok {
 		r.metrics.InvalidRequestEvent(ctx, "no_route")
 		r.respond(m, clevent.BuildErrorReply(r.appID, http.StatusNotFound, "no matching route"))
 		return
-	}
-	// The matcher resolves which route applies; the responder owns the full
-	// route config (Dispatch + Reply) keyed by name.
-	route := matched
-	if full, found := r.routes[matched.Name]; found {
-		route = full
 	}
 	r.metrics.RequestReceived(ctx, route.Name)
 	start := time.Now()
