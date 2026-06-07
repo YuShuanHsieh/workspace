@@ -162,8 +162,9 @@ func TestRequestReplyPresign(t *testing.T) {
 	if reply["causationid"] != "req-presign-1" {
 		t.Errorf("causationid = %v", reply["causationid"])
 	}
-	if reply["httpstatus"].(float64) != 200 {
-		t.Errorf("httpstatus = %v", reply["httpstatus"])
+	status, ok := reply["httpstatus"].(float64)
+	if !ok || status != 200 {
+		t.Errorf("httpstatus = %v, want 200", reply["httpstatus"])
 	}
 	data, _ := reply["data"].(map[string]any)
 	if data["uploadId"] != "up-1" {

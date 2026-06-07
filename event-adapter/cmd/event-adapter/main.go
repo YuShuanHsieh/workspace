@@ -69,7 +69,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	m := metrics.New(mp.Meter("event-adapter"))
 	httpDispatcher := dispatcher.New(cfg.App.HTTPBaseURL, nil)
 
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	var wg sync.WaitGroup
+	errCh := make(chan error, 1)
 
 	if len(cfg.Routes) > 0 {
 		matcher, err := router.New(cfg.Routes)
@@ -104,12 +107,22 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		go func() {
 			defer wg.Done()
 			if err := resp.Run(ctx, js); err != nil {
-				fmt.Fprintf(stderr, "responder: %v\n", err)
+				select {
+				case errCh <- fmt.Errorf("responder: %w", err):
+				default:
+				}
+				cancel()
 			}
 		}()
 	}
 
 	wg.Wait()
+	select {
+	case err := <-errCh:
+		fmt.Fprintln(stderr, err)
+		return 1
+	default:
+	}
 	return 0
 }
 

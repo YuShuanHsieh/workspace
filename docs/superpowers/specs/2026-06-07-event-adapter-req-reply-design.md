@@ -76,7 +76,7 @@ The responder is the primary path; the event consumer runs **concurrently** as a
 opt-in path in the same process. Both share the single NATS connection and the
 unified dispatch core; they are otherwise independent.
 
-```
+```text
                           event-adapter (one process)
   ┌───────────────────────────────────────────────────────────────────┐
   │  core NATS req   ──▶ responder ──┐                                   │  (primary)
@@ -150,7 +150,7 @@ Differences from event routes, enforced by validation:
 
 ### Data flow (request path)
 
-```
+```text
 NATS-native client ──request(subject, CloudEvent)──▶ core NATS [queue group]
   responder worker:
     ev   := clevent.Parse(msg.Data)

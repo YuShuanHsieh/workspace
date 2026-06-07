@@ -1572,4 +1572,3 @@ After all tasks, confirm:
 2. `go vet ./...` is clean.
 3. Spec coverage: responder (T7-9), config block + validation (T1-2), unified dispatch core (T3), reply/error format incl. app-4xx-as-reply and 502/504 (T4, T8), request matcher (T5), metrics (T6), concurrency/drain (T8), e2e (T10), at-least-one-path + backward compat (T2, T9).
 4. Type consistency: `Dispatch(ctx, config.DispatchConfig, *clevent.Event)` is used identically in `dispatcher`, `processor`, and `responder`; `BuildReply(in, ReplyConfig, routeName, status, contentType, body)` signature matches every call site; `RequestMsg.Respond` is a func field everywhere.
-```

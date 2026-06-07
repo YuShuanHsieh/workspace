@@ -254,8 +254,19 @@ func TestRunDispatchesAndShutsDown(t *testing.T) {
 			})
 		}()
 	}
-	// Wait until every request has been processed and replied to by a worker.
-	repliedG.Wait()
+	// Wait until every request has been processed and replied to by a worker,
+	// with a timeout so a regressed worker path fails the test fast rather than
+	// hanging CI forever.
+	waitDone := make(chan struct{})
+	go func() {
+		repliedG.Wait()
+		close(waitDone)
+	}()
+	select {
+	case <-waitDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for all replies")
+	}
 
 	if got := atomic.LoadInt64(&replied); got != n {
 		t.Fatalf("replied = %d, want %d", got, n)
