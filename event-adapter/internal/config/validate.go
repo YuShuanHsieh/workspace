@@ -62,9 +62,30 @@ func Validate(cfg *Config) []error {
 	if err := validateLoopbackBaseURL(cfg.App.HTTPBaseURL); err != nil {
 		errs = append(errs, ValidationError{Path: "app.httpBaseURL", Msg: err.Error()})
 	}
+
 	if cfg.NATS.URL == "" {
 		errs = append(errs, ValidationError{Path: "nats.url", Msg: "is required"})
 	}
+
+	jetStreamEnabled := len(cfg.Routes) > 0
+	requestsEnabled := cfg.Requests != nil
+
+	if !jetStreamEnabled && !requestsEnabled {
+		errs = append(errs, ValidationError{Path: "routes", Msg: "at least one of routes or requests must be configured"})
+	}
+
+	if jetStreamEnabled {
+		errs = append(errs, validateJetStream(cfg)...)
+	}
+	if requestsEnabled {
+		errs = append(errs, validateRequests(cfg.Requests)...)
+	}
+
+	return errs
+}
+
+func validateJetStream(cfg *Config) []error {
+	var errs []error
 	if cfg.NATS.Stream == "" {
 		errs = append(errs, ValidationError{Path: "nats.stream", Msg: "is required"})
 	}
@@ -98,9 +119,6 @@ func Validate(cfg *Config) []error {
 	if cfg.NATS.DefaultDLQSubject == "" {
 		errs = append(errs, ValidationError{Path: "nats.defaultDLQSubject", Msg: "is required"})
 	}
-	if len(cfg.Routes) == 0 {
-		errs = append(errs, ValidationError{Path: "routes", Msg: "must contain at least one route"})
-	}
 	seen := make(map[string]int, len(cfg.Routes))
 	for i, r := range cfg.Routes {
 		errs = append(errs, validateRoute(fmt.Sprintf("routes[%d]", i), r)...)
@@ -117,6 +135,45 @@ func Validate(cfg *Config) []error {
 	return errs
 }
 
+func validateRequests(rc *RequestsConfig) []error {
+	var errs []error
+	if rc.Subject == "" {
+		errs = append(errs, ValidationError{Path: "requests.subject", Msg: "is required"})
+	}
+	if rc.QueueGroup == "" {
+		errs = append(errs, ValidationError{Path: "requests.queueGroup", Msg: "is required"})
+	}
+	if rc.WorkerPoolSize <= 0 {
+		errs = append(errs, ValidationError{Path: "requests.workerPoolSize", Msg: "must be positive"})
+	}
+	if len(rc.Routes) == 0 {
+		errs = append(errs, ValidationError{Path: "requests.routes", Msg: "must contain at least one route"})
+	}
+	seen := make(map[string]int, len(rc.Routes))
+	for i, r := range rc.Routes {
+		prefix := fmt.Sprintf("requests.routes[%d]", i)
+		if r.Name == "" {
+			errs = append(errs, ValidationError{Path: prefix + ".name", Msg: "is required"})
+		}
+		if r.Match.Type == "" {
+			errs = append(errs, ValidationError{Path: prefix + ".match.type", Msg: "is required"})
+		}
+		errs = append(errs, validateDispatch(prefix, r.Dispatch)...)
+		if r.Reply.Type == "" {
+			errs = append(errs, ValidationError{Path: prefix + ".reply.type", Msg: "is required"})
+		}
+		if r.Reply.Source == "" {
+			errs = append(errs, ValidationError{Path: prefix + ".reply.source", Msg: "is required"})
+		}
+		if j, ok := seen[r.Match.Type]; ok {
+			errs = append(errs, ValidationError{Path: prefix + ".match", Msg: fmt.Sprintf("duplicate match type already defined at requests.routes[%d]", j)})
+		} else {
+			seen[r.Match.Type] = i
+		}
+	}
+	return errs
+}
+
 func validateRoute(prefix string, r RouteConfig) []error {
 	var errs []error
 	if r.Name == "" {
@@ -125,29 +182,7 @@ func validateRoute(prefix string, r RouteConfig) []error {
 	if r.Match.Type == "" {
 		errs = append(errs, ValidationError{Path: prefix + ".match.type", Msg: "is required"})
 	}
-	if r.Dispatch.Method != http.MethodPost && r.Dispatch.Method != http.MethodPut && r.Dispatch.Method != http.MethodPatch {
-		errs = append(errs, ValidationError{Path: prefix + ".dispatch.method", Msg: "must be POST, PUT, or PATCH"})
-	}
-	if !strings.HasPrefix(r.Dispatch.Path, "/") {
-		errs = append(errs, ValidationError{Path: prefix + ".dispatch.path", Msg: "must start with /"})
-	}
-	if r.Dispatch.Timeout <= 0 {
-		errs = append(errs, ValidationError{Path: prefix + ".dispatch.timeout", Msg: "must be positive"})
-	}
-	for name := range r.Dispatch.Headers {
-		if reservedHeaders[strings.ToLower(name)] {
-			errs = append(errs, ValidationError{Path: prefix + ".dispatch.headers." + name, Msg: "reserved header cannot be overridden"})
-		}
-	}
-	for _, name := range r.Dispatch.ForwardHeaders {
-		if name == "" {
-			errs = append(errs, ValidationError{Path: prefix + ".dispatch.forwardHeaders", Msg: "header names must be non-empty"})
-			continue
-		}
-		if reservedHeaders[strings.ToLower(name)] {
-			errs = append(errs, ValidationError{Path: prefix + ".dispatch.forwardHeaders." + name, Msg: "reserved header cannot be forwarded from publisher"})
-		}
-	}
+	errs = append(errs, validateDispatch(prefix, r.Dispatch)...)
 	if r.Response.Type == "" {
 		errs = append(errs, ValidationError{Path: prefix + ".response.type", Msg: "is required"})
 	}
@@ -165,6 +200,34 @@ func validateRoute(prefix string, r RouteConfig) []error {
 	}
 	if r.DLQ.Subject == "" {
 		errs = append(errs, ValidationError{Path: prefix + ".dlq.subject", Msg: "is required"})
+	}
+	return errs
+}
+
+func validateDispatch(prefix string, d DispatchConfig) []error {
+	var errs []error
+	if d.Method != http.MethodPost && d.Method != http.MethodPut && d.Method != http.MethodPatch {
+		errs = append(errs, ValidationError{Path: prefix + ".dispatch.method", Msg: "must be POST, PUT, or PATCH"})
+	}
+	if !strings.HasPrefix(d.Path, "/") {
+		errs = append(errs, ValidationError{Path: prefix + ".dispatch.path", Msg: "must start with /"})
+	}
+	if d.Timeout <= 0 {
+		errs = append(errs, ValidationError{Path: prefix + ".dispatch.timeout", Msg: "must be positive"})
+	}
+	for name := range d.Headers {
+		if reservedHeaders[strings.ToLower(name)] {
+			errs = append(errs, ValidationError{Path: prefix + ".dispatch.headers." + name, Msg: "reserved header cannot be overridden"})
+		}
+	}
+	for _, name := range d.ForwardHeaders {
+		if name == "" {
+			errs = append(errs, ValidationError{Path: prefix + ".dispatch.forwardHeaders", Msg: "header names must be non-empty"})
+			continue
+		}
+		if reservedHeaders[strings.ToLower(name)] {
+			errs = append(errs, ValidationError{Path: prefix + ".dispatch.forwardHeaders." + name, Msg: "reserved header cannot be forwarded from publisher"})
+		}
 	}
 	return errs
 }

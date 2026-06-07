@@ -149,3 +149,81 @@ func TestCookieIsReservedHeader(t *testing.T) {
 		t.Fatal("expected reserved-header check to be case-insensitive for cookie")
 	}
 }
+
+func hasErr(errs []error, substr string) bool {
+	for _, e := range errs {
+		if strings.Contains(e.Error(), substr) {
+			return true
+		}
+	}
+	return false
+}
+
+func baseRequests() *RequestsConfig {
+	return &RequestsConfig{
+		Subject:        "q.tenant-a.app.uploads.request",
+		QueueGroup:     "upload-responders",
+		WorkerPoolSize: 4,
+		Routes: []RequestRouteConfig{{
+			Name:     "upload-presign",
+			Match:    MatchConfig{Type: "com.workspace.uploads.presign.request"},
+			Dispatch: DispatchConfig{Method: "POST", Path: "/requests/upload-presign", Timeout: time.Second},
+			Reply:    ReplyConfig{Source: "upload-service", Type: "com.workspace.uploads.presign.reply"},
+		}},
+	}
+}
+
+func TestValidatePureResponder(t *testing.T) {
+	cfg := &Config{
+		App:      AppConfig{ID: "upload-service", HTTPBaseURL: "http://127.0.0.1:8080"},
+		NATS:     NATSConfig{URL: "nats://127.0.0.1:4222"},
+		Requests: baseRequests(),
+	}
+	if errs := Validate(cfg); len(errs) != 0 {
+		t.Fatalf("expected no errors, got %v", errs)
+	}
+}
+
+func TestValidateRejectsNoPath(t *testing.T) {
+	cfg := &Config{
+		App:  AppConfig{ID: "x", HTTPBaseURL: "http://127.0.0.1:8080"},
+		NATS: NATSConfig{URL: "nats://127.0.0.1:4222"},
+	}
+	errs := Validate(cfg)
+	if !hasErr(errs, "at least one of routes or requests") {
+		t.Fatalf("expected at-least-one-path error, got %v", errs)
+	}
+}
+
+func TestValidateRequestRouteFields(t *testing.T) {
+	reqs := baseRequests()
+	reqs.Routes[0].Reply.Type = ""
+	reqs.Subject = ""
+	cfg := &Config{
+		App:      AppConfig{ID: "x", HTTPBaseURL: "http://127.0.0.1:8080"},
+		NATS:     NATSConfig{URL: "nats://127.0.0.1:4222"},
+		Requests: reqs,
+	}
+	errs := Validate(cfg)
+	if !hasErr(errs, "requests.subject") {
+		t.Errorf("expected requests.subject error, got %v", errs)
+	}
+	if !hasErr(errs, "reply.type") {
+		t.Errorf("expected reply.type error, got %v", errs)
+	}
+}
+
+func TestValidateDuplicateRequestType(t *testing.T) {
+	reqs := baseRequests()
+	dup := reqs.Routes[0]
+	dup.Name = "second"
+	reqs.Routes = append(reqs.Routes, dup)
+	cfg := &Config{
+		App:      AppConfig{ID: "x", HTTPBaseURL: "http://127.0.0.1:8080"},
+		NATS:     NATSConfig{URL: "nats://127.0.0.1:4222"},
+		Requests: reqs,
+	}
+	if !hasErr(Validate(cfg), "duplicate match type") {
+		t.Fatalf("expected duplicate type error")
+	}
+}
