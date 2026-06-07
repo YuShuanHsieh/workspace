@@ -9,9 +9,10 @@ import (
 )
 
 type Config struct {
-	App    AppConfig     `yaml:"app"`
-	NATS   NATSConfig    `yaml:"nats"`
-	Routes []RouteConfig `yaml:"routes"`
+	App      AppConfig       `yaml:"app"`
+	NATS     NATSConfig      `yaml:"nats"`
+	Routes   []RouteConfig   `yaml:"routes"`
+	Requests *RequestsConfig `yaml:"requests"`
 }
 
 type AppConfig struct {
@@ -70,6 +71,26 @@ type RetryConfig struct {
 
 type DLQConfig struct {
 	Subject string `yaml:"subject"`
+}
+
+type RequestsConfig struct {
+	Subject        string               `yaml:"subject"`
+	QueueGroup     string               `yaml:"queueGroup"`
+	WorkerPoolSize int                  `yaml:"workerPoolSize"`
+	Routes         []RequestRouteConfig `yaml:"routes"`
+}
+
+type RequestRouteConfig struct {
+	Name     string         `yaml:"name"`
+	Match    MatchConfig    `yaml:"match"`
+	Dispatch DispatchConfig `yaml:"dispatch"`
+	Reply    ReplyConfig    `yaml:"reply"`
+}
+
+type ReplyConfig struct {
+	Source     string `yaml:"source"`
+	Type       string `yaml:"type"`
+	DataSchema string `yaml:"dataschema"`
 }
 
 func Parse(b []byte) (*Config, error) {
