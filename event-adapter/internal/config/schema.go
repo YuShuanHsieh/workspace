@@ -48,6 +48,10 @@ type MatchConfig struct {
 	Source  string `yaml:"source"`
 }
 
+type RequestMatchConfig struct {
+	Type string `yaml:"type"`
+}
+
 type DispatchConfig struct {
 	Method         string            `yaml:"method"`
 	Path           string            `yaml:"path"`
@@ -81,10 +85,10 @@ type RequestsConfig struct {
 }
 
 type RequestRouteConfig struct {
-	Name     string         `yaml:"name"`
-	Match    MatchConfig    `yaml:"match"`
-	Dispatch DispatchConfig `yaml:"dispatch"`
-	Reply    ReplyConfig    `yaml:"reply"`
+	Name     string             `yaml:"name"`
+	Match    RequestMatchConfig `yaml:"match"`
+	Dispatch DispatchConfig     `yaml:"dispatch"`
+	Reply    ReplyConfig        `yaml:"reply"`
 }
 
 type ReplyConfig struct {

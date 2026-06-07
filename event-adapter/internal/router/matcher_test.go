@@ -144,7 +144,7 @@ func mustEvent(t *testing.T, s string) *clevent.Event {
 func TestRequestMatcher(t *testing.T) {
 	routes := []config.RequestRouteConfig{{
 		Name:  "upload-presign",
-		Match: config.MatchConfig{Type: "com.workspace.uploads.presign.request"},
+		Match: config.RequestMatchConfig{Type: "com.workspace.uploads.presign.request"},
 	}}
 	m, err := NewRequests(routes)
 	if err != nil {
@@ -163,8 +163,8 @@ func TestRequestMatcher(t *testing.T) {
 
 func TestNewRequestsRejectsDuplicateType(t *testing.T) {
 	routes := []config.RequestRouteConfig{
-		{Name: "a", Match: config.MatchConfig{Type: "t"}},
-		{Name: "b", Match: config.MatchConfig{Type: "t"}},
+		{Name: "a", Match: config.RequestMatchConfig{Type: "t"}},
+		{Name: "b", Match: config.RequestMatchConfig{Type: "t"}},
 	}
 	if _, err := NewRequests(routes); err == nil {
 		t.Fatal("expected duplicate-type error")

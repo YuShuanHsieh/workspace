@@ -100,13 +100,13 @@ func (r *Responder) handle(ctx context.Context, m natsjs.RequestMsg) {
 	ev, err := clevent.Parse(m.Data)
 	if err != nil {
 		r.metrics.InvalidRequestEvent(ctx, "parse_error")
-		r.respond(m, clevent.BuildErrorReply(r.appID, http.StatusBadRequest, err.Error()))
+		r.respond(m, clevent.BuildErrorReply(nil, r.appID, http.StatusBadRequest, err.Error()))
 		return
 	}
 	route, ok := r.matcher.Match(ev)
 	if !ok {
 		r.metrics.InvalidRequestEvent(ctx, "no_route")
-		r.respond(m, clevent.BuildErrorReply(r.appID, http.StatusNotFound, "no matching route"))
+		r.respond(m, clevent.BuildErrorReply(ev, r.appID, http.StatusNotFound, "no matching route"))
 		return
 	}
 	r.metrics.RequestReceived(ctx, route.Name)
@@ -122,7 +122,7 @@ func (r *Responder) handle(ctx context.Context, m natsjs.RequestMsg) {
 		}
 		reply, berr := clevent.BuildReply(ev, route.Reply, route.Name, status, "application/json", errorBody(derr.Error()))
 		if berr != nil {
-			r.respond(m, clevent.BuildErrorReply(r.appID, http.StatusInternalServerError, berr.Error()))
+			r.respond(m, clevent.BuildErrorReply(ev, r.appID, http.StatusInternalServerError, berr.Error()))
 			return
 		}
 		r.respond(m, reply)
@@ -130,7 +130,7 @@ func (r *Responder) handle(ctx context.Context, m natsjs.RequestMsg) {
 	}
 	reply, berr := clevent.BuildReply(ev, route.Reply, route.Name, res.StatusCode, res.ContentType, res.Body)
 	if berr != nil {
-		r.respond(m, clevent.BuildErrorReply(r.appID, http.StatusInternalServerError, berr.Error()))
+		r.respond(m, clevent.BuildErrorReply(ev, r.appID, http.StatusInternalServerError, berr.Error()))
 		return
 	}
 	r.respond(m, reply)

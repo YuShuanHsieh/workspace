@@ -60,7 +60,7 @@ func newResponder(d Dispatcher, m Metrics) *Responder {
 		Subject: "s", QueueGroup: "g", WorkerPoolSize: 2,
 		Routes: []config.RequestRouteConfig{{
 			Name:     "upload-presign",
-			Match:    config.MatchConfig{Type: "com.x.request"},
+			Match:    config.RequestMatchConfig{Type: "com.x.request"},
 			Dispatch: config.DispatchConfig{Method: "POST", Path: "/r", Timeout: time.Second},
 			Reply:    config.ReplyConfig{Source: "upload-service", Type: "com.x.reply"},
 		}},
@@ -159,6 +159,31 @@ func TestHandleParseErrorReplies400(t *testing.T) {
 	}
 	if reply["type"] != clevent.ErrorReplyType {
 		t.Errorf("type = %v, want error reply type", reply["type"])
+	}
+}
+
+func TestHandleNoRoutePreservesRequestIdentity(t *testing.T) {
+	matcher, _ := newEmptyTestMatcher()
+	r := New(matcher, fakeDispatcher{}, &fakeMetrics{}, "upload-service", &config.RequestsConfig{
+		Subject: "s", QueueGroup: "g", WorkerPoolSize: 2,
+	}, io.Discard)
+	var out []byte
+	m := natsjs.RequestMsg{
+		ReplyTo: "_INBOX.1",
+		Data:    []byte(`{"specversion":"1.0","id":"req-404","source":"c","type":"com.x.unknown","correlationid":"corr-404","data":{"k":1}}`),
+		Respond: func(b []byte) error { out = b; return nil },
+	}
+
+	r.handle(context.Background(), m)
+	reply := decode(t, out)
+	if reply["httpstatus"].(float64) != 404 {
+		t.Errorf("httpstatus = %v, want 404", reply["httpstatus"])
+	}
+	if reply["causationid"] != "req-404" {
+		t.Errorf("causationid = %v, want req-404", reply["causationid"])
+	}
+	if reply["correlationid"] != "corr-404" {
+		t.Errorf("correlationid = %v, want corr-404", reply["correlationid"])
 	}
 }
 
