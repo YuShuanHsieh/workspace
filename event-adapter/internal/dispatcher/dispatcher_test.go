@@ -41,11 +41,9 @@ func TestDispatchForwardsDataAndHeaders(t *testing.T) {
 	}
 
 	d := New("http://127.0.0.1:8080", client)
-	res, err := d.Dispatch(context.Background(), config.RouteConfig{
-		Dispatch: config.DispatchConfig{
-			Method: "POST", Path: "/", Timeout: time.Second,
-			ForwardHeaders: []string{"X-Workspace-Actor-Id", "X-Workspace-Tenant-Id"},
-		},
+	res, err := d.Dispatch(context.Background(), config.DispatchConfig{
+		Method: "POST", Path: "/", Timeout: time.Second,
+		ForwardHeaders: []string{"X-Workspace-Actor-Id", "X-Workspace-Tenant-Id"},
 	}, ev)
 	if err != nil {
 		t.Fatalf("Dispatch returned error: %v", err)
@@ -84,9 +82,7 @@ func TestDispatchForwardsAllDispatchHeadersWhenAllowlistEmpty(t *testing.T) {
 	}
 
 	d := New("http://127.0.0.1:8080", client)
-	_, err = d.Dispatch(context.Background(), config.RouteConfig{
-		Dispatch: config.DispatchConfig{Method: "POST", Path: "/", Timeout: time.Second},
-	}, ev)
+	_, err = d.Dispatch(context.Background(), config.DispatchConfig{Method: "POST", Path: "/", Timeout: time.Second}, ev)
 	if err != nil {
 		t.Fatalf("Dispatch returned error: %v", err)
 	}
@@ -118,9 +114,7 @@ func TestDispatchDropsReservedDispatchHeadersAtRuntime(t *testing.T) {
 	}
 
 	d := New("http://127.0.0.1:8080", client)
-	_, err = d.Dispatch(context.Background(), config.RouteConfig{
-		Dispatch: config.DispatchConfig{Method: "POST", Path: "/", Timeout: time.Second},
-	}, ev)
+	_, err = d.Dispatch(context.Background(), config.DispatchConfig{Method: "POST", Path: "/", Timeout: time.Second}, ev)
 	if err != nil {
 		t.Fatalf("Dispatch returned error: %v", err)
 	}
@@ -140,7 +134,7 @@ func TestDispatchDropsReservedDispatchHeadersAtRuntime(t *testing.T) {
 
 func TestDispatchRejectsNilEvent(t *testing.T) {
 	d := New("http://127.0.0.1:8080", nil)
-	_, err := d.Dispatch(context.Background(), config.RouteConfig{}, nil)
+	_, err := d.Dispatch(context.Background(), config.DispatchConfig{}, nil)
 	if !errors.Is(err, ErrNilEvent) {
 		t.Fatalf("expected ErrNilEvent, got %v", err)
 	}
@@ -169,9 +163,7 @@ func TestDispatchForwardsPublisherCookies(t *testing.T) {
 	}
 
 	d := New("http://127.0.0.1:8080", client)
-	if _, err := d.Dispatch(context.Background(), config.RouteConfig{
-		Dispatch: config.DispatchConfig{Method: "POST", Path: "/", Timeout: time.Second},
-	}, ev); err != nil {
+	if _, err := d.Dispatch(context.Background(), config.DispatchConfig{Method: "POST", Path: "/", Timeout: time.Second}, ev); err != nil {
 		t.Fatalf("Dispatch returned error: %v", err)
 	}
 	if gotSession != "abc123" || gotCSRF != "xyz789" {
@@ -199,9 +191,7 @@ func TestDispatchAddsNoCookieHeaderWhenDispatchCookiesAbsent(t *testing.T) {
 	}
 
 	d := New("http://127.0.0.1:8080", client)
-	if _, err := d.Dispatch(context.Background(), config.RouteConfig{
-		Dispatch: config.DispatchConfig{Method: "POST", Path: "/", Timeout: time.Second},
-	}, ev); err != nil {
+	if _, err := d.Dispatch(context.Background(), config.DispatchConfig{Method: "POST", Path: "/", Timeout: time.Second}, ev); err != nil {
 		t.Fatalf("Dispatch returned error: %v", err)
 	}
 	if len(gotCookies) != 0 {

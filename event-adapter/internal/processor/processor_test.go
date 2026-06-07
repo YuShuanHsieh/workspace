@@ -19,7 +19,7 @@ type fakeDispatcher struct {
 	calls  int
 }
 
-func (f *fakeDispatcher) Dispatch(context.Context, config.RouteConfig, *clevent.Event) (dispatcher.Result, error) {
+func (f *fakeDispatcher) Dispatch(context.Context, config.DispatchConfig, *clevent.Event) (dispatcher.Result, error) {
 	f.calls++
 	return f.result, f.err
 }
