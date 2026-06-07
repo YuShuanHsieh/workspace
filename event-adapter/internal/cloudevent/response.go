@@ -57,7 +57,7 @@ func BuildReply(in *Event, reply config.ReplyConfig, routeName string, status in
 		out.SetDataSchema(reply.DataSchema)
 	}
 	if err := setHTTPData(&out, contentType, body); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("reply: %w", err)
 	}
 	out.SetExtension("httpstatus", int32(status))
 	out.SetExtension("causationid", in.ID())
