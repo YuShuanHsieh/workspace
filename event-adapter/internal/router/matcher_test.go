@@ -131,3 +131,42 @@ func TestNewRejectsDuplicateType(t *testing.T) {
 		t.Fatalf("expected error to name the duplicate type, got %v", err)
 	}
 }
+
+func mustEvent(t *testing.T, s string) *clevent.Event {
+	t.Helper()
+	ev, err := clevent.Parse([]byte(s))
+	if err != nil {
+		t.Fatalf("parse event: %v", err)
+	}
+	return ev
+}
+
+func TestRequestMatcher(t *testing.T) {
+	routes := []config.RequestRouteConfig{{
+		Name:  "upload-presign",
+		Match: config.MatchConfig{Type: "com.workspace.uploads.presign.request"},
+	}}
+	m, err := NewRequests(routes)
+	if err != nil {
+		t.Fatalf("NewRequests: %v", err)
+	}
+	ev := mustEvent(t, `{"specversion":"1.0","id":"1","source":"c","type":"com.workspace.uploads.presign.request","data":{}}`)
+	r, ok := m.Match(ev)
+	if !ok || r.Name != "upload-presign" {
+		t.Fatalf("match = %+v ok=%v", r, ok)
+	}
+	miss := mustEvent(t, `{"specversion":"1.0","id":"2","source":"c","type":"other","data":{}}`)
+	if _, ok := m.Match(miss); ok {
+		t.Fatal("expected no match for unknown type")
+	}
+}
+
+func TestNewRequestsRejectsDuplicateType(t *testing.T) {
+	routes := []config.RequestRouteConfig{
+		{Name: "a", Match: config.MatchConfig{Type: "t"}},
+		{Name: "b", Match: config.MatchConfig{Type: "t"}},
+	}
+	if _, err := NewRequests(routes); err == nil {
+		t.Fatal("expected duplicate-type error")
+	}
+}

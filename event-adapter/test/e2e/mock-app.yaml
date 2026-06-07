@@ -11,3 +11,9 @@ handlers:
       status: 200
       contentType: application/json
       body: '{"ok":true}'
+  - method: POST
+    path: /requests/upload-presign
+    response:
+      status: 200
+      contentType: application/json
+      body: '{"uploadId":"up-1","url":"https://example-bucket.s3/put?sig=abc"}'

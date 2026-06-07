@@ -1,8 +1,10 @@
 # App Developer Guide: Integrating the event-adapter sidecar
 
 **Audience:** Application developers exposing HTTP handlers for platform events.
-**Scope:** Phase 1 inbound delivery only: NATS JetStream CloudEvent -> sidecar -> app HTTP endpoint -> response CloudEvent -> NATS.
-**Related PRD:** [`prd.md`](./prd.md)
+**Scope:** Inbound delivery. Two models, both ending at your local HTTP handler:
+  - **Request-reply (primary):** NATS request -> sidecar -> app HTTP endpoint -> reply CloudEvent on the caller's inbox. Sections 1–10 plus [section 11](#11-request-reply-integration).
+  - **JetStream event (opt-in):** NATS JetStream CloudEvent -> sidecar -> app HTTP endpoint -> response CloudEvent -> NATS. The flow documented in sections 2–10.
+**Related PRD:** [`prd.md`](./prd.md) (request-reply: section 17)
 
 ---
 
@@ -304,7 +306,99 @@ The sidecar exposes delivery metrics, retry metrics, DLQ metrics, and publish me
 - Returning non-JSON when downstream consumers expect JSON response event data.
 - Letting publisher-supplied headers override authorization, trace, idempotency, or CloudEvent metadata.
 
-## 10. Integration Review Template
+## 11. Request-Reply Integration
+
+The request-reply model is the primary way to expose a synchronous, "HTTP-style" call over the event backbone (for example, minting a file-upload presigned URL). The caller is NATS-native and blocks on a reply; your app still only handles a local HTTP request. Sections 2–10 above describe the asynchronous JetStream event model; this section covers what differs for request-reply.
+
+### 11.1 What you build
+
+Same as the event model: a local HTTP endpoint plus a route entry. The differences are:
+
+- You register the route under a `requests:` block instead of `routes:`.
+- You declare a `reply` (the CloudEvent type/source the sidecar stamps on the reply) instead of a `response` with a publish subject.
+- You do **not** configure `retry` or `dlq` — there is no durable redelivery; a failed request returns an error reply the caller may retry.
+
+### 11.2 Request flow
+
+```text
+NATS-native caller issues request-reply
+  -> sidecar responder consumes the request CloudEvent (queue group, worker pool)
+  -> sidecar validates JSON CloudEvent data and matches a request route by type
+  -> sidecar sends CloudEvent data to your localhost endpoint
+  -> app returns a response body (2xx success, or 4xx/5xx business rejection)
+  -> sidecar wraps the response as a reply CloudEvent (httpstatus + causationid)
+  -> sidecar sends the reply on the caller's reply inbox
+```
+
+### 11.3 Handler requirements (differences from the event model)
+
+- **Reply body is the answer.** Return the JSON the caller needs (e.g. the presigned URL and upload id). The sidecar wraps it as the reply CloudEvent `data`. Do not publish anything yourself.
+- **Business rejections are normal replies.** Return `4xx` for an invalid request (e.g. disallowed content-type) or `5xx` for a processing error. The sidecar forwards these as replies with the status in `httpstatus`; they are **not** retried. Validation failures reaching the caller as a reply is the intended behavior.
+- **No redelivery-driven idempotency requirement.** Unlike the event model, the sidecar does not redeliver requests. A duplicate only happens if the *caller* retries; key on the incoming `ce-id` if your operation must be exactly-once across caller retries.
+- **Latency matters more.** The caller is blocked. Keep handlers within `dispatch.timeout`; on timeout the caller receives a `504` error reply.
+
+### 11.4 Route configuration
+
+```yaml
+app:
+  id: upload-service
+  httpBaseURL: http://127.0.0.1:8080
+
+nats:
+  url: nats://nats:4222           # connection only; required for both models
+
+requests:
+  subject: q.tenant-a.app.uploads.request   # core-NATS subject your responder answers
+  queueGroup: upload-responders             # one delivery per group across replicas
+  workerPoolSize: 16                         # bounded in-flight dispatches
+  routes:
+    - name: upload-presign
+      match:
+        type: com.workspace.uploads.presign.request   # route match key (type only)
+      dispatch:
+        method: POST
+        path: /requests/upload-presign        # your loopback endpoint
+        timeout: 3s
+        forwardHeaders:
+          - X-Workspace-Tenant-Id
+      reply:
+        source: upload-service
+        type: com.workspace.uploads.presign.reply
+        # dataschema: optional
+```
+
+Notes:
+
+- `requests.subject` may be a wildcard; the queue group load-balances across your replicas.
+- `match`, `dispatch`, `dispatch.forwardHeaders`, `dispatchheaders`, and `dispatchcookies` work exactly as in the event model (sections 3, 5, 7 of the PRD).
+- A request route has **no** `response`, `retry`, or `dlq` keys — the strict YAML parser rejects them.
+- You can configure both a `requests:` block and a `routes:` block in the same sidecar; at least one must be present.
+
+### 11.5 Reply contract
+
+The sidecar sends a reply CloudEvent on the caller's inbox:
+
+- `type` / `source` from your `reply` config.
+- `data` = your HTTP response body.
+- `httpstatus` extension = your HTTP status code.
+- `causationid` = the request's `id`; `correlationid` copied from the request when present.
+- No `subject` (it travels on the inbox).
+
+If the request is malformed the caller gets a `400` error reply; if no route matches, `404`; if your app is unreachable, `502`; if it times out, `504`. Every case is a reply — the caller never just hangs.
+
+### 11.6 Local testing
+
+Call your endpoint directly the same way as the event model (section 7), then test end-to-end through the sidecar with the NATS CLI:
+
+```bash
+nats request --server nats://127.0.0.1:4222 \
+  q.tenant-a.app.uploads.request \
+  "$(cat request-presign.json)"
+```
+
+The command blocks until the reply CloudEvent arrives and prints it. A `504`/`502` reply means the sidecar reached its dispatch error path; check that your handler is up and within the timeout.
+
+## 12. Integration Review Template
 
 Use this checklist when submitting a new route:
 
@@ -322,6 +416,25 @@ Handler timeout:
 Retry max attempts:
 DLQ subject:
 Idempotency strategy:
+Forwarded backend headers:
+Operational dashboard/log link:
+```
+
+For a **request-reply** route, use this checklist instead:
+
+```text
+Service name:
+Owner:
+Request NATS subject:
+Queue group:
+Request CloudEvent type (route match key):
+HTTP method and path:
+Expected request payload schema:
+Reply CloudEvent type:
+Reply CloudEvent source:
+Handler timeout (caller is blocked):
+Status-code contract (which 4xx/5xx the caller should expect):
+Idempotency strategy (across caller retries):
 Forwarded backend headers:
 Operational dashboard/log link:
 ```

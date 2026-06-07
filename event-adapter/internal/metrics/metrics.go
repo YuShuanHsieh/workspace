@@ -21,6 +21,12 @@ type Metrics struct {
 	duplicateEventIDs   metric.Int64Counter
 	routeMatchFailures  metric.Int64Counter
 	invalidCloudEvents  metric.Int64Counter
+
+	requestsReceived    metric.Int64Counter
+	requestReplyLatency metric.Float64Histogram
+	requestDispatchErr  metric.Int64Counter
+	requestNoReply      metric.Int64Counter
+	invalidRequests     metric.Int64Counter
 }
 
 func New(meter metric.Meter) *Metrics {
@@ -32,6 +38,10 @@ func New(meter metric.Meter) *Metrics {
 		return c
 	}
 	h, err := meter.Float64Histogram("cts.dispatch.latency", metric.WithUnit("ms"))
+	if err != nil {
+		panic(err)
+	}
+	rh, err := meter.Float64Histogram("cts.request.reply_latency", metric.WithUnit("ms"))
 	if err != nil {
 		panic(err)
 	}
@@ -48,6 +58,11 @@ func New(meter metric.Meter) *Metrics {
 		duplicateEventIDs:   mustC("cts.duplicate_event_ids"),
 		routeMatchFailures:  mustC("cts.route_match_failures"),
 		invalidCloudEvents:  mustC("cts.invalid_cloudevents"),
+		requestsReceived:    mustC("cts.requests.received"),
+		requestReplyLatency: rh,
+		requestDispatchErr:  mustC("cts.requests.dispatch_errors"),
+		requestNoReply:      mustC("cts.requests.no_reply"),
+		invalidRequests:     mustC("cts.requests.invalid"),
 	}
 }
 
@@ -97,4 +112,24 @@ func (m *Metrics) RouteMatchFailure(ctx context.Context) {
 
 func (m *Metrics) InvalidCloudEvent(ctx context.Context, reason string) {
 	m.invalidCloudEvents.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", reason)))
+}
+
+func (m *Metrics) RequestReceived(ctx context.Context, route string) {
+	m.requestsReceived.Add(ctx, 1, metric.WithAttributes(attribute.String("route", route)))
+}
+
+func (m *Metrics) RequestReplyLatency(ctx context.Context, route string, d time.Duration) {
+	m.requestReplyLatency.Record(ctx, float64(d.Microseconds())/1000, metric.WithAttributes(attribute.String("route", route)))
+}
+
+func (m *Metrics) RequestDispatchError(ctx context.Context, route string) {
+	m.requestDispatchErr.Add(ctx, 1, metric.WithAttributes(attribute.String("route", route)))
+}
+
+func (m *Metrics) RequestNoReply(ctx context.Context) {
+	m.requestNoReply.Add(ctx, 1)
+}
+
+func (m *Metrics) InvalidRequestEvent(ctx context.Context, reason string) {
+	m.invalidRequests.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", reason)))
 }

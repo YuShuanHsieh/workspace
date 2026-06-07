@@ -3,6 +3,7 @@ package config
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseValidConfig(t *testing.T) {
@@ -54,6 +55,84 @@ routes:
 	}
 	if got := cfg.Routes[0].Dispatch.ForwardHeaders; len(got) != 2 || got[0] != "X-Workspace-Actor-Id" {
 		t.Fatalf("unexpected forward headers: %#v", got)
+	}
+}
+
+func TestParseRequestsBlock(t *testing.T) {
+	raw := []byte(`
+app:
+  id: upload-service
+  httpBaseURL: http://127.0.0.1:8080
+nats:
+  url: nats://127.0.0.1:4222
+requests:
+  subject: q.tenant-a.app.uploads.request
+  queueGroup: upload-responders
+  workerPoolSize: 8
+  routes:
+    - name: upload-presign
+      match:
+        type: com.workspace.uploads.presign.request
+      dispatch:
+        method: POST
+        path: /requests/upload-presign
+        timeout: 3s
+      reply:
+        source: upload-service
+        type: com.workspace.uploads.presign.reply
+`)
+	cfg, err := Parse(raw)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if cfg.Requests == nil {
+		t.Fatal("Requests is nil")
+	}
+	if cfg.Requests.Subject != "q.tenant-a.app.uploads.request" {
+		t.Errorf("subject = %q", cfg.Requests.Subject)
+	}
+	if cfg.Requests.QueueGroup != "upload-responders" {
+		t.Errorf("queueGroup = %q", cfg.Requests.QueueGroup)
+	}
+	if cfg.Requests.WorkerPoolSize != 8 {
+		t.Errorf("workerPoolSize = %d", cfg.Requests.WorkerPoolSize)
+	}
+	if len(cfg.Requests.Routes) != 1 {
+		t.Fatalf("routes len = %d", len(cfg.Requests.Routes))
+	}
+	r := cfg.Requests.Routes[0]
+	if r.Match.Type != "com.workspace.uploads.presign.request" {
+		t.Errorf("match.type = %q", r.Match.Type)
+	}
+	if r.Dispatch.Timeout != 3*time.Second {
+		t.Errorf("dispatch.timeout = %v", r.Dispatch.Timeout)
+	}
+	if r.Reply.Type != "com.workspace.uploads.presign.reply" || r.Reply.Source != "upload-service" {
+		t.Errorf("reply = %+v", r.Reply)
+	}
+}
+
+func TestParseRequestRouteRejectsResponseKey(t *testing.T) {
+	// KnownFields(true) means response/retry/dlq under a request route is a parse error.
+	raw := []byte(`
+app:
+  id: x
+  httpBaseURL: http://127.0.0.1:8080
+nats:
+  url: nats://127.0.0.1:4222
+requests:
+  subject: s
+  queueGroup: g
+  workerPoolSize: 1
+  routes:
+    - name: r
+      match: {type: t}
+      dispatch: {method: POST, path: /x, timeout: 1s}
+      reply: {source: s, type: t.reply}
+      retry: {maxAttempts: 3}
+`)
+	if _, err := Parse(raw); err == nil {
+		t.Fatal("expected parse error for retry key on request route, got nil")
 	}
 }
 

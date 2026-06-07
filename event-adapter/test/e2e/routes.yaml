@@ -35,4 +35,19 @@ routes:
       maxBackoff: 2s
     dlq:
       subject: dlq.tenant-a.task-service
+requests:
+  subject: q.tenant-a.app.uploads.request
+  queueGroup: upload-responders
+  workerPoolSize: 8
+  routes:
+    - name: upload-presign
+      match:
+        type: com.workspace.uploads.presign.request
+      dispatch:
+        method: POST
+        path: /requests/upload-presign
+        timeout: 3s
+      reply:
+        source: upload-service
+        type: com.workspace.uploads.presign.reply
 

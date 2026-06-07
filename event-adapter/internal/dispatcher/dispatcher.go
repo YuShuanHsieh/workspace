@@ -34,7 +34,7 @@ func New(baseURL string, client *http.Client) *Dispatcher {
 	return &Dispatcher{baseURL: strings.TrimRight(baseURL, "/"), client: client}
 }
 
-func (d *Dispatcher) Dispatch(ctx context.Context, route config.RouteConfig, ev *clevent.Event) (Result, error) {
+func (d *Dispatcher) Dispatch(ctx context.Context, dc config.DispatchConfig, ev *clevent.Event) (Result, error) {
 	if ev == nil || ev.Event == nil {
 		return Result{}, ErrNilEvent
 	}
@@ -42,23 +42,23 @@ func (d *Dispatcher) Dispatch(ctx context.Context, route config.RouteConfig, ev 
 	if err != nil {
 		return Result{}, err
 	}
-	u, err := url.JoinPath(d.baseURL, route.Dispatch.Path)
+	u, err := url.JoinPath(d.baseURL, dc.Path)
 	if err != nil {
 		return Result{}, fmt.Errorf("dispatcher: build url: %w", err)
 	}
-	if route.Dispatch.Timeout > 0 {
+	if dc.Timeout > 0 {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, route.Dispatch.Timeout)
+		ctx, cancel = context.WithTimeout(ctx, dc.Timeout)
 		defer cancel()
 	}
-	req, err := http.NewRequestWithContext(ctx, route.Dispatch.Method, u, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, dc.Method, u, bytes.NewReader(body))
 	if err != nil {
 		return Result{}, fmt.Errorf("dispatcher: create request: %w", err)
 	}
 	setCloudEventHeaders(req, ev)
-	setPublisherHeaders(req, route, ev)
+	setPublisherHeaders(req, dc, ev)
 	setPublisherCookies(req, ev)
-	for k, v := range route.Dispatch.Headers {
+	for k, v := range dc.Headers {
 		req.Header.Set(k, v)
 	}
 	resp, err := d.client.Do(req)
@@ -99,11 +99,11 @@ func setCloudEventHeaders(req *http.Request, ev *clevent.Event) {
 	}
 }
 
-func setPublisherHeaders(req *http.Request, route config.RouteConfig, ev *clevent.Event) {
+func setPublisherHeaders(req *http.Request, dc config.DispatchConfig, ev *clevent.Event) {
 	if len(ev.DispatchHeaders) == 0 {
 		return
 	}
-	if len(route.Dispatch.ForwardHeaders) == 0 {
+	if len(dc.ForwardHeaders) == 0 {
 		for name, value := range ev.DispatchHeaders {
 			if config.IsReservedHeader(name) {
 				continue
@@ -113,7 +113,7 @@ func setPublisherHeaders(req *http.Request, route config.RouteConfig, ev *cleven
 		return
 	}
 	allowed := map[string]string{}
-	for _, name := range route.Dispatch.ForwardHeaders {
+	for _, name := range dc.ForwardHeaders {
 		allowed[strings.ToLower(name)] = name
 	}
 	for name, value := range ev.DispatchHeaders {

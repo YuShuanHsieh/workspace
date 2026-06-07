@@ -126,6 +126,33 @@ func FetchBatch(ctx context.Context, sub *nats.Subscription, batch int) ([]Messa
 	return out, nil
 }
 
+// RequestMsg is a core-NATS request delivered to the responder. Respond is a
+// function field (not a method) so responder unit tests can capture the reply
+// bytes without a live NATS connection.
+type RequestMsg struct {
+	Subject string
+	ReplyTo string
+	Data    []byte
+	Respond func([]byte) error
+}
+
+// SubscribeRequests subscribes to subject within queue group queue and invokes h
+// for each request. Uses core NATS (no JetStream): request-reply is transient.
+func (c *Client) SubscribeRequests(subject, queue string, h func(RequestMsg)) (*nats.Subscription, error) {
+	sub, err := c.nc.QueueSubscribe(subject, queue, func(m *nats.Msg) {
+		h(RequestMsg{
+			Subject: m.Subject,
+			ReplyTo: m.Reply,
+			Data:    m.Data,
+			Respond: m.Respond,
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("nats: subscribe requests %q: %w", subject, err)
+	}
+	return sub, nil
+}
+
 func BuildDLQPayload(dlq processor.DLQEvent) ([]byte, error) {
 	payload := map[string]any{
 		"originalEvent":  dlq.OriginalEvent,

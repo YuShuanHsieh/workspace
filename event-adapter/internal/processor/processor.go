@@ -17,7 +17,7 @@ import (
 )
 
 type Dispatcher interface {
-	Dispatch(context.Context, config.RouteConfig, *clevent.Event) (dispatcher.Result, error)
+	Dispatch(context.Context, config.DispatchConfig, *clevent.Event) (dispatcher.Result, error)
 }
 
 type Publisher interface {
@@ -60,7 +60,7 @@ func (p *Processor) Process(ctx context.Context, subject string, ev *clevent.Eve
 		delivery = 1
 	}
 
-	res, dispatchErr := p.dispatcher.Dispatch(ctx, route, ev)
+	res, dispatchErr := p.dispatcher.Dispatch(ctx, route.Dispatch, ev)
 	if dispatchErr != nil {
 		if isNetworkError(dispatchErr) && delivery < policy.MaxAttempts {
 			return msg.Nak(ctx, policy.Delay(delivery))

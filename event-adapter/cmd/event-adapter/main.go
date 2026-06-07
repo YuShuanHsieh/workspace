@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 
 	"go.opentelemetry.io/otel/sdk/metric"
@@ -18,6 +19,7 @@ import (
 	"event-adapter/internal/metrics"
 	"event-adapter/internal/natsjs"
 	"event-adapter/internal/processor"
+	"event-adapter/internal/responder"
 	"event-adapter/internal/router"
 )
 
@@ -65,23 +67,62 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 	mp := metric.NewMeterProvider()
 	m := metrics.New(mp.Meter("event-adapter"))
-	matcher, err := router.New(cfg.Routes)
-	if err != nil {
-		fmt.Fprintf(stderr, "build router: %v\n", err)
-		return 1
-	}
 	httpDispatcher := dispatcher.New(cfg.App.HTTPBaseURL, nil)
-	proc := processor.New(httpDispatcher, js)
 
-	sub, err := js.SubscribeWildcard(cfg.NATS)
-	if err != nil {
-		fmt.Fprintf(stderr, "subscribe %s: %v\n", cfg.NATS.FilterSubject, err)
-		return 1
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	var wg sync.WaitGroup
+	errCh := make(chan error, 1)
+
+	if len(cfg.Routes) > 0 {
+		matcher, err := router.New(cfg.Routes)
+		if err != nil {
+			fmt.Fprintf(stderr, "build router: %v\n", err)
+			return 1
+		}
+		proc := processor.New(httpDispatcher, js)
+		sub, err := js.SubscribeWildcard(cfg.NATS)
+		if err != nil {
+			fmt.Fprintf(stderr, "subscribe %s: %v\n", cfg.NATS.FilterSubject, err)
+			return 1
+		}
+		cons := consumer.New(sub, proc, matcher, js, m, *cfg, cfg.NATS.FetchBatch, cfg.NATS.WorkerPoolSize, stderr)
+		fmt.Fprintf(stdout, "event-adapter consuming %q with %d workers (batch %d)\n", cfg.NATS.FilterSubject, cfg.NATS.WorkerPoolSize, cfg.NATS.FetchBatch)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			cons.Run(ctx)
+		}()
 	}
 
-	cons := consumer.New(sub, proc, matcher, js, m, *cfg, cfg.NATS.FetchBatch, cfg.NATS.WorkerPoolSize, stderr)
-	fmt.Fprintf(stdout, "event-adapter consuming %q with %d workers (batch %d)\n", cfg.NATS.FilterSubject, cfg.NATS.WorkerPoolSize, cfg.NATS.FetchBatch)
-	cons.Run(ctx)
+	if cfg.Requests != nil {
+		rmatcher, err := router.NewRequests(cfg.Requests.Routes)
+		if err != nil {
+			fmt.Fprintf(stderr, "build request router: %v\n", err)
+			return 1
+		}
+		resp := responder.New(rmatcher, httpDispatcher, m, cfg.App.ID, cfg.Requests, stderr)
+		fmt.Fprintf(stdout, "event-adapter responding to %q (queue %q) with %d workers\n", cfg.Requests.Subject, cfg.Requests.QueueGroup, cfg.Requests.WorkerPoolSize)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := resp.Run(ctx, js); err != nil {
+				select {
+				case errCh <- fmt.Errorf("responder: %w", err):
+				default:
+				}
+				cancel()
+			}
+		}()
+	}
+
+	wg.Wait()
+	select {
+	case err := <-errCh:
+		fmt.Fprintln(stderr, err)
+		return 1
+	default:
+	}
 	return 0
 }
 

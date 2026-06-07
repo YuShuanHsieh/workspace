@@ -1,16 +1,31 @@
 # event-adapter
 
-NATS JetStream to local HTTP event dispatch sidecar.
+NATS-to-local-HTTP dispatch sidecar. Bridges NATS messages to an app's loopback
+HTTP handlers so the app never embeds NATS client code.
 
-Design source: `../prd/event-adapter/prd.md`.
+Design source: `../prd/event-adapter/prd.md`. Request-reply design:
+`../docs/superpowers/specs/2026-06-07-event-adapter-req-reply-design.md`.
 
-Phase 1 responsibilities:
+Two inbound delivery models share one dispatch core (`parse CloudEvent → match by
+type → call the local HTTP handler`):
+
+**Request-reply (primary)** — for synchronous, HTTP-style calls switched onto the
+event backbone:
+
+- subscribe to a core-NATS request subject within a queue group
+- dispatch JSON CloudEvent data to configured localhost HTTP handlers
+- return the HTTP response as a reply CloudEvent on the caller's inbox
+- return structured error replies (400/404/502/504) instead of hanging; no retry/DLQ
+
+**JetStream event consumption (opt-in)** — for durable, fire-and-forget fan-out:
 
 - consume CloudEvents from JetStream durable consumers
 - dispatch JSON CloudEvent data to configured localhost HTTP handlers
 - publish deterministic response CloudEvents
 - publish exhausted failures to DLQ
 - acknowledge original messages only after response or DLQ publish confirmation
+
+Either model may be configured alone or both together; at least one is required.
 
 ## Repo layout
 
@@ -23,9 +38,10 @@ internal/
   config/          YAML schema + validator
   dispatcher/      HTTP client that calls app handlers
   metrics/         OpenTelemetry counters and histograms
-  natsjs/          NATS JetStream connection and message helpers
-  processor/       retry logic and DLQ publication
-  router/          match incoming CloudEvents to route config
+  natsjs/          NATS connection, JetStream consume, and request subscription helpers
+  processor/       retry logic and DLQ publication (event model)
+  responder/       request-reply loop: dispatch and reply on the caller's inbox
+  router/          match incoming CloudEvents to event or request route config
 examples/onboarding/   annotated routes.yaml and smoke-test scripts
 test/e2e/          end-to-end test suite (docker compose + Go test)
 ```
