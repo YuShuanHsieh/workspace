@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"event-adapter/internal/pathtemplate"
 )
 
 type ValidationError struct {
@@ -122,6 +124,12 @@ func validateJetStream(cfg *Config) []error {
 	seen := make(map[string]int, len(cfg.Routes))
 	for i, r := range cfg.Routes {
 		errs = append(errs, validateRoute(fmt.Sprintf("routes[%d]", i), r)...)
+		if err := pathtemplate.Validate(r.Dispatch.Path); err != nil {
+			errs = append(errs, ValidationError{
+				Path: fmt.Sprintf("routes[%d].dispatch.path", i),
+				Msg:  err.Error(),
+			})
+		}
 		key := r.Match.Type
 		if j, ok := seen[key]; ok {
 			errs = append(errs, ValidationError{
@@ -159,6 +167,12 @@ func validateRequests(rc *RequestsConfig) []error {
 			errs = append(errs, ValidationError{Path: prefix + ".match.type", Msg: "is required"})
 		}
 		errs = append(errs, validateDispatch(prefix, r.Dispatch)...)
+		if err := pathtemplate.Validate(r.Dispatch.Path); err != nil {
+			errs = append(errs, ValidationError{
+				Path: fmt.Sprintf("requests.routes[%d].dispatch.path", i),
+				Msg:  err.Error(),
+			})
+		}
 		if r.Reply.Type == "" {
 			errs = append(errs, ValidationError{Path: prefix + ".reply.type", Msg: "is required"})
 		}

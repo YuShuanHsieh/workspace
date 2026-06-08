@@ -213,6 +213,42 @@ func TestValidateRequestRouteFields(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsBadPathTemplateInJetStreamRoute(t *testing.T) {
+	cfg := validConfig()
+	cfg.Routes[0].Dispatch.Path = "/api/{123bad}/x"
+	errs := Validate(cfg)
+	if !hasErr(errs, "routes[0].dispatch.path") {
+		t.Fatalf("expected routes[0].dispatch.path error, got %v", errs)
+	}
+	if !hasErr(errs, "123bad") {
+		t.Fatalf("expected error mentioning bad token 123bad, got %v", errs)
+	}
+}
+
+func TestValidateRejectsBadPathTemplateInRequestReplyRoute(t *testing.T) {
+	reqs := baseRequests()
+	reqs.Routes[0].Dispatch.Path = "/api/{a-b}/presign"
+	cfg := &Config{
+		App:      AppConfig{ID: "upload-service", HTTPBaseURL: "http://127.0.0.1:8080"},
+		NATS:     NATSConfig{URL: "nats://127.0.0.1:4222"},
+		Requests: reqs,
+	}
+	errs := Validate(cfg)
+	if !hasErr(errs, "requests.routes[0].dispatch.path") {
+		t.Fatalf("expected requests.routes[0].dispatch.path error, got %v", errs)
+	}
+}
+
+func TestValidateAcceptsValidPathTemplate(t *testing.T) {
+	cfg := validConfig()
+	cfg.Routes[0].Dispatch.Path = "/api/tasks/{taskId}/complete"
+	cfg.Requests = baseRequests()
+	cfg.Requests.Routes[0].Dispatch.Path = "/api/uploads/{uploadId}/presign"
+	if errs := Validate(cfg); len(errs) != 0 {
+		t.Fatalf("expected no errors for valid path templates, got %v", errs)
+	}
+}
+
 func TestValidateDuplicateRequestType(t *testing.T) {
 	reqs := baseRequests()
 	dup := reqs.Routes[0]
