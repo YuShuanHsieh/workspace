@@ -136,6 +136,36 @@ requests:
 	}
 }
 
+func TestParseRequestRouteRejectsSubjectAndSourceKeys(t *testing.T) {
+	raw := []byte(`
+app:
+  id: upload-service
+  httpBaseURL: http://127.0.0.1:8080
+nats:
+  url: nats://127.0.0.1:4222
+requests:
+  subject: q.tenant-a.app.uploads.request
+  queueGroup: upload-responders
+  workerPoolSize: 8
+  routes:
+    - name: upload-presign
+      match:
+        type: com.workspace.uploads.presign.request
+        subject: q.tenant-a.app.uploads.request
+        source: workspace/uploads-client
+      dispatch:
+        method: POST
+        path: /requests/upload-presign
+        timeout: 3s
+      reply:
+        source: upload-service
+        type: com.workspace.uploads.presign.reply
+`)
+	if _, err := Parse(raw); err == nil {
+		t.Fatal("expected parse error for request-route match.subject/source, got nil")
+	}
+}
+
 func TestParseRejectsUnknownField(t *testing.T) {
 	_, err := Parse([]byte(`
 app:

@@ -105,21 +105,34 @@ func TestBuildReplySuccess(t *testing.T) {
 }
 
 func TestBuildErrorReply(t *testing.T) {
-	out := BuildErrorReply("upload-service", 400, "bad cloudevent")
+	in := mustEvent(t, `{"specversion":"1.0","id":"req-404","source":"client","type":"com.x.request","correlationid":"corr-404","data":{"a":1}}`)
+	out := BuildErrorReply(in, "upload-service", 404, "no matching route")
 	if out.Type() != ErrorReplyType {
 		t.Errorf("type = %q, want %q", out.Type(), ErrorReplyType)
 	}
 	if out.Source() != "upload-service" {
 		t.Errorf("source = %q", out.Source())
 	}
-	if got := out.Extensions()["httpstatus"]; got != int32(400) {
+	if got := out.Extensions()["httpstatus"]; got != int32(404) {
 		t.Errorf("httpstatus = %v", got)
+	}
+	if got := out.Extensions()["causationid"]; got != "req-404" {
+		t.Errorf("causationid = %v", got)
+	}
+	if got := out.Extensions()["correlationid"]; got != "corr-404" {
+		t.Errorf("correlationid = %v", got)
 	}
 	var data map[string]string
 	if err := out.DataAs(&data); err != nil {
 		t.Fatalf("data: %v", err)
 	}
-	if data["error"] != "bad cloudevent" {
+	if data["error"] != "no matching route" {
 		t.Errorf("error body = %v", data)
+	}
+
+	other := mustEvent(t, `{"specversion":"1.0","id":"req-405","source":"client","type":"com.x.request","data":{"a":1}}`)
+	out2 := BuildErrorReply(other, "upload-service", 404, "no matching route")
+	if out.ID() == out2.ID() {
+		t.Fatalf("error-reply IDs must vary by triggering request, got %q", out.ID())
 	}
 }

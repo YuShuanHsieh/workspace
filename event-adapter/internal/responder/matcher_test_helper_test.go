@@ -10,8 +10,12 @@ import (
 func newTestMatcher() (*router.RequestMatcher, error) {
 	return router.NewRequests([]config.RequestRouteConfig{{
 		Name:     "upload-presign",
-		Match:    config.MatchConfig{Type: "com.x.request"},
+		Match:    config.RequestMatchConfig{Type: "com.x.request"},
 		Dispatch: config.DispatchConfig{Method: "POST", Path: "/r", Timeout: time.Second},
 		Reply:    config.ReplyConfig{Source: "upload-service", Type: "com.x.reply"},
 	}})
+}
+
+func newEmptyTestMatcher() (*router.RequestMatcher, error) {
+	return router.NewRequests(nil)
 }

@@ -166,7 +166,7 @@ func baseRequests() *RequestsConfig {
 		WorkerPoolSize: 4,
 		Routes: []RequestRouteConfig{{
 			Name:     "upload-presign",
-			Match:    MatchConfig{Type: "com.workspace.uploads.presign.request"},
+			Match:    RequestMatchConfig{Type: "com.workspace.uploads.presign.request"},
 			Dispatch: DispatchConfig{Method: "POST", Path: "/requests/upload-presign", Timeout: time.Second},
 			Reply:    ReplyConfig{Source: "upload-service", Type: "com.workspace.uploads.presign.reply"},
 		}},

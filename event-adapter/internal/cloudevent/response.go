@@ -69,14 +69,24 @@ func BuildReply(in *Event, reply config.ReplyConfig, routeName string, status in
 
 // BuildErrorReply builds a self-generated error reply when there is no app
 // response to wrap (malformed request, no matching route).
-func BuildErrorReply(source string, status int, message string) *ce.Event {
+func BuildErrorReply(in *Event, source string, status int, message string) *ce.Event {
 	out := ce.New()
-	out.SetID(deterministicID(message, source, ErrorReplyType))
+	if in != nil {
+		out.SetID(deterministicID(in.ID(), source, ErrorReplyType))
+	} else {
+		out.SetID(deterministicID(message, source, ErrorReplyType))
+	}
 	out.SetType(ErrorReplyType)
 	out.SetSource(source)
 	out.SetTime(time.Now().UTC())
 	_ = out.SetData("application/json", map[string]string{"error": message})
 	out.SetExtension("httpstatus", int32(status))
+	if in != nil {
+		out.SetExtension("causationid", in.ID())
+		if corr, ok := in.Extensions()["correlationid"]; ok {
+			out.SetExtension("correlationid", corr)
+		}
+	}
 	return &out
 }
 
