@@ -18,6 +18,7 @@ type Result struct {
 	StatusCode  int
 	ContentType string
 	Body        []byte
+	Location    string
 }
 
 var ErrNilEvent = errors.New("dispatcher: nil event")
@@ -70,7 +71,16 @@ func (d *Dispatcher) Dispatch(ctx context.Context, dc config.DispatchConfig, ev 
 	if err != nil {
 		return Result{}, fmt.Errorf("dispatcher: read response: %w", err)
 	}
-	return Result{StatusCode: resp.StatusCode, ContentType: resp.Header.Get("Content-Type"), Body: respBody}, nil
+	loc := ""
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		loc = resp.Header.Get("Location")
+	}
+	return Result{
+		StatusCode:  resp.StatusCode,
+		ContentType: resp.Header.Get("Content-Type"),
+		Body:        respBody,
+		Location:    loc,
+	}, nil
 }
 
 func setCloudEventHeaders(req *http.Request, ev *clevent.Event) {
