@@ -20,11 +20,11 @@ func TestBuildResponseUsesDeterministicIDAndCausation(t *testing.T) {
 		Response: config.ResponseConfig{Type: "com.workspace.task.created.processed", Source: "task-service", Subject: "t.tenant-a.app.task.event.processed"},
 	}
 	wrapped := &Event{Event: &in}
-	a, err := BuildResponse(wrapped, route, 200, "application/json", []byte(`{"ok":true}`))
+	a, err := BuildResponse(wrapped, route, 200, "application/json", []byte(`{"ok":true}`), "")
 	if err != nil {
 		t.Fatalf("BuildResponse returned error: %v", err)
 	}
-	b, err := BuildResponse(wrapped, route, 200, "application/json", []byte(`{"ok":true}`))
+	b, err := BuildResponse(wrapped, route, 200, "application/json", []byte(`{"ok":true}`), "")
 	if err != nil {
 		t.Fatalf("BuildResponse returned error: %v", err)
 	}
@@ -59,7 +59,7 @@ func TestBuildResponseStampsErrorStatus(t *testing.T) {
 		Response: config.ResponseConfig{Type: "com.workspace.task.created.processed", Source: "task-service", Subject: "t.tenant-a.app.task.event.processed"},
 	}
 	wrapped := &Event{Event: &in}
-	out, err := BuildResponse(wrapped, route, 422, "application/json", []byte(`{"error":"invalid taskId"}`))
+	out, err := BuildResponse(wrapped, route, 422, "application/json", []byte(`{"error":"invalid taskId"}`), "")
 	if err != nil {
 		t.Fatalf("BuildResponse returned error: %v", err)
 	}
@@ -101,6 +101,42 @@ func TestBuildReplySuccess(t *testing.T) {
 	}
 	if got := out.Extensions()["correlationid"]; got != "corr-9" {
 		t.Errorf("correlationid = %v", got)
+	}
+}
+
+func TestBuildResponseSetsHTTPLocationWhenNonEmpty(t *testing.T) {
+	in := mustEvent(t, `{"specversion":"1.0","id":"evt-loc-1","source":"workspace/task","type":"com.workspace.task.created","datacontenttype":"application/json","data":{"taskId":"t1"}}`)
+	route := config.RouteConfig{
+		Name:     "task-created",
+		Response: config.ResponseConfig{Type: "x.processed", Source: "task-service", Subject: "out"},
+	}
+
+	out, err := BuildResponse(in, route, 307, "application/json", []byte(""), "/new-path")
+	if err != nil {
+		t.Fatalf("BuildResponse: %v", err)
+	}
+	got, ok := out.Extensions()["httplocation"]
+	if !ok {
+		t.Fatalf("expected httplocation extension to be set")
+	}
+	if got != "/new-path" {
+		t.Fatalf("httplocation = %v, want /new-path", got)
+	}
+}
+
+func TestBuildResponseOmitsHTTPLocationWhenEmpty(t *testing.T) {
+	in := mustEvent(t, `{"specversion":"1.0","id":"evt-loc-2","source":"workspace/task","type":"com.workspace.task.created","datacontenttype":"application/json","data":{"taskId":"t1"}}`)
+	route := config.RouteConfig{
+		Name:     "task-created",
+		Response: config.ResponseConfig{Type: "x.processed", Source: "task-service", Subject: "out"},
+	}
+
+	out, err := BuildResponse(in, route, 200, "application/json", []byte(`{"ok":true}`), "")
+	if err != nil {
+		t.Fatalf("BuildResponse: %v", err)
+	}
+	if _, present := out.Extensions()["httplocation"]; present {
+		t.Fatalf("httplocation extension must not be set when location is empty")
 	}
 }
 

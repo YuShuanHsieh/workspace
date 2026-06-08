@@ -17,7 +17,7 @@ import (
 // itself (parse failures, no matching route) rather than from an app response.
 const ErrorReplyType = "io.eventadapter.error.reply"
 
-func BuildResponse(in *Event, route config.RouteConfig, status int, contentType string, body []byte) (*ce.Event, error) {
+func BuildResponse(in *Event, route config.RouteConfig, status int, contentType string, body []byte, location string) (*ce.Event, error) {
 	if in == nil {
 		return nil, fmt.Errorf("response: incoming event is nil")
 	}
@@ -37,6 +37,9 @@ func BuildResponse(in *Event, route config.RouteConfig, status int, contentType 
 	out.SetExtension("causationid", in.ID())
 	if corr, ok := in.Extensions()["correlationid"]; ok {
 		out.SetExtension("correlationid", corr)
+	}
+	if location != "" {
+		out.SetExtension("httplocation", location)
 	}
 	return &out, nil
 }
