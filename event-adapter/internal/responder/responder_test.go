@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"sync"
 	"sync/atomic"
@@ -16,6 +17,7 @@ import (
 	"event-adapter/internal/config"
 	"event-adapter/internal/dispatcher"
 	"event-adapter/internal/natsjs"
+	pathtemplate "event-adapter/internal/pathtemplate"
 )
 
 type fakeDispatcher struct {
@@ -145,6 +147,24 @@ func TestHandleTimeoutReplies504(t *testing.T) {
 	reply := decode(t, *out)
 	if reply["httpstatus"].(float64) != 504 {
 		t.Errorf("httpstatus = %v, want 504", reply["httpstatus"])
+	}
+}
+
+func TestHandlePermanentPathErrorRepliesWith400(t *testing.T) {
+	permErr := fmt.Errorf("dispatcher: resolve path: %w", pathtemplate.ErrPermanent)
+	d := fakeDispatcher{err: permErr}
+	met := &fakeMetrics{}
+	r := newResponder(d, met)
+	m, out := capture()
+	r.handle(context.Background(), *m)
+
+	reply := decode(t, *out)
+	status, ok := reply["httpstatus"].(float64)
+	if !ok || status != 400 {
+		t.Fatalf("httpstatus = %v, want 400", reply["httpstatus"])
+	}
+	if met.dispatchErr != 1 {
+		t.Fatalf("dispatchErr metric = %d, want 1", met.dispatchErr)
 	}
 }
 
