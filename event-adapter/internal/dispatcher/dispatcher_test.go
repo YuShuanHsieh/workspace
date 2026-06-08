@@ -13,6 +13,7 @@ import (
 
 	clevent "event-adapter/internal/cloudevent"
 	"event-adapter/internal/config"
+	pathtemplate "event-adapter/internal/pathtemplate"
 )
 
 func TestDispatchForwardsDataAndHeaders(t *testing.T) {
@@ -317,6 +318,81 @@ func TestDispatchDefaultClientDoesNotFollowRedirects(t *testing.T) {
 	}
 	if res.Location != target.URL+"/landed" {
 		t.Fatalf("Location = %q, want %q", res.Location, target.URL+"/landed")
+	}
+}
+
+func TestDispatchResolvesPathTemplate(t *testing.T) {
+	var gotURL string
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		gotURL = r.URL.Path
+		return &http.Response{
+			StatusCode: 200,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(bytes.NewBufferString(`{"ok":true}`)),
+		}, nil
+	})}
+
+	ev, err := clevent.Parse([]byte(`{"specversion":"1.0","id":"evt-pt-1","source":"workspace/task","type":"com.workspace.task.created","datacontenttype":"application/json","data":{"taskId":"task-42"}}`))
+	if err != nil {
+		t.Fatalf("parse event: %v", err)
+	}
+
+	d := New("http://127.0.0.1:8080", client)
+	_, err = d.Dispatch(context.Background(), config.DispatchConfig{
+		Method: "POST", Path: "/api/tasks/{taskId}/complete", Timeout: time.Second,
+	}, ev)
+	if err != nil {
+		t.Fatalf("Dispatch returned error: %v", err)
+	}
+	if gotURL != "/api/tasks/task-42/complete" {
+		t.Fatalf("URL.Path = %q, want /api/tasks/task-42/complete", gotURL)
+	}
+}
+
+func TestDispatchStaticPathUnchanged(t *testing.T) {
+	var gotURL string
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		gotURL = r.URL.Path
+		return &http.Response{
+			StatusCode: 200,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(bytes.NewBufferString(`{"ok":true}`)),
+		}, nil
+	})}
+	ev, err := clevent.Parse([]byte(`{"specversion":"1.0","id":"evt-pt-2","source":"workspace/task","type":"com.workspace.task.created","datacontenttype":"application/json","data":{"taskId":"x"}}`))
+	if err != nil {
+		t.Fatalf("parse event: %v", err)
+	}
+	d := New("http://127.0.0.1:8080", client)
+	_, err = d.Dispatch(context.Background(), config.DispatchConfig{
+		Method: "POST", Path: "/events/task-created", Timeout: time.Second,
+	}, ev)
+	if err != nil {
+		t.Fatalf("Dispatch returned error: %v", err)
+	}
+	if gotURL != "/events/task-created" {
+		t.Fatalf("URL.Path = %q, want /events/task-created", gotURL)
+	}
+}
+
+func TestDispatchMissingFieldReturnsErrPermanent(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		t.Fatal("transport must not be invoked when path resolution fails")
+		return nil, nil
+	})}
+	ev, err := clevent.Parse([]byte(`{"specversion":"1.0","id":"evt-pt-3","source":"workspace/task","type":"com.workspace.task.created","datacontenttype":"application/json","data":{"status":"done"}}`))
+	if err != nil {
+		t.Fatalf("parse event: %v", err)
+	}
+	d := New("http://127.0.0.1:8080", client)
+	_, err = d.Dispatch(context.Background(), config.DispatchConfig{
+		Method: "POST", Path: "/api/tasks/{taskId}/complete", Timeout: time.Second,
+	}, ev)
+	if err == nil {
+		t.Fatal("expected error for missing field")
+	}
+	if !errors.Is(err, pathtemplate.ErrPermanent) {
+		t.Fatalf("error must wrap pathtemplate.ErrPermanent, got %v", err)
 	}
 }
 
