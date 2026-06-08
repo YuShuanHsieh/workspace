@@ -14,6 +14,7 @@ import (
 	clevent "event-adapter/internal/cloudevent"
 	"event-adapter/internal/config"
 	"event-adapter/internal/dispatcher"
+	pathtemplate "event-adapter/internal/pathtemplate"
 )
 
 type Dispatcher interface {
@@ -62,6 +63,9 @@ func (p *Processor) Process(ctx context.Context, subject string, ev *clevent.Eve
 
 	res, dispatchErr := p.dispatcher.Dispatch(ctx, route.Dispatch, ev)
 	if dispatchErr != nil {
+		if errors.Is(dispatchErr, pathtemplate.ErrPermanent) {
+			return p.toDLQ(ctx, route, ev, dispatchErr.Error(), 0, delivery, msg)
+		}
 		if isNetworkError(dispatchErr) && delivery < policy.MaxAttempts {
 			return msg.Nak(ctx, policy.Delay(delivery))
 		}
