@@ -341,6 +341,20 @@ Event-route notes:
 You can configure `requests:` and `routes:` in the same sidecar. At least one
 must be present.
 
+### Routes with dynamic path segments
+
+If your handler lives at a path with a dynamic segment — for example `PUT /api/tasks/{taskId}/complete` — declare the template in your route config:
+
+```yaml
+dispatch:
+  method: PUT
+  path: /api/tasks/{taskId}/complete
+```
+
+The sidecar resolves `{taskId}` against the top-level `data.taskId` field of every incoming CloudEvent before dispatching. Your handler receives the resolved URL (e.g. `/api/tasks/task-42/complete`) as a normal HTTP request — no special header parsing required.
+
+If the event omits the referenced field, the sidecar sends the event to your route's DLQ subject. There are no retries — the event data does not change between attempts.
+
 ## 7. Headers, Cookies, And CloudEvent Data
 
 Phase 1 supports JSON CloudEvent `data` payloads. CloudEvents using
