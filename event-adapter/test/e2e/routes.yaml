@@ -35,6 +35,27 @@ routes:
       maxBackoff: 2s
     dlq:
       subject: dlq.tenant-a.task-service
+  - name: task-created-redirect
+    match:
+      subject: t.tenant-a.app.task.event.created
+      type: com.workspace.task.created.redirect
+      source: workspace/task
+    dispatch:
+      method: POST
+      path: /events/redirect-me
+      timeout: 2s
+      forwardHeaders:
+        - X-Workspace-Actor-Id
+    response:
+      type: com.workspace.task.created.redirect.processed
+      source: task-service
+      subject: t.tenant-a.app.task.event.processed.redirect
+    retry:
+      maxAttempts: 3
+      initialBackoff: 100ms
+      maxBackoff: 2s
+    dlq:
+      subject: dlq.tenant-a.task-service
 requests:
   subject: q.tenant-a.app.uploads.request
   queueGroup: upload-responders

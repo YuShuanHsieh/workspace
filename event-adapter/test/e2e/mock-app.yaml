@@ -17,3 +17,16 @@ handlers:
       status: 200
       contentType: application/json
       body: '{"uploadId":"up-1","url":"https://example-bucket.s3/put?sig=abc"}'
+  - method: POST
+    path: /events/redirect-me
+    requireHeaders:
+      - X-Workspace-Actor-Id
+    response:
+      status: 307
+      location: /events/post-redirect
+  - method: POST
+    path: /events/post-redirect
+    response:
+      status: 200
+      contentType: application/json
+      body: '{"reached":"target"}'
