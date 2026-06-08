@@ -227,6 +227,43 @@ func TestJetStreamRedirectPublishesHTTPLocation(t *testing.T) {
 	}
 }
 
+func TestRequestReplyRedirectCarriesHTTPLocation(t *testing.T) {
+	nc, err := nats.Connect("nats://127.0.0.1:4222")
+	if err != nil {
+		t.Fatalf("connect nats: %v", err)
+	}
+	defer nc.Close()
+
+	fixture, err := os.ReadFile("fixtures/redirect-reqreply.json")
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+
+	msg, err := nc.Request("q.tenant-a.app.uploads.request", fixture, 15*time.Second)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+
+	var reply map[string]any
+	if err := json.Unmarshal(msg.Data, &reply); err != nil {
+		t.Fatalf("decode reply: %v", err)
+	}
+	if reply["type"] != "com.workspace.redirect.reply" {
+		t.Fatalf("type = %v, want com.workspace.redirect.reply", reply["type"])
+	}
+	status, ok := reply["httpstatus"].(float64)
+	if !ok || status != 307 {
+		t.Fatalf("httpstatus = %v, want 307", reply["httpstatus"])
+	}
+	loc, ok := reply["httplocation"].(string)
+	if !ok {
+		t.Fatalf("httplocation missing from reply: %v", reply)
+	}
+	if loc != "/events/post-redirect" {
+		t.Fatalf("httplocation = %q, want /events/post-redirect", loc)
+	}
+}
+
 // ensureEmptyStream guarantees the workspace-events stream exists and is empty.
 // nats-setup in docker compose creates it on first run; this is a safety net
 // for reruns and partial teardowns.

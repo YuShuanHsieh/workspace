@@ -71,4 +71,14 @@ requests:
       reply:
         source: upload-service
         type: com.workspace.uploads.presign.reply
+    - name: redirect-request
+      match:
+        type: com.workspace.redirect.request
+      dispatch:
+        method: POST
+        path: /events/redirect-me
+        timeout: 3s
+      reply:
+        source: task-service
+        type: com.workspace.redirect.reply
 
