@@ -80,7 +80,7 @@ func mustEvent(t *testing.T, s string) *Event {
 func TestBuildReplySuccess(t *testing.T) {
 	in := mustEvent(t, `{"specversion":"1.0","id":"req-1","source":"client","type":"com.x.request","datacontenttype":"application/json","data":{"a":1},"correlationid":"corr-9"}`)
 	reply := config.ReplyConfig{Source: "upload-service", Type: "com.x.reply"}
-	out, err := BuildReply(in, reply, "upload-presign", 200, "application/json", []byte(`{"url":"https://s3/put"}`))
+	out, err := BuildReply(in, reply, "upload-presign", 200, "application/json", []byte(`{"url":"https://s3/put"}`), "")
 	if err != nil {
 		t.Fatalf("BuildReply: %v", err)
 	}
@@ -137,6 +137,36 @@ func TestBuildResponseOmitsHTTPLocationWhenEmpty(t *testing.T) {
 	}
 	if _, present := out.Extensions()["httplocation"]; present {
 		t.Fatalf("httplocation extension must not be set when location is empty")
+	}
+}
+
+func TestBuildReplySetsHTTPLocationWhenNonEmpty(t *testing.T) {
+	in := mustEvent(t, `{"specversion":"1.0","id":"req-loc-1","source":"workspace/task","type":"com.workspace.task.created","datacontenttype":"application/json","data":{"taskId":"t1"}}`)
+	reply := config.ReplyConfig{Type: "x.reply", Source: "upload-service"}
+
+	out, err := BuildReply(in, reply, "upload-presign", 307, "application/json", []byte(""), "/elsewhere")
+	if err != nil {
+		t.Fatalf("BuildReply: %v", err)
+	}
+	got, ok := out.Extensions()["httplocation"]
+	if !ok {
+		t.Fatal("expected httplocation extension on reply")
+	}
+	if got != "/elsewhere" {
+		t.Fatalf("httplocation = %v, want /elsewhere", got)
+	}
+}
+
+func TestBuildReplyOmitsHTTPLocationWhenEmpty(t *testing.T) {
+	in := mustEvent(t, `{"specversion":"1.0","id":"req-loc-2","source":"workspace/task","type":"com.workspace.task.created","datacontenttype":"application/json","data":{"taskId":"t1"}}`)
+	reply := config.ReplyConfig{Type: "x.reply", Source: "upload-service"}
+
+	out, err := BuildReply(in, reply, "upload-presign", 200, "application/json", []byte(`{"ok":true}`), "")
+	if err != nil {
+		t.Fatalf("BuildReply: %v", err)
+	}
+	if _, present := out.Extensions()["httplocation"]; present {
+		t.Fatal("httplocation extension must be absent when location is empty")
 	}
 }
 

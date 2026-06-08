@@ -148,6 +148,30 @@ func TestHandleTimeoutReplies504(t *testing.T) {
 	}
 }
 
+func TestHandle3xxWithLocationRepliesWithHTTPLocation(t *testing.T) {
+	d := fakeDispatcher{res: dispatcher.Result{
+		StatusCode:  307,
+		ContentType: "",
+		Body:        []byte(""),
+		Location:    "/moved",
+	}}
+	r := newResponder(d, &fakeMetrics{})
+	m, out := capture()
+	r.handle(context.Background(), *m)
+
+	reply := decode(t, *out)
+	if reply["httpstatus"].(float64) != 307 {
+		t.Fatalf("httpstatus = %v, want 307", reply["httpstatus"])
+	}
+	got, ok := reply["httplocation"].(string)
+	if !ok {
+		t.Fatalf("httplocation missing from reply: %v", reply)
+	}
+	if got != "/moved" {
+		t.Fatalf("httplocation = %q, want /moved", got)
+	}
+}
+
 func TestHandleParseErrorReplies400(t *testing.T) {
 	r := newResponder(fakeDispatcher{}, &fakeMetrics{})
 	out := []byte(nil)
