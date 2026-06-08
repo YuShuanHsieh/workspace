@@ -1,0 +1,13 @@
+{
+  "specversion": "1.0",
+  "id": "redir-jet-1",
+  "source": "workspace/task",
+  "type": "com.workspace.task.created.redirect",
+  "datacontenttype": "application/json",
+  "dispatchheaders": {
+    "X-Workspace-Actor-Id": "user-1"
+  },
+  "data": {
+    "taskId": "redir-1"
+  }
+}

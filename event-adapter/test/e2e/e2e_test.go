@@ -172,6 +172,98 @@ func TestRequestReplyPresign(t *testing.T) {
 	}
 }
 
+// TestJetStreamRedirectPublishesHTTPLocation verifies that when the dispatched
+// HTTP endpoint returns a 3xx with a Location header, the response CloudEvent
+// published on the response subject carries httpstatus=307 and httplocation,
+// AND that the adapter does not follow the redirect (the redirect target
+// handler is never invoked).
+func TestJetStreamRedirectPublishesHTTPLocation(t *testing.T) {
+	nc, err := nats.Connect("nats://127.0.0.1:4222")
+	if err != nil {
+		t.Fatalf("connect nats: %v", err)
+	}
+	defer nc.Close()
+
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Fatalf("jetstream: %v", err)
+	}
+	ensureEmptyStream(t, js)
+
+	sub, err := js.SubscribeSync("t.tenant-a.app.task.event.processed.redirect")
+	if err != nil {
+		t.Fatalf("subscribe redirect response subject: %v", err)
+	}
+	defer func() { _ = sub.Unsubscribe() }()
+
+	fixture, err := os.ReadFile("fixtures/redirect-jetstream.json")
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+
+	if _, err := js.Publish("t.tenant-a.app.task.event.created", fixture); err != nil {
+		t.Fatalf("publish input event: %v", err)
+	}
+
+	msg, err := sub.NextMsg(15 * time.Second)
+	if err != nil {
+		t.Fatalf("waiting for redirect response: %v", err)
+	}
+
+	var response map[string]any
+	if err := json.Unmarshal(msg.Data, &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	status, ok := response["httpstatus"].(float64)
+	if !ok || status != 307 {
+		t.Fatalf("httpstatus = %v, want 307", response["httpstatus"])
+	}
+	loc, ok := response["httplocation"].(string)
+	if !ok {
+		t.Fatalf("httplocation missing from response event: %v", response)
+	}
+	if loc != "/events/post-redirect" {
+		t.Fatalf("httplocation = %q, want /events/post-redirect", loc)
+	}
+}
+
+func TestRequestReplyRedirectCarriesHTTPLocation(t *testing.T) {
+	nc, err := nats.Connect("nats://127.0.0.1:4222")
+	if err != nil {
+		t.Fatalf("connect nats: %v", err)
+	}
+	defer nc.Close()
+
+	fixture, err := os.ReadFile("fixtures/redirect-reqreply.json")
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+
+	msg, err := nc.Request("q.tenant-a.app.uploads.request", fixture, 15*time.Second)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+
+	var reply map[string]any
+	if err := json.Unmarshal(msg.Data, &reply); err != nil {
+		t.Fatalf("decode reply: %v", err)
+	}
+	if reply["type"] != "com.workspace.redirect.reply" {
+		t.Fatalf("type = %v, want com.workspace.redirect.reply", reply["type"])
+	}
+	status, ok := reply["httpstatus"].(float64)
+	if !ok || status != 307 {
+		t.Fatalf("httpstatus = %v, want 307", reply["httpstatus"])
+	}
+	loc, ok := reply["httplocation"].(string)
+	if !ok {
+		t.Fatalf("httplocation missing from reply: %v", reply)
+	}
+	if loc != "/events/post-redirect" {
+		t.Fatalf("httplocation = %q, want /events/post-redirect", loc)
+	}
+}
+
 // ensureEmptyStream guarantees the workspace-events stream exists and is empty.
 // nats-setup in docker compose creates it on first run; this is a safety net
 // for reruns and partial teardowns.
@@ -182,6 +274,7 @@ func ensureEmptyStream(t *testing.T, js nats.JetStreamContext) {
 		Subjects: []string{
 			"t.tenant-a.app.task.event.created",
 			"t.tenant-a.app.task.event.processed",
+			"t.tenant-a.app.task.event.processed.redirect",
 			"dlq.tenant-a.task-service",
 		},
 	})

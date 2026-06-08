@@ -38,6 +38,7 @@ type HandlerResponse struct {
 	Status      int    `yaml:"status"`
 	ContentType string `yaml:"contentType"`
 	Body        string `yaml:"body"`
+	Location    string `yaml:"location"`
 }
 
 func main() {
@@ -112,6 +113,9 @@ func makeHandler(h Handler) http.HandlerFunc {
 
 		if h.Response.ContentType != "" {
 			w.Header().Set("Content-Type", h.Response.ContentType)
+		}
+		if h.Response.Location != "" {
+			w.Header().Set("Location", h.Response.Location)
 		}
 		status := cmp.Or(h.Response.Status, http.StatusOK)
 		w.WriteHeader(status)

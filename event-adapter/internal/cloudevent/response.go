@@ -17,7 +17,7 @@ import (
 // itself (parse failures, no matching route) rather than from an app response.
 const ErrorReplyType = "io.eventadapter.error.reply"
 
-func BuildResponse(in *Event, route config.RouteConfig, status int, contentType string, body []byte) (*ce.Event, error) {
+func BuildResponse(in *Event, route config.RouteConfig, status int, contentType string, body []byte, location string) (*ce.Event, error) {
 	if in == nil {
 		return nil, fmt.Errorf("response: incoming event is nil")
 	}
@@ -38,13 +38,16 @@ func BuildResponse(in *Event, route config.RouteConfig, status int, contentType 
 	if corr, ok := in.Extensions()["correlationid"]; ok {
 		out.SetExtension("correlationid", corr)
 	}
+	if location != "" {
+		out.SetExtension("httplocation", location)
+	}
 	return &out, nil
 }
 
 // BuildReply builds a request-reply response CloudEvent from the app's HTTP
 // response. Unlike BuildResponse it sets no subject — the reply travels on the
 // request's inbox.
-func BuildReply(in *Event, reply config.ReplyConfig, routeName string, status int, contentType string, body []byte) (*ce.Event, error) {
+func BuildReply(in *Event, reply config.ReplyConfig, routeName string, status int, contentType string, body []byte, location string) (*ce.Event, error) {
 	if in == nil {
 		return nil, fmt.Errorf("reply: incoming event is nil")
 	}
@@ -63,6 +66,9 @@ func BuildReply(in *Event, reply config.ReplyConfig, routeName string, status in
 	out.SetExtension("causationid", in.ID())
 	if corr, ok := in.Extensions()["correlationid"]; ok {
 		out.SetExtension("correlationid", corr)
+	}
+	if location != "" {
+		out.SetExtension("httplocation", location)
 	}
 	return &out, nil
 }

@@ -18,7 +18,7 @@ services:
         done
         nats stream add workspace-events \
           --server nats://nats:4222 \
-          --subjects "t.tenant-a.app.task.event.created,t.tenant-a.app.task.event.processed,dlq.tenant-a.task-service" \
+          --subjects "t.tenant-a.app.task.event.created,t.tenant-a.app.task.event.processed,t.tenant-a.app.task.event.processed.redirect,dlq.tenant-a.task-service" \
           --storage file \
           --retention limits \
           --discard old \

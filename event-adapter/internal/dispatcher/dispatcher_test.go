@@ -6,6 +6,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -196,6 +198,125 @@ func TestDispatchAddsNoCookieHeaderWhenDispatchCookiesAbsent(t *testing.T) {
 	}
 	if len(gotCookies) != 0 {
 		t.Fatalf("expected no cookies on request, got %d: %+v", len(gotCookies), gotCookies)
+	}
+}
+
+func TestDispatchPopulatesLocationOn3xx(t *testing.T) {
+	client := &http.Client{
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			h := http.Header{}
+			h.Set("Location", "/new-path")
+			return &http.Response{
+				StatusCode: 307,
+				Header:     h,
+				Body:       io.NopCloser(bytes.NewBufferString("")),
+			}, nil
+		}),
+	}
+
+	ev, err := clevent.Parse([]byte(`{"specversion":"1.0","id":"evt-loc","source":"workspace/task","type":"com.workspace.task.created","datacontenttype":"application/json","data":{"taskId":"t1"}}`))
+	if err != nil {
+		t.Fatalf("parse event: %v", err)
+	}
+
+	d := New("http://127.0.0.1:8080", client)
+	res, err := d.Dispatch(context.Background(), config.DispatchConfig{
+		Method: "POST", Path: "/", Timeout: time.Second,
+	}, ev)
+	if err != nil {
+		t.Fatalf("Dispatch returned error: %v", err)
+	}
+	if res.StatusCode != 307 {
+		t.Fatalf("StatusCode = %d, want 307", res.StatusCode)
+	}
+	if res.Location != "/new-path" {
+		t.Fatalf("Location = %q, want /new-path", res.Location)
+	}
+}
+
+func TestDispatchLeavesLocationEmptyWhen3xxHasNoLocationHeader(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: 304,
+			Header:     http.Header{},
+			Body:       io.NopCloser(bytes.NewBufferString("")),
+		}, nil
+	})}
+	ev, err := clevent.Parse([]byte(`{"specversion":"1.0","id":"evt-nl","source":"workspace/task","type":"com.workspace.task.created","datacontenttype":"application/json","data":{"taskId":"t1"}}`))
+	if err != nil {
+		t.Fatalf("parse event: %v", err)
+	}
+	d := New("http://127.0.0.1:8080", client)
+	res, err := d.Dispatch(context.Background(), config.DispatchConfig{Method: "POST", Path: "/", Timeout: time.Second}, ev)
+	if err != nil {
+		t.Fatalf("Dispatch returned error: %v", err)
+	}
+	if res.Location != "" {
+		t.Fatalf("Location = %q, want empty (no Location header on 304)", res.Location)
+	}
+}
+
+func TestDispatchLeavesLocationEmptyOnNon3xxEvenIfLocationHeaderPresent(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		h := http.Header{}
+		h.Set("Location", "/should-be-ignored")
+		return &http.Response{
+			StatusCode: 200,
+			Header:     h,
+			Body:       io.NopCloser(bytes.NewBufferString(`{"ok":true}`)),
+		}, nil
+	})}
+	ev, err := clevent.Parse([]byte(`{"specversion":"1.0","id":"evt-200loc","source":"workspace/task","type":"com.workspace.task.created","datacontenttype":"application/json","data":{"taskId":"t1"}}`))
+	if err != nil {
+		t.Fatalf("parse event: %v", err)
+	}
+	d := New("http://127.0.0.1:8080", client)
+	res, err := d.Dispatch(context.Background(), config.DispatchConfig{Method: "POST", Path: "/", Timeout: time.Second}, ev)
+	if err != nil {
+		t.Fatalf("Dispatch returned error: %v", err)
+	}
+	if res.Location != "" {
+		t.Fatalf("Location = %q on 200 response, want empty (3xx-only rule)", res.Location)
+	}
+}
+
+func TestDispatchDefaultClientDoesNotFollowRedirects(t *testing.T) {
+	var targetHits int64
+
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt64(&targetHits, 1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer target.Close()
+
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", target.URL+"/landed")
+		w.WriteHeader(http.StatusTemporaryRedirect)
+	}))
+	defer origin.Close()
+
+	ev, err := clevent.Parse([]byte(`{"specversion":"1.0","id":"evt-noredir","source":"workspace/task","type":"com.workspace.task.created","datacontenttype":"application/json","data":{"taskId":"t1"}}`))
+	if err != nil {
+		t.Fatalf("parse event: %v", err)
+	}
+
+	// Pass nil client so dispatcher uses its default.
+	d := New(origin.URL, nil)
+	res, err := d.Dispatch(context.Background(), config.DispatchConfig{
+		Method: "POST", Path: "/", Timeout: 2 * time.Second,
+	}, ev)
+	if err != nil {
+		t.Fatalf("Dispatch returned error: %v", err)
+	}
+	if res.StatusCode != http.StatusTemporaryRedirect {
+		t.Fatalf("StatusCode = %d, want 307 (must not have followed)", res.StatusCode)
+	}
+	if got := atomic.LoadInt64(&targetHits); got != 0 {
+		t.Fatalf("targetHits = %d, want 0 (default client must not follow redirects)", got)
+	}
+	if res.Location != target.URL+"/landed" {
+		t.Fatalf("Location = %q, want %q", res.Location, target.URL+"/landed")
 	}
 }
 

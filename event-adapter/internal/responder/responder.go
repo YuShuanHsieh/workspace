@@ -120,7 +120,7 @@ func (r *Responder) handle(ctx context.Context, m natsjs.RequestMsg) {
 		if errors.Is(derr, context.DeadlineExceeded) {
 			status = http.StatusGatewayTimeout
 		}
-		reply, berr := clevent.BuildReply(ev, route.Reply, route.Name, status, "application/json", errorBody(derr.Error()))
+		reply, berr := clevent.BuildReply(ev, route.Reply, route.Name, status, "application/json", errorBody(derr.Error()), "")
 		if berr != nil {
 			r.respond(m, clevent.BuildErrorReply(ev, r.appID, http.StatusInternalServerError, berr.Error()))
 			return
@@ -128,7 +128,7 @@ func (r *Responder) handle(ctx context.Context, m natsjs.RequestMsg) {
 		r.respond(m, reply)
 		return
 	}
-	reply, berr := clevent.BuildReply(ev, route.Reply, route.Name, res.StatusCode, res.ContentType, res.Body)
+	reply, berr := clevent.BuildReply(ev, route.Reply, route.Name, res.StatusCode, res.ContentType, res.Body, res.Location)
 	if berr != nil {
 		r.respond(m, clevent.BuildErrorReply(ev, r.appID, http.StatusInternalServerError, berr.Error()))
 		return

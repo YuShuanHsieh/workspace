@@ -250,6 +250,7 @@ The response event must include:
 - `dataschema` when configured for the response route.
 - Response payload in `data`.
 - A `httpstatus` extension carrying the HTTP status code returned by the app. Consumers use this to distinguish success (`2xx`/`3xx`) from error (`4xx`/`5xx`).
+- A `httplocation` extension carrying the value of the HTTP `Location` response header. Populated only when the app returns a `3xx` status; absent otherwise. The sidecar does not follow redirects — consumers receive the redirect intent and decide how to act on it.
 - Correlation metadata copied from the incoming event where available.
 - Causation metadata that points back to the incoming event ID.
 
@@ -407,7 +408,7 @@ Design reference: [`../../docs/superpowers/specs/2026-06-07-event-adapter-req-re
 3. The responder validates the CloudEvent envelope and matches it to a request route by `type`.
 4. The responder dispatches the CloudEvent `data` to the configured loopback HTTP method and path — the same dispatch contract as section 7.
 5. The app returns an HTTP response (success or business rejection).
-6. The responder builds a reply CloudEvent (response body as `data`, HTTP status in `httpstatus`, `causationid` = request id, `correlationid` passed through) and sends it on the caller's reply inbox.
+6. The responder builds a reply CloudEvent (response body as `data`, HTTP status in `httpstatus`, `httplocation` carrying the `Location` header when the app returns a `3xx`, `causationid` = request id, `correlationid` passed through) and sends it on the caller's reply inbox.
 
 There is no ack, retry, or DLQ on this path. A synchronous request that fails returns an error reply to a waiting caller; the caller owns whether to retry.
 

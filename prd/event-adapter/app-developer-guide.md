@@ -133,6 +133,8 @@ Recommended pattern:
 
 The sidecar publishes a response event for every HTTP response (success or error) and carries the status code in the `httpstatus` CloudEvent extension. The sidecar does not retry on `4xx` or `5xx` — if you need a retry on a transient failure, do it inside the handler before returning. Only network-class failures (timeout, connection refused, TLS error) are retried by the sidecar.
 
+If your handler returns a `3xx` redirect status with a `Location` header, the sidecar publishes the response event (or reply, for request-reply routes) with both `httpstatus` and an `httplocation` extension carrying the header value. The sidecar does not follow the redirect — consumers see the redirect intent and decide what to do with it. This applies to all `3xx` codes (301, 302, 303, 307, 308); if you return `3xx` without a `Location` header, only `httpstatus` is set.
+
 ### Keep Handlers Fast
 
 The sidecar route config includes an HTTP timeout. If your handler times out, the sidecar treats the attempt as failed and retries.

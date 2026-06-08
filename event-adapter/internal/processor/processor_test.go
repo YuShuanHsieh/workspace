@@ -25,14 +25,16 @@ func (f *fakeDispatcher) Dispatch(context.Context, config.DispatchConfig, *cleve
 }
 
 type fakePublisher struct {
-	responseErr error
-	dlqErr      error
-	responses   int
-	dlqs        int
+	responseErr  error
+	dlqErr       error
+	responses    int
+	dlqs         int
+	lastResponse *ce.Event
 }
 
-func (f *fakePublisher) PublishResponse(context.Context, string, *ce.Event) error {
+func (f *fakePublisher) PublishResponse(_ context.Context, _ string, ev *ce.Event) error {
 	f.responses++
+	f.lastResponse = ev
 	return f.responseErr
 }
 
@@ -183,5 +185,42 @@ func TestProcessorSendsToDLQWhenResponsePublishFailsAndExhausted(t *testing.T) {
 	}
 	if h.acked != 1 || h.naked != 0 || pub.dlqs != 1 {
 		t.Fatalf("expected dlq+ack when exhausted, got ack=%d nak=%d dlqs=%d", h.acked, h.naked, pub.dlqs)
+	}
+}
+
+func TestProcessor3xxWithLocationPublishesHTTPLocation(t *testing.T) {
+	disp := &fakeDispatcher{result: dispatcher.Result{
+		StatusCode:  307,
+		ContentType: "",
+		Body:        []byte(""),
+		Location:    "/new-path",
+	}}
+	pub := &fakePublisher{}
+	p := New(disp, pub)
+
+	ev, err := clevent.Parse([]byte(`{"specversion":"1.0","id":"evt-p-3xx","source":"workspace/task","type":"com.workspace.task.created","datacontenttype":"application/json","data":{"taskId":"t1"}}`))
+	if err != nil {
+		t.Fatalf("parse event: %v", err)
+	}
+	route := config.RouteConfig{
+		Name:     "task-created",
+		Dispatch: config.DispatchConfig{Method: "POST", Path: "/", Timeout: time.Second},
+		Response: config.ResponseConfig{Type: "com.workspace.task.created.processed", Source: "task-service", Subject: "t.x.processed"},
+		Retry:    config.RetryConfig{MaxAttempts: 1, InitialBackoff: time.Millisecond, MaxBackoff: time.Millisecond},
+	}
+
+	h := &fakeHandle{deliveries: 1}
+	if err := p.Process(context.Background(), "t.x.created", ev, route, h); err != nil {
+		t.Fatalf("Process returned error: %v", err)
+	}
+	if pub.lastResponse == nil {
+		t.Fatal("expected publisher to receive a response event")
+	}
+	got, ok := pub.lastResponse.Extensions()["httplocation"]
+	if !ok {
+		t.Fatal("httplocation extension missing on published response event")
+	}
+	if got != "/new-path" {
+		t.Fatalf("httplocation = %v, want /new-path", got)
 	}
 }

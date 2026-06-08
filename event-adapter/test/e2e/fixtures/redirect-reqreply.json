@@ -1,0 +1,13 @@
+{
+  "specversion": "1.0",
+  "id": "req-redir-1",
+  "source": "frontend/web",
+  "type": "com.workspace.redirect.request",
+  "datacontenttype": "application/json",
+  "dispatchheaders": {
+    "X-Workspace-Actor-Id": "user-1"
+  },
+  "data": {
+    "what": "wherever"
+  }
+}
