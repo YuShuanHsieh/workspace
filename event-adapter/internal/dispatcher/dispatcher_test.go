@@ -6,6 +6,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -276,6 +278,45 @@ func TestDispatchLeavesLocationEmptyOnNon3xxEvenIfLocationHeaderPresent(t *testi
 	}
 	if res.Location != "" {
 		t.Fatalf("Location = %q on 200 response, want empty (3xx-only rule)", res.Location)
+	}
+}
+
+func TestDispatchDefaultClientDoesNotFollowRedirects(t *testing.T) {
+	var targetHits int64
+
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt64(&targetHits, 1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer target.Close()
+
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", target.URL+"/landed")
+		w.WriteHeader(http.StatusTemporaryRedirect)
+	}))
+	defer origin.Close()
+
+	ev, err := clevent.Parse([]byte(`{"specversion":"1.0","id":"evt-noredir","source":"workspace/task","type":"com.workspace.task.created","datacontenttype":"application/json","data":{"taskId":"t1"}}`))
+	if err != nil {
+		t.Fatalf("parse event: %v", err)
+	}
+
+	// Pass nil client so dispatcher uses its default.
+	d := New(origin.URL, nil)
+	res, err := d.Dispatch(context.Background(), config.DispatchConfig{
+		Method: "POST", Path: "/", Timeout: 2 * time.Second,
+	}, ev)
+	if err != nil {
+		t.Fatalf("Dispatch returned error: %v", err)
+	}
+	if res.StatusCode != http.StatusTemporaryRedirect {
+		t.Fatalf("StatusCode = %d, want 307 (must not have followed)", res.StatusCode)
+	}
+	if got := atomic.LoadInt64(&targetHits); got != 0 {
+		t.Fatalf("targetHits = %d, want 0 (default client must not follow redirects)", got)
+	}
+	if res.Location != target.URL+"/landed" {
+		t.Fatalf("Location = %q, want %q", res.Location, target.URL+"/landed")
 	}
 }
 

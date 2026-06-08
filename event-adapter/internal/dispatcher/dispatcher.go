@@ -30,7 +30,11 @@ type Dispatcher struct {
 
 func New(baseURL string, client *http.Client) *Dispatcher {
 	if client == nil {
-		client = http.DefaultClient
+		client = &http.Client{
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		}
 	}
 	return &Dispatcher{baseURL: strings.TrimRight(baseURL, "/"), client: client}
 }
