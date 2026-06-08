@@ -1,0 +1,10 @@
+{
+  "specversion": "1.0",
+  "id": "req-dev-001",
+  "source": "dev/caller",
+  "type": "com.example.my-request",
+  "datacontenttype": "application/json",
+  "data": {
+    "query": "hello"
+  }
+}

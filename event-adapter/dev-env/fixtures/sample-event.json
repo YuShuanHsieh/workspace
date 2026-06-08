@@ -1,0 +1,10 @@
+{
+  "specversion": "1.0",
+  "id": "evt-dev-001",
+  "source": "dev/publisher",
+  "type": "com.example.my-event",
+  "datacontenttype": "application/json",
+  "data": {
+    "message": "hello from dev-env"
+  }
+}
