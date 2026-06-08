@@ -4,7 +4,8 @@
 events and request-reply calls.
 **Scope:** Inbound delivery. Your app handles HTTP on loopback; the sidecar owns
 NATS.
-**Related PRD:** [`prd.md`](./prd.md)
+**Related Docs:** [`prd.md`](./prd.md),
+[`file-upload-app-developer-guide.md`](./file-upload-app-developer-guide.md)
 
 ---
 
@@ -48,6 +49,12 @@ Use request-reply for examples like:
 - minting file-upload presigned URLs
 - validating a synchronous command
 - fetching a small service-owned answer that a caller needs before continuing
+
+If you are implementing file upload, the full workflow is a special case:
+request-reply for presign, direct HTTP upload for the file bytes, then a
+JetStream `file.uploaded` event after the upload completes. See
+[`file-upload-app-developer-guide.md`](./file-upload-app-developer-guide.md) for
+the full pattern.
 
 ## 3. Step-by-Step Request-Reply Integration
 
