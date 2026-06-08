@@ -68,24 +68,6 @@ resolves to `/api/tenants/acme/tasks/task-42` given:
 
 The same token may appear more than once in the path; both occurrences resolve to the same value.
 
-## Value type handling
-
-The CloudEvent `data` field is JSON, so field values may be any JSON type. The dispatcher accepts scalar types and coerces them to string before URL-escaping:
-
-| JSON value type | Behaviour |
-|---|---|
-| `string` (non-empty) | Used verbatim |
-| `string` (`""`) | Permanent failure → DLQ |
-| `number` (e.g. `42`, `3.14`) | Coerced to canonical string form (`"42"`, `"3.14"`) |
-| `bool` (`true` / `false`) | Coerced to `"true"` / `"false"` |
-| `null` | Permanent failure → DLQ |
-| object / array | Permanent failure → DLQ |
-| field absent | Permanent failure → DLQ |
-
-Rationale: real-world publisher JSON often carries numeric IDs unquoted. Forcing publishers to always quote scalars would create friction. Objects and arrays are not meaningful URL path segments, so rejecting them protects against malformed URLs.
-
-After coercion, the resulting string is checked for emptiness — if it is `""`, the resolution fails permanently. This catches publisher bugs where a field is technically present but carries no meaningful value.
-
 ## New package: `internal/pathtemplate`
 
 ```go
@@ -135,10 +117,8 @@ Path resolution errors are **permanent** — the event data does not change betw
 | Scenario | Where caught | Behaviour |
 |---|---|---|
 | Invalid token syntax in config (e.g. `{123}`, unclosed `{x`) | `Validate` at config-load | Service won't start; clear `ValidationError` pointing at the offending route |
-| `data` is not a JSON object (e.g. an array, a string, a number) | `Resolve` at dispatch | Wrapped `ErrPermanent` → processor sends straight to DLQ |
+| `data` is not a JSON object | `Resolve` at dispatch | Wrapped `ErrPermanent` → processor sends straight to DLQ |
 | Referenced field absent from data | `Resolve` at dispatch | Wrapped `ErrPermanent` → DLQ |
-| Field present but value is `""`, `null`, an object, or an array | `Resolve` at dispatch | Wrapped `ErrPermanent` → DLQ |
-| Field present, value is a string / number / bool, but URL-escape produces empty | (cannot happen after the empty-string check) | — |
 | No tokens in path (static) | `Resolve` fast path | Original path returned, no parsing |
 | Network / transient HTTP error after resolution | Dispatcher → processor as today | Retried as before, then DLQ |
 
@@ -161,12 +141,10 @@ The responder handles it symmetrically by returning a 400 error reply instead of
 
 ## Behavior decisions
 
-- **Coerce scalars (string, number, bool) to string.** Real-world JSON publishers often carry numeric IDs. Forcing them to quote-stringify would be friction. Non-scalar types (object, array, null) are not coercible to a meaningful URL segment, so they are rejected.
-- **Reject empty strings as permanent failures.** An empty path segment produces malformed URLs (`/api/tasks//complete`) that virtually no API expects. This catches publisher bugs early instead of forwarding garbage to the app.
-- **`url.PathEscape` everywhere in the path string.** Per the issue. Query-string-aware escaping is out of scope; query templating is allowed but uses the same `PathEscape` (functionally correct for alphanumeric IDs, slightly over-escapes some characters in edge cases; not a v1 concern).
+- **`url.PathEscape` everywhere in the path string.** Per the issue.
 - **Same token may appear multiple times.** No special handling required — both occurrences are independently substituted with the same resolved value.
 - **Static paths are zero-cost.** `Resolve` returns the original path string without parsing JSON if no `{` is present, so routes that don't use templating pay nothing.
-- **Tokens resolve only against top-level `data` fields.** No `ce.*` or `ext.*` namespace, no nested `{user.id}` syntax. Future extension if needed; YAGNI for v1.
+- **Tokens resolve only against top-level `data` fields.** No `ce.*` or `ext.*` namespace, no nested `{user.id}` syntax. Per the issue.
 
 ## Wire format examples
 
@@ -196,19 +174,6 @@ Event `data.taskId = "task-42"` →
 PUT http://app/api/tasks/task-42/complete
 ```
 
-**Multiple tokens, numeric value:**
-
-```yaml
-dispatch:
-  path: /api/tenants/{tenantId}/users/{userId}
-```
-
-Event `data.tenantId = "acme"`, `data.userId = 7` →
-
-```
-GET http://app/api/tenants/acme/users/7
-```
-
 **Permanent failure (missing field):**
 
 Path: `/api/tasks/{taskId}/complete`
@@ -223,8 +188,8 @@ Dispatcher returns `fmt.Errorf("%w: field %q not found in event data", ErrPerman
 
 - `internal/pathtemplate/pathtemplate_test.go`:
   - `Validate`: accepts valid paths (`/x/{y}/z`, `/{a}/{b}`, `/static`); rejects bad tokens (`{123}`, `{}`, `{a-b}`, unclosed `{x`).
-  - `Resolve` happy path: single token, multiple tokens, same token twice, static path (no-token fast path), string value, number value (coerced), bool value (coerced).
-  - `Resolve` permanent failures (each wraps `ErrPermanent`): missing field, `null` value, empty string, object value, array value, `data` not a JSON object.
+  - `Resolve` happy path: single token, multiple tokens, same token twice, static path (no-token fast path).
+  - `Resolve` permanent failures (each wraps `ErrPermanent`): missing field, `data` not a JSON object.
   - `errors.Is(err, ErrPermanent)` returns true for every permanent failure case.
 - `internal/config/validate_test.go`:
   - Bad template in `Dispatch.Path` fails config-load with a `ValidationError` whose `Path` points at `routes[i].dispatch.path` (and same for request-reply routes).
