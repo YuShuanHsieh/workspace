@@ -3,9 +3,13 @@
 package pathtemplate
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"regexp"
+
+	clevent "event-adapter/internal/cloudevent"
 )
 
 // ErrPermanent wraps payload-related Resolve failures that cannot succeed on
@@ -63,6 +67,86 @@ func tokenNames(path string) ([]string, error) {
 func indexFromOffset(s string, off int, c byte) int {
 	for i := off + 1; i < len(s); i++ {
 		if s[i] == c {
+			return i
+		}
+	}
+	return -1
+}
+
+// Resolve substitutes {field} tokens in path against the top-level fields of
+// ev.Data() (parsed as a JSON object). Returns the resolved path on success,
+// or an error wrapping ErrPermanent if any token cannot be resolved from the
+// data payload. Static paths (no tokens) short-circuit without parsing JSON.
+//
+// Validation failures (bad token syntax) do NOT wrap ErrPermanent — those are
+// config bugs, not payload bugs.
+func Resolve(path string, ev *clevent.Event) (string, error) {
+	names, err := tokenNames(path)
+	if err != nil {
+		return "", err
+	}
+	if len(names) == 0 {
+		return path, nil
+	}
+	values, err := decodeDataAsObject(ev)
+	if err != nil {
+		return "", err
+	}
+
+	out := path
+	for _, name := range uniqueNames(names) {
+		raw, ok := values[name]
+		if !ok {
+			return "", fmt.Errorf("%w: field %q not found in event data", ErrPermanent, name)
+		}
+		s, ok := raw.(string)
+		if !ok {
+			return "", fmt.Errorf("%w: field %q is not a string (got %T)", ErrPermanent, name, raw)
+		}
+		out = replaceAllToken(out, name, url.PathEscape(s))
+	}
+	return out, nil
+}
+
+func decodeDataAsObject(ev *clevent.Event) (map[string]any, error) {
+	raw := ev.Data()
+	if len(raw) == 0 {
+		return nil, fmt.Errorf("%w: data is empty", ErrPermanent)
+	}
+	var values map[string]any
+	if err := json.Unmarshal(raw, &values); err != nil {
+		return nil, fmt.Errorf("%w: data is not a JSON object: %v", ErrPermanent, err)
+	}
+	return values, nil
+}
+
+func uniqueNames(in []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(in))
+	for _, n := range in {
+		if _, ok := seen[n]; ok {
+			continue
+		}
+		seen[n] = struct{}{}
+		out = append(out, n)
+	}
+	return out
+}
+
+func replaceAllToken(path, name, value string) string {
+	token := "{" + name + "}"
+	for {
+		idx := indexOf(path, token)
+		if idx < 0 {
+			return path
+		}
+		path = path[:idx] + value + path[idx+len(token):]
+	}
+}
+
+func indexOf(s, sub string) int {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
 			return i
 		}
 	}
