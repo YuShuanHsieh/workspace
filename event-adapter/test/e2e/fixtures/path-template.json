@@ -1,0 +1,13 @@
+{
+  "specversion": "1.0",
+  "id": "pt-1",
+  "source": "workspace/task",
+  "type": "com.workspace.task.template",
+  "datacontenttype": "application/json",
+  "dispatchheaders": {
+    "X-Workspace-Actor-Id": "user-1"
+  },
+  "data": {
+    "taskId": "e2e-task-1"
+  }
+}

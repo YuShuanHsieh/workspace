@@ -264,6 +264,56 @@ func TestRequestReplyRedirectCarriesHTTPLocation(t *testing.T) {
 	}
 }
 
+func TestPathTemplateResolvesFromEventData(t *testing.T) {
+	nc, err := nats.Connect("nats://127.0.0.1:4222")
+	if err != nil {
+		t.Fatalf("connect nats: %v", err)
+	}
+	defer nc.Close()
+
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Fatalf("jetstream: %v", err)
+	}
+	ensureEmptyStream(t, js)
+
+	sub, err := js.SubscribeSync("t.tenant-a.app.task.event.processed.template")
+	if err != nil {
+		t.Fatalf("subscribe template response subject: %v", err)
+	}
+	defer func() { _ = sub.Unsubscribe() }()
+
+	fixture, err := os.ReadFile("fixtures/path-template.json")
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+
+	if _, err := js.Publish("t.tenant-a.app.task.event.created", fixture); err != nil {
+		t.Fatalf("publish input event: %v", err)
+	}
+
+	msg, err := sub.NextMsg(15 * time.Second)
+	if err != nil {
+		t.Fatalf("waiting for response: %v", err)
+	}
+
+	var response map[string]any
+	if err := json.Unmarshal(msg.Data, &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	status, ok := response["httpstatus"].(float64)
+	if !ok || status != 200 {
+		t.Fatalf("httpstatus = %v, want 200", response["httpstatus"])
+	}
+	data, ok := response["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("response.data is not an object: %v", response["data"])
+	}
+	if data["path"] != "/api/tasks/e2e-task-1/complete" {
+		t.Fatalf("echoed path = %v, want /api/tasks/e2e-task-1/complete", data["path"])
+	}
+}
+
 // ensureEmptyStream guarantees the workspace-events stream exists and is empty.
 // nats-setup in docker compose creates it on first run; this is a safety net
 // for reruns and partial teardowns.
@@ -275,6 +325,7 @@ func ensureEmptyStream(t *testing.T, js nats.JetStreamContext) {
 			"t.tenant-a.app.task.event.created",
 			"t.tenant-a.app.task.event.processed",
 			"t.tenant-a.app.task.event.processed.redirect",
+			"t.tenant-a.app.task.event.processed.template",
 			"dlq.tenant-a.task-service",
 		},
 	})

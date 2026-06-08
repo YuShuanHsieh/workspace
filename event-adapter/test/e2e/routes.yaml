@@ -56,6 +56,26 @@ routes:
       maxBackoff: 2s
     dlq:
       subject: dlq.tenant-a.task-service
+  - name: task-template
+    match:
+      subject: t.tenant-a.app.task.event.created
+      type: com.workspace.task.template
+    dispatch:
+      method: POST
+      path: /api/tasks/{taskId}/complete
+      timeout: 2s
+      forwardHeaders:
+        - X-Workspace-Actor-Id
+    response:
+      type: com.workspace.task.template.processed
+      source: task-service
+      subject: t.tenant-a.app.task.event.processed.template
+    retry:
+      maxAttempts: 3
+      initialBackoff: 100ms
+      maxBackoff: 2s
+    dlq:
+      subject: dlq.tenant-a.task-service
 requests:
   subject: q.tenant-a.app.uploads.request
   queueGroup: upload-responders
