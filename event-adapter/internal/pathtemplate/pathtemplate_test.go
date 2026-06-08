@@ -75,7 +75,7 @@ func TestValidateErrorIsNotPermanent(t *testing.T) {
 
 func TestResolveStaticPathReturnsUnchanged(t *testing.T) {
 	ev := mustParse(t, `{"specversion":"1.0","id":"e1","source":"s","type":"t","datacontenttype":"application/json","data":{"taskId":"x"}}`)
-	got, err := Resolve("/events/task-created", ev)
+	got, err := Resolve("/events/task-created", ev.Data())
 	if err != nil {
 		t.Fatalf("Resolve static: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestResolveStaticPathReturnsUnchanged(t *testing.T) {
 
 func TestResolveSingleToken(t *testing.T) {
 	ev := mustParse(t, `{"specversion":"1.0","id":"e2","source":"s","type":"t","datacontenttype":"application/json","data":{"taskId":"task-42"}}`)
-	got, err := Resolve("/api/tasks/{taskId}/complete", ev)
+	got, err := Resolve("/api/tasks/{taskId}/complete", ev.Data())
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestResolveSingleToken(t *testing.T) {
 
 func TestResolveMultipleTokens(t *testing.T) {
 	ev := mustParse(t, `{"specversion":"1.0","id":"e3","source":"s","type":"t","datacontenttype":"application/json","data":{"tenantId":"acme","taskId":"task-42"}}`)
-	got, err := Resolve("/api/tenants/{tenantId}/tasks/{taskId}", ev)
+	got, err := Resolve("/api/tenants/{tenantId}/tasks/{taskId}", ev.Data())
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestResolveMultipleTokens(t *testing.T) {
 
 func TestResolveSameTokenTwice(t *testing.T) {
 	ev := mustParse(t, `{"specversion":"1.0","id":"e4","source":"s","type":"t","datacontenttype":"application/json","data":{"taskId":"abc"}}`)
-	got, err := Resolve("/{taskId}/x/{taskId}/y", ev)
+	got, err := Resolve("/{taskId}/x/{taskId}/y", ev.Data())
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -121,7 +121,7 @@ func TestResolveURLEscapesValues(t *testing.T) {
 	// Spaces and slashes in field values must be path-escaped so they don't
 	// reshape the URL.
 	ev := mustParse(t, `{"specversion":"1.0","id":"e5","source":"s","type":"t","datacontenttype":"application/json","data":{"taskId":"a b/c"}}`)
-	got, err := Resolve("/api/tasks/{taskId}", ev)
+	got, err := Resolve("/api/tasks/{taskId}", ev.Data())
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -132,7 +132,7 @@ func TestResolveURLEscapesValues(t *testing.T) {
 
 func TestResolveMissingFieldIsPermanent(t *testing.T) {
 	ev := mustParse(t, `{"specversion":"1.0","id":"e6","source":"s","type":"t","datacontenttype":"application/json","data":{"status":"done"}}`)
-	_, err := Resolve("/api/tasks/{taskId}/complete", ev)
+	_, err := Resolve("/api/tasks/{taskId}/complete", ev.Data())
 	if err == nil {
 		t.Fatal("expected permanent error for missing field")
 	}
@@ -147,7 +147,7 @@ func TestResolveMissingFieldIsPermanent(t *testing.T) {
 func TestResolveDataNotAnObjectIsPermanent(t *testing.T) {
 	// data is a JSON array, not an object.
 	ev := mustParse(t, `{"specversion":"1.0","id":"e7","source":"s","type":"t","datacontenttype":"application/json","data":["not","an","object"]}`)
-	_, err := Resolve("/api/tasks/{taskId}", ev)
+	_, err := Resolve("/api/tasks/{taskId}", ev.Data())
 	if err == nil {
 		t.Fatal("expected permanent error for non-object data")
 	}
@@ -161,7 +161,7 @@ func TestResolveBadConfigDoesNotWrapPermanent(t *testing.T) {
 	// it), the error must NOT wrap ErrPermanent — that would silently DLQ
 	// the event when the real fix is to correct the config.
 	ev := mustParse(t, `{"specversion":"1.0","id":"e8","source":"s","type":"t","datacontenttype":"application/json","data":{"taskId":"x"}}`)
-	_, err := Resolve("/api/{123bad}/x", ev)
+	_, err := Resolve("/api/{123bad}/x", ev.Data())
 	if err == nil {
 		t.Fatal("expected config error")
 	}

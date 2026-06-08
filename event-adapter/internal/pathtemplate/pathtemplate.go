@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
-
-	clevent "event-adapter/internal/cloudevent"
 )
 
 // ErrPermanent wraps payload-related Resolve failures that cannot succeed on
@@ -74,13 +72,17 @@ func indexFromOffset(s string, off int, c byte) int {
 }
 
 // Resolve substitutes {field} tokens in path against the top-level fields of
-// ev.Data() (parsed as a JSON object). Returns the resolved path on success,
-// or an error wrapping ErrPermanent if any token cannot be resolved from the
-// data payload. Static paths (no tokens) short-circuit without parsing JSON.
+// data (parsed as a JSON object). Returns the resolved path on success, or an
+// error wrapping ErrPermanent if any token cannot be resolved. Static paths
+// (no tokens) short-circuit without parsing JSON.
+//
+// data is the raw JSON bytes of the CloudEvent's data payload — typically
+// obtained from ev.Data() at the call site. Taking bytes instead of *Event
+// avoids an import cycle through cloudevent.
 //
 // Validation failures (bad token syntax) do NOT wrap ErrPermanent — those are
 // config bugs, not payload bugs.
-func Resolve(path string, ev *clevent.Event) (string, error) {
+func Resolve(path string, data []byte) (string, error) {
 	names, err := tokenNames(path)
 	if err != nil {
 		return "", err
@@ -88,7 +90,7 @@ func Resolve(path string, ev *clevent.Event) (string, error) {
 	if len(names) == 0 {
 		return path, nil
 	}
-	values, err := decodeDataAsObject(ev)
+	values, err := decodeDataAsObject(data)
 	if err != nil {
 		return "", err
 	}
@@ -108,13 +110,12 @@ func Resolve(path string, ev *clevent.Event) (string, error) {
 	return out, nil
 }
 
-func decodeDataAsObject(ev *clevent.Event) (map[string]any, error) {
-	raw := ev.Data()
-	if len(raw) == 0 {
+func decodeDataAsObject(data []byte) (map[string]any, error) {
+	if len(data) == 0 {
 		return nil, fmt.Errorf("%w: data is empty", ErrPermanent)
 	}
 	var values map[string]any
-	if err := json.Unmarshal(raw, &values); err != nil {
+	if err := json.Unmarshal(data, &values); err != nil {
 		return nil, fmt.Errorf("%w: data is not a JSON object: %v", ErrPermanent, err)
 	}
 	return values, nil
