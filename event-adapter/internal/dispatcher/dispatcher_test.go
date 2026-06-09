@@ -332,7 +332,7 @@ func TestDispatchResolvesPathTemplate(t *testing.T) {
 		}, nil
 	})}
 
-	ev, err := clevent.Parse([]byte(`{"specversion":"1.0","id":"evt-pt-1","source":"workspace/task","type":"com.workspace.task.created","datacontenttype":"application/json","data":{"taskId":"task-42"}}`))
+	ev, err := clevent.Parse([]byte(`{"specversion":"1.0","id":"evt-pt-1","source":"workspace/task","type":"com.workspace.task.created","datacontenttype":"application/json","dispatchpathparams":{"taskId":"task-42"},"data":{"title":"Buy milk"}}`))
 	if err != nil {
 		t.Fatalf("parse event: %v", err)
 	}

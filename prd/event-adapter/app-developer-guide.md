@@ -351,9 +351,22 @@ dispatch:
   path: /api/tasks/{taskId}/complete
 ```
 
-The sidecar resolves `{taskId}` against the top-level `data.taskId` field of every incoming CloudEvent before dispatching. Your handler receives the resolved URL (e.g. `/api/tasks/task-42/complete`) as a normal HTTP request — no special header parsing required.
+Publishers carry the path parameter values in a top-level `dispatchpathparams` envelope field, kept separate from the `data` request payload:
 
-If the event omits the referenced field, the referenced field exists but is not a string, or the event `data` is malformed or not a JSON object, the sidecar sends the event to your route's DLQ subject. There are no retries — the event data does not change between attempts.
+```json
+{
+  "specversion": "1.0",
+  "id": "evt-001",
+  "type": "com.workspace.task.updated",
+  "source": "workspace/task",
+  "dispatchpathparams": { "taskId": "task-42" },
+  "data": { "title": "Buy milk", "priority": "high" }
+}
+```
+
+The sidecar resolves `{taskId}` from `dispatchpathparams` and dispatches `PUT /api/tasks/task-42/complete` with `{"title":"Buy milk","priority":"high"}` as the HTTP request body. Your handler receives a clean request — path params come from the URL, request payload comes from the body, no mixing.
+
+If the event omits the referenced parameter from `dispatchpathparams`, the sidecar sends the event to your route's DLQ subject. There are no retries — the event data does not change between attempts.
 
 ## 7. Headers, Cookies, And CloudEvent Data
 

@@ -3,7 +3,6 @@
 package pathtemplate
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -88,18 +87,18 @@ func indexFromOffset(s string, off int, c byte) int {
 	return -1
 }
 
-// Resolve substitutes {field} tokens in path against the top-level fields of
-// data (parsed as a JSON object). Returns the resolved path on success, or an
-// error wrapping ErrPermanent if any token cannot be resolved. Static paths
-// (no tokens) short-circuit without parsing JSON.
+// Resolve substitutes {field} tokens in path against the values in params.
+// Returns the resolved path on success, or an error wrapping ErrPermanent if
+// any token cannot be resolved. Static paths (no tokens) short-circuit
+// without looking at params.
 //
-// data is the raw JSON bytes of the CloudEvent's data payload — typically
-// obtained from ev.Data() at the call site. Taking bytes instead of *Event
-// avoids an import cycle through cloudevent.
+// params is typically ev.DispatchPathParams from the incoming CloudEvent —
+// an envelope-level field separate from the data payload. This keeps path
+// templating decoupled from the HTTP request body.
 //
 // Validation failures (bad token syntax) do NOT wrap ErrPermanent — those are
 // config bugs, not payload bugs.
-func Resolve(path string, data []byte) (string, error) {
+func Resolve(path string, params map[string]string) (string, error) {
 	names, err := tokenNames(path)
 	if err != nil {
 		return "", err
@@ -107,35 +106,16 @@ func Resolve(path string, data []byte) (string, error) {
 	if len(names) == 0 {
 		return path, nil
 	}
-	values, err := decodeDataAsObject(data)
-	if err != nil {
-		return "", err
-	}
 
 	out := path
 	for _, name := range uniqueNames(names) {
-		raw, ok := values[name]
+		value, ok := params[name]
 		if !ok {
-			return "", fmt.Errorf("%w: field %q not found in event data", ErrPermanent, name)
+			return "", fmt.Errorf("%w: field %q not found in dispatchpathparams", ErrPermanent, name)
 		}
-		s, ok := raw.(string)
-		if !ok {
-			return "", fmt.Errorf("%w: field %q is not a string (got %T)", ErrPermanent, name, raw)
-		}
-		out = replaceAllToken(out, name, url.PathEscape(s))
+		out = replaceAllToken(out, name, url.PathEscape(value))
 	}
 	return out, nil
-}
-
-func decodeDataAsObject(data []byte) (map[string]any, error) {
-	if len(data) == 0 {
-		return nil, fmt.Errorf("%w: data is empty", ErrPermanent)
-	}
-	var values map[string]any
-	if err := json.Unmarshal(data, &values); err != nil {
-		return nil, fmt.Errorf("%w: data is not a JSON object: %v", ErrPermanent, err)
-	}
-	return values, nil
 }
 
 func uniqueNames(in []string) []string {

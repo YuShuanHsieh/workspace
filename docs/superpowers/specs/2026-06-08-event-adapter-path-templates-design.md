@@ -86,13 +86,13 @@ var ErrPermanent = errors.New("pathtemplate: permanent failure")
 // data — it checks only the path itself.
 func Validate(path string) error
 
-// Resolve substitutes {field} tokens in path against the top-level fields
-// of data (parsed as a JSON object — typically obtained from ev.Data() at
-// the call site). Returns the resolved path on success, or an error wrapping
-// ErrPermanent if any token cannot be resolved from the data payload. Taking
-// raw bytes instead of *cloudevent.Event keeps pathtemplate free of any
-// cloudevent import and avoids a latent import cycle through config.
-func Resolve(path string, data []byte) (string, error)
+// Resolve substitutes {field} tokens in path against the values in params —
+// typically ev.DispatchPathParams from the incoming CloudEvent. Returns the
+// resolved path on success, or an error wrapping ErrPermanent if any token
+// cannot be resolved. Path parameters travel in their own envelope-level
+// field (dispatchpathparams), separate from the data request payload, so the
+// app receives a clean request body.
+func Resolve(path string, params map[string]string) (string, error)
 ```
 
 Static paths (no `{` characters) are detected by `Resolve` as a fast path — no JSON parsing performed, original path returned unchanged. This keeps the cost of templating zero for routes that don't use it.

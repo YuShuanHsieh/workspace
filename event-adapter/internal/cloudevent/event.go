@@ -9,8 +9,9 @@ import (
 
 type Event struct {
 	*ce.Event
-	DispatchHeaders map[string]string
-	DispatchCookies map[string]string
+	DispatchHeaders    map[string]string
+	DispatchCookies    map[string]string
+	DispatchPathParams map[string]string
 }
 
 func (e *Event) MarshalJSON() ([]byte, error) {
@@ -38,6 +39,11 @@ func Parse(raw []byte) (*Event, error) {
 		return nil, err
 	}
 	delete(probe, "dispatchcookies")
+	dispatchPathParams, err := parseDispatchPathParams(probe["dispatchpathparams"])
+	if err != nil {
+		return nil, err
+	}
+	delete(probe, "dispatchpathparams")
 	cleaned, err := json.Marshal(probe)
 	if err != nil {
 		return nil, fmt.Errorf("cloudevent: clean envelope: %w", err)
@@ -61,7 +67,12 @@ func Parse(raw []byte) (*Event, error) {
 	if ev.Data() == nil {
 		return nil, fmt.Errorf("cloudevent: data is required")
 	}
-	return &Event{Event: &ev, DispatchHeaders: dispatchHeaders, DispatchCookies: dispatchCookies}, nil
+	return &Event{
+		Event:              &ev,
+		DispatchHeaders:    dispatchHeaders,
+		DispatchCookies:    dispatchCookies,
+		DispatchPathParams: dispatchPathParams,
+	}, nil
 }
 
 func JSONDataBytes(ev *Event) ([]byte, error) {
@@ -92,6 +103,17 @@ func parseDispatchCookies(raw json.RawMessage) (map[string]string, error) {
 	var values map[string]string
 	if err := json.Unmarshal(raw, &values); err != nil {
 		return nil, fmt.Errorf("cloudevent: dispatchcookies must be a string-valued object: %w", err)
+	}
+	return values, nil
+}
+
+func parseDispatchPathParams(raw json.RawMessage) (map[string]string, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var values map[string]string
+	if err := json.Unmarshal(raw, &values); err != nil {
+		return nil, fmt.Errorf("cloudevent: dispatchpathparams must be a string-valued object: %w", err)
 	}
 	return values, nil
 }

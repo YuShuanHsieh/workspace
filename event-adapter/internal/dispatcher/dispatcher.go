@@ -48,7 +48,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, dc config.DispatchConfig, ev 
 	if err != nil {
 		return Result{}, err
 	}
-	resolvedPath, err := pathtemplate.Resolve(dc.Path, ev.Data())
+	resolvedPath, err := pathtemplate.Resolve(dc.Path, ev.DispatchPathParams)
 	if err != nil {
 		return Result{}, fmt.Errorf("dispatcher: resolve path: %w", err)
 	}

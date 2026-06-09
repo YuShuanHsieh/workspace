@@ -7,7 +7,11 @@
   "dispatchheaders": {
     "X-Workspace-Actor-Id": "user-1"
   },
-  "data": {
+  "dispatchpathparams": {
     "taskId": "e2e-task-1"
+  },
+  "data": {
+    "title": "Buy milk",
+    "priority": "high"
   }
 }
