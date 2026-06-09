@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -122,7 +123,7 @@ func makeHandler(h Handler) http.HandlerFunc {
 		w.WriteHeader(status)
 		switch {
 		case h.Response.EchoPath:
-			_, _ = fmt.Fprintf(w, `{"path":"%s"}`, r.URL.Path)
+			_ = json.NewEncoder(w).Encode(map[string]string{"path": r.URL.Path})
 		case h.Response.Body != "":
 			_, _ = fmt.Fprint(w, h.Response.Body)
 		}
