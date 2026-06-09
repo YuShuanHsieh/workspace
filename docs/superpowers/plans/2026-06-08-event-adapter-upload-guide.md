@@ -10,7 +10,7 @@
 
 ---
 
-### Task 1: Add the upload-specific guide
+## Task 1: Add the upload-specific guide
 
 **Files:**
 - Create: `prd/event-adapter/file-upload-app-developer-guide.md`
@@ -44,7 +44,7 @@ Check that the guide:
 - keeps byte upload outside the sidecar
 - keeps `file.uploaded` as a client-published asynchronous event
 
-### Task 2: Link the general app guide to the upload guide
+## Task 2: Link the general app guide to the upload guide
 
 **Files:**
 - Modify: `prd/event-adapter/app-developer-guide.md`
@@ -67,7 +67,7 @@ Verify the terminology matches the new guide:
 - direct HTTP for byte transfer
 - JetStream for `file.uploaded`
 
-### Task 3: Verify and commit the documentation update
+## Task 3: Verify and commit the documentation update
 
 **Files:**
 - Modify: `docs/superpowers/plans/2026-06-08-event-adapter-upload-guide.md`

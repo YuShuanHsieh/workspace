@@ -72,9 +72,9 @@ Example:
 
 ```text
 Request subject: q.tenant-a.app.uploads.request
-Request type:    com.workspace.uploads.presign.request
+Request type:    com.workspace.files.presign.request
 HTTP endpoint:   POST /requests/upload-presign
-Reply type:      com.workspace.uploads.presign.reply
+Reply type:      com.workspace.files.presign.reply
 Reply source:    upload-service
 ```
 
@@ -94,8 +94,8 @@ POST /requests/upload-presign HTTP/1.1
 Host: 127.0.0.1:8080
 Content-Type: application/json
 ce-id: req-presign-1
-ce-type: com.workspace.uploads.presign.request
-ce-source: workspace/uploads-client
+ce-type: com.workspace.files.presign.request
+ce-source: workspace/files-client
 ce-specversion: 1.0
 Idempotency-Key: req-presign-1
 traceparent: 00-...
@@ -124,8 +124,8 @@ HTTP/1.1 200 OK
 Content-Type: application/json
 
 {
-  "uploadId": "upl_123",
-  "url": "https://object-storage.example/upload/upl_123",
+  "uploadUrl": "https://object-storage.example/upload/tenant-a/photo-123",
+  "objectKey": "tenant-a/uploads/photo-123",
   "expiresInSeconds": 900
 }
 ```
@@ -151,7 +151,7 @@ requests:
   routes:
     - name: upload-presign
       match:
-        type: com.workspace.uploads.presign.request
+        type: com.workspace.files.presign.request
       dispatch:
         method: POST
         path: /requests/upload-presign
@@ -160,7 +160,7 @@ requests:
           - X-Workspace-Tenant-Id
       reply:
         source: upload-service
-        type: com.workspace.uploads.presign.reply
+        type: com.workspace.files.presign.reply
         # dataschema: optional
 ```
 
@@ -219,6 +219,12 @@ returned to the caller, and the caller decides whether to retry.
 The caller is waiting. Keep work inside `dispatch.timeout`. If the operation is
 long-running, return an accepted response quickly only when the workflow really
 supports asynchronous completion.
+
+If your handler returns a `3xx` redirect status with a `Location` header, the
+sidecar publishes the response event, or the reply for request-reply routes,
+with both `httpstatus` and an `httplocation` extension carrying that value. The
+sidecar does not follow the redirect. This applies to all `3xx` codes. If you
+return `3xx` without a `Location` header, only `httpstatus` is set.
 
 ### Use clear status codes
 
@@ -414,8 +420,8 @@ curl -i \
   -X POST http://127.0.0.1:8080/requests/upload-presign \
   -H 'Content-Type: application/json' \
   -H 'ce-id: req-presign-1' \
-  -H 'ce-type: com.workspace.uploads.presign.request' \
-  -H 'ce-source: workspace/uploads-client' \
+  -H 'ce-type: com.workspace.files.presign.request' \
+  -H 'ce-source: workspace/files-client' \
   -H 'ce-specversion: 1.0' \
   -H 'Idempotency-Key: req-presign-1' \
   -H 'X-Workspace-Tenant-Id: tenant-a' \

@@ -205,6 +205,6 @@ The upload guide should include a validation checklist covering:
 
 ## Open questions
 
-None blocking. If the platform later needs stronger confirmation than a
+No blocking questions. If the platform later needs stronger confirmation than a
 client-declared completion event, that should be designed separately as a
 storage-callback or object-verification flow.
