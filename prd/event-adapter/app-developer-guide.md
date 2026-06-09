@@ -353,7 +353,7 @@ dispatch:
 
 The sidecar resolves `{taskId}` against the top-level `data.taskId` field of every incoming CloudEvent before dispatching. Your handler receives the resolved URL (e.g. `/api/tasks/task-42/complete`) as a normal HTTP request — no special header parsing required.
 
-If the event omits the referenced field, the sidecar sends the event to your route's DLQ subject. There are no retries — the event data does not change between attempts.
+If the event omits the referenced field, the referenced field exists but is not a string, or the event `data` is malformed or not a JSON object, the sidecar sends the event to your route's DLQ subject. There are no retries — the event data does not change between attempts.
 
 ## 7. Headers, Cookies, And CloudEvent Data
 

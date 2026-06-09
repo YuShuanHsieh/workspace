@@ -45,7 +45,7 @@ dispatch:
 
 With `path: /api/tasks/{taskId}/complete`, the dispatcher resolves the URL to:
 
-```
+```http
 PUT http://<baseURL>/api/tasks/task-42/complete
 ```
 
@@ -87,10 +87,12 @@ var ErrPermanent = errors.New("pathtemplate: permanent failure")
 func Validate(path string) error
 
 // Resolve substitutes {field} tokens in path against the top-level fields
-// of ev.Data() (parsed as a JSON object). Returns the resolved path on
-// success, or an error wrapping ErrPermanent if any token cannot be resolved
-// from the data payload.
-func Resolve(path string, ev *cloudevent.Event) (string, error)
+// of data (parsed as a JSON object — typically obtained from ev.Data() at
+// the call site). Returns the resolved path on success, or an error wrapping
+// ErrPermanent if any token cannot be resolved from the data payload. Taking
+// raw bytes instead of *cloudevent.Event keeps pathtemplate free of any
+// cloudevent import and avoids a latent import cycle through config.
+func Resolve(path string, data []byte) (string, error)
 ```
 
 Static paths (no `{` characters) are detected by `Resolve` as a fast path — no JSON parsing performed, original path returned unchanged. This keeps the cost of templating zero for routes that don't use it.
@@ -155,7 +157,7 @@ dispatch:
   path: /events/task-created
 ```
 
-```
+```http
 POST http://app/events/task-created
 ```
 
@@ -170,7 +172,7 @@ dispatch:
 
 Event `data.taskId = "task-42"` →
 
-```
+```http
 PUT http://app/api/tasks/task-42/complete
 ```
 

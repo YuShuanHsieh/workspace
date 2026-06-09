@@ -223,7 +223,7 @@ dispatch:
 
 With `data.taskId = "task-42"`, the sidecar dispatches `PUT /api/tasks/task-42/complete`.
 
-If a referenced field is absent from `data`, or `data` is not a JSON object, the event is treated as a permanent failure: the sidecar publishes it to the route DLQ immediately, with no retries.
+If a referenced field is absent from `data`, the field exists but is not a string, or `data` is not a JSON object, the event is treated as a permanent failure: the sidecar publishes it to the route DLQ immediately, with no retries.
 
 Required forwarded headers:
 

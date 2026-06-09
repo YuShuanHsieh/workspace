@@ -229,7 +229,9 @@ git commit -m "feat(event-adapter): add pathtemplate package with Validate (#18)
 
 ## Task 2: `pathtemplate.Resolve`
 
-**Goal:** Add `Resolve(path string, ev *clevent.Event) (string, error)` that substitutes each `{field}` token in path with the URL-path-escaped value of `data.{field}` from the incoming CloudEvent. Static paths short-circuit without parsing JSON. Permanent failures (missing field, data not an object) wrap `ErrPermanent`.
+**Goal:** Add `Resolve(path string, data []byte) (string, error)` that substitutes each `{field}` token in path with the URL-path-escaped value of `data.{field}` parsed from the raw JSON bytes. Static paths short-circuit without parsing JSON. Permanent failures (missing field, data not an object) wrap `ErrPermanent`.
+
+> **Note:** The original plan and Task 2 example code below show `Resolve(path string, ev *clevent.Event)`. During implementation we discovered this would create an import cycle (`config → pathtemplate → cloudevent → config`) once Task 3 wires `pathtemplate.Validate` into `config.Validate`. The signature was refactored to take `data []byte` directly (see commit `be03a4d` on the implementation branch). Callers pass `ev.Data()` at the call site. Task 2 below retains the original example code for historical accuracy; the refactor commit covers the migration.
 
 **Files:**
 - Modify: `event-adapter/internal/pathtemplate/pathtemplate.go`
