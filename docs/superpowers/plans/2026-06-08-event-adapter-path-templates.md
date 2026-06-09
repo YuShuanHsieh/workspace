@@ -2,7 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Support `{fieldName}` template tokens in `dispatch.path` (e.g. `/api/tasks/{taskId}/complete`) resolved from top-level CloudEvent `data` fields at dispatch time, with config-load validation and permanent-failure handling in both delivery models.
+> **Historical note (2026-06-09):** This plan was authored before two design refinements landed on the implementation branch:
+> 1. `Resolve` signature changed from `(path, ev *clevent.Event)` to `(path, data []byte)` to avoid an import cycle (commit `be03a4d`), then
+> 2. Changed again from `(path, data []byte)` to `(path, params map[string]string)` after PR #24 review feedback to keep path parameters out of the `data` payload (commit `ff34088`). Path values now live in a new envelope-level `dispatchpathparams` field (parallel to `dispatchheaders` / `dispatchcookies`).
+>
+> The task descriptions below reflect the original plan and were the basis for implementation in the order they appear. Subsequent refactors are recorded in the spec at `docs/superpowers/specs/2026-06-08-event-adapter-path-templates-design.md` and on the branch's commit history; the plan is preserved as written for audit-trail clarity.
+
+**Goal:** Support `{fieldName}` template tokens in `dispatch.path` (e.g. `/api/tasks/{taskId}/complete`) resolved from event-supplied parameters at dispatch time, with config-load validation and permanent-failure handling in both delivery models.
 
 **Architecture:** A new internal package `internal/pathtemplate` owns parsing, validation, and substitution. Config-load wires `Validate` into the existing route validator. The dispatcher calls `Resolve` immediately before building the outbound URL. Path-resolution errors are surfaced via a sentinel `ErrPermanent` which the processor (JetStream path) treats as straight-to-DLQ and the responder (request-reply path) treats as a 400 reply.
 

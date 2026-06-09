@@ -2,13 +2,19 @@
 
 GitHub issue: #18 — *feat(event-adapter): support dynamic path parameters from CloudEvent data*
 
+## Design evolution
+
+This spec was revised on 2026-06-09 in response to PR #24 review feedback. The original issue and earlier drafts proposed sourcing token values from the CloudEvent `data` JSON object. That conflated two concerns — the request payload and the path parameters — forcing app handlers to subtract path-segment fields from `data` to recover the real payload. The current design moves path parameters to their own envelope-level field, `dispatchpathparams`, following the same pattern as `dispatchheaders` and `dispatchcookies`. The `data` field is now the pure HTTP request body.
+
+The change is captured in commit `ff34088` on the implementation branch.
+
 ## Problem
 
-`DispatchConfig.Path` is a static string (e.g. `/events/task-created`). Real-world HTTP APIs often require dynamic path segments — for example `PUT /api/tasks/{taskId}/complete` where `taskId` comes from the CloudEvent data payload. Today there is no way to express this, forcing consumers either to publish to a single generic endpoint and re-route internally, or to maintain one route per concrete resource.
+`DispatchConfig.Path` is a static string (e.g. `/events/task-created`). Real-world HTTP APIs often require dynamic path segments — for example `PUT /api/tasks/{taskId}/complete` where `taskId` is specific to each event. Today there is no way to express this, forcing consumers either to publish to a single generic endpoint and re-route internally, or to maintain one route per concrete resource.
 
 ## Solution
 
-Support `{fieldName}` template tokens in `dispatch.path`. Each token is resolved against the top-level fields of the CloudEvent `data` JSON object at dispatch time and substituted with the URL-path-escaped value.
+Support `{fieldName}` template tokens in `dispatch.path`. Each token is resolved at dispatch time against the envelope-level `dispatchpathparams` map of the incoming CloudEvent, and substituted with the URL-path-escaped value. The `data` field remains the HTTP request body, unchanged by templating.
 
 ### Template syntax
 
@@ -19,7 +25,7 @@ dispatch:
   timeout: 2s
 ```
 
-`{taskId}` is replaced with the value of `data.taskId` from the incoming CloudEvent, after running it through `url.PathEscape`.
+`{taskId}` is replaced with the value of `dispatchpathparams.taskId` from the incoming CloudEvent, after running it through `url.PathEscape`.
 
 ### Token regex
 
@@ -35,8 +41,10 @@ dispatch:
   "source": "workspace/task",
   "subject": "task-42",
   "datacontenttype": "application/json",
+  "dispatchpathparams": {
+    "taskId": "task-42"
+  },
   "data": {
-    "taskId": "task-42",
     "status": "complete",
     "assigneeId": "user-7"
   }
@@ -49,6 +57,8 @@ With `path: /api/tasks/{taskId}/complete`, the dispatcher resolves the URL to:
 PUT http://<baseURL>/api/tasks/task-42/complete
 ```
 
+The request body is `{"status":"complete","assigneeId":"user-7"}` — only `data`, with no path-segment values mixed in.
+
 Multiple tokens in the same path are supported:
 
 ```yaml
@@ -59,10 +69,11 @@ resolves to `/api/tenants/acme/tasks/task-42` given:
 
 ```json
 {
-  "data": {
+  "dispatchpathparams": {
     "tenantId": "acme",
     "taskId": "task-42"
-  }
+  },
+  "data": { ... }
 }
 ```
 
@@ -95,7 +106,9 @@ func Validate(path string) error
 func Resolve(path string, params map[string]string) (string, error)
 ```
 
-Static paths (no `{` characters) are detected by `Resolve` as a fast path — no JSON parsing performed, original path returned unchanged. This keeps the cost of templating zero for routes that don't use it.
+Static paths (no `{` characters) are detected by `Resolve` as a fast path — `params` is not consulted, original path returned unchanged. This keeps the cost of templating zero for routes that don't use it.
+
+The `dispatchpathparams` envelope field is parsed and stripped from the CloudEvent during `cloudevent.Parse`, in the same place where `dispatchheaders` and `dispatchcookies` are handled. The parser enforces a `map[string]string` shape: non-string values cause the event to be rejected at parse time, not at Resolve time. This makes "non-string scalar" handling a non-issue at the templating layer.
 
 ## Changes to existing files
 
@@ -119,9 +132,9 @@ Path resolution errors are **permanent** — the event data does not change betw
 | Scenario | Where caught | Behaviour |
 |---|---|---|
 | Invalid token syntax in config (e.g. `{123}`, unclosed `{x`) | `Validate` at config-load | Service won't start; clear `ValidationError` pointing at the offending route |
-| `data` is not a JSON object | `Resolve` at dispatch | Wrapped `ErrPermanent` → processor sends straight to DLQ |
-| Referenced field absent from data | `Resolve` at dispatch | Wrapped `ErrPermanent` → DLQ |
-| No tokens in path (static) | `Resolve` fast path | Original path returned, no parsing |
+| `dispatchpathparams` has non-string values | `cloudevent.Parse` | Malformed event; parse error (handled by responder/processor as today) |
+| Referenced token absent from `dispatchpathparams` | `Resolve` at dispatch | Wrapped `ErrPermanent` → processor sends straight to DLQ; responder replies 400 |
+| No tokens in path (static) | `Resolve` fast path | Original path returned; `params` not consulted |
 | Network / transient HTTP error after resolution | Dispatcher → processor as today | Retried as before, then DLQ |
 
 The processor checks for the sentinel before deciding to requeue:
@@ -145,8 +158,9 @@ The responder handles it symmetrically by returning a 400 error reply instead of
 
 - **`url.PathEscape` everywhere in the path string.** Per the issue.
 - **Same token may appear multiple times.** No special handling required — both occurrences are independently substituted with the same resolved value.
-- **Static paths are zero-cost.** `Resolve` returns the original path string without parsing JSON if no `{` is present, so routes that don't use templating pay nothing.
-- **Tokens resolve only against top-level `data` fields.** No `ce.*` or `ext.*` namespace, no nested `{user.id}` syntax. Per the issue.
+- **Static paths are zero-cost.** `Resolve` returns the original path string without touching `params` if no `{` is present, so routes that don't use templating pay nothing.
+- **Tokens resolve only from `dispatchpathparams`.** No `ce.*` or `ext.*` envelope namespace, no nested syntax, no fallback to `data`. The envelope field is the single, explicit source of path-segment values.
+- **`data` is the request body and only the request body.** Path params do not appear in `data`; the app receives a clean payload it can deserialize directly into its handler DTO.
 
 ## Wire format examples
 
@@ -170,19 +184,19 @@ dispatch:
   path: /api/tasks/{taskId}/complete
 ```
 
-Event `data.taskId = "task-42"` →
+Event `dispatchpathparams = { "taskId": "task-42" }` →
 
 ```http
 PUT http://app/api/tasks/task-42/complete
 ```
 
-**Permanent failure (missing field):**
+**Permanent failure (missing token):**
 
 Path: `/api/tasks/{taskId}/complete`
 
-Event `data = { "status": "done" }` (no `taskId`) →
+Event with `dispatchpathparams` absent, or `dispatchpathparams = { "tenantId": "acme" }` (no `taskId`) →
 
-Dispatcher returns `fmt.Errorf("%w: field %q not found in event data", ErrPermanent, "taskId")`. Processor publishes a DLQ event for inspection, acks the original. No HTTP call made.
+Dispatcher returns `fmt.Errorf("%w: field %q not found in dispatchpathparams", ErrPermanent, "taskId")`. Processor publishes a DLQ event for inspection, acks the original. No HTTP call made.
 
 ## Testing
 
@@ -190,8 +204,8 @@ Dispatcher returns `fmt.Errorf("%w: field %q not found in event data", ErrPerman
 
 - `internal/pathtemplate/pathtemplate_test.go`:
   - `Validate`: accepts valid paths (`/x/{y}/z`, `/{a}/{b}`, `/static`); rejects bad tokens (`{123}`, `{}`, `{a-b}`, unclosed `{x`).
-  - `Resolve` happy path: single token, multiple tokens, same token twice, static path (no-token fast path).
-  - `Resolve` permanent failures (each wraps `ErrPermanent`): missing field, `data` not a JSON object.
+  - `Resolve` happy path: single token, multiple tokens, same token twice, static path (no-token fast path), nil/empty `params` with a static path.
+  - `Resolve` permanent failure (wraps `ErrPermanent`): referenced token absent from `params`; nil `params` when the path has tokens.
   - `errors.Is(err, ErrPermanent)` returns true for every permanent failure case.
 - `internal/config/validate_test.go`:
   - Bad template in `Dispatch.Path` fails config-load with a `ValidationError` whose `Path` points at `routes[i].dispatch.path` (and same for request-reply routes).
@@ -208,7 +222,7 @@ Dispatcher returns `fmt.Errorf("%w: field %q not found in event data", ErrPerman
 Extend `test/e2e/`:
 - New mock-app handler at `/api/tasks/{path-segment}/complete` (matched via Go's `http.ServeMux` wildcard).
 - New JetStream route with `path: /api/tasks/{taskId}/complete`.
-- New fixture event with `data.taskId = "e2e-task-1"`.
+- New fixture event with `dispatchpathparams = { "taskId": "e2e-task-1" }` and a separate `data` payload.
 - Test asserts the mock-app received the request at `/api/tasks/e2e-task-1/complete` (echo the resolved path back in the response body so the test can assert on it).
 
 ## Documentation to update
@@ -219,8 +233,9 @@ Extend `test/e2e/`:
 
 ## Out of scope
 
-- Nested field access (`{user.id}`). Top-level only for v1.
-- CloudEvent envelope-level access (`{ce.id}`, `{ext.tenantId}`). Data-only.
+- Nested field access (`{user.id}`). Top-level params only for v1.
+- CloudEvent envelope-attribute access (`{ce.id}`, `{ext.tenantId}`). `dispatchpathparams` only.
+- Reading path params from `data` as a fallback. Explicit envelope field is the only source.
 - Query-string-specific escaping rules. Templates work in query strings but use `url.PathEscape` (good enough for alphanumeric values).
 - Default values when a field is missing (`{taskId|default}`). YAGNI.
 - Conditional segments (`/foo{?taskId}/bar`). YAGNI.
