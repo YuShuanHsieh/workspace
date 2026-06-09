@@ -12,6 +12,7 @@ import (
 
 	clevent "event-adapter/internal/cloudevent"
 	"event-adapter/internal/config"
+	pathtemplate "event-adapter/internal/pathtemplate"
 )
 
 type Result struct {
@@ -47,7 +48,11 @@ func (d *Dispatcher) Dispatch(ctx context.Context, dc config.DispatchConfig, ev 
 	if err != nil {
 		return Result{}, err
 	}
-	u, err := url.JoinPath(d.baseURL, dc.Path)
+	resolvedPath, err := pathtemplate.Resolve(dc.Path, ev.DispatchPathParams)
+	if err != nil {
+		return Result{}, fmt.Errorf("dispatcher: resolve path: %w", err)
+	}
+	u, err := url.JoinPath(d.baseURL, resolvedPath)
 	if err != nil {
 		return Result{}, fmt.Errorf("dispatcher: build url: %w", err)
 	}

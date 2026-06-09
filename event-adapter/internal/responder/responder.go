@@ -17,6 +17,7 @@ import (
 	"event-adapter/internal/config"
 	"event-adapter/internal/dispatcher"
 	"event-adapter/internal/natsjs"
+	pathtemplate "event-adapter/internal/pathtemplate"
 )
 
 type Dispatcher interface {
@@ -117,7 +118,10 @@ func (r *Responder) handle(ctx context.Context, m natsjs.RequestMsg) {
 	if derr != nil {
 		r.metrics.RequestDispatchError(ctx, route.Name)
 		status := http.StatusBadGateway
-		if errors.Is(derr, context.DeadlineExceeded) {
+		switch {
+		case errors.Is(derr, pathtemplate.ErrPermanent):
+			status = http.StatusBadRequest
+		case errors.Is(derr, context.DeadlineExceeded):
 			status = http.StatusGatewayTimeout
 		}
 		reply, berr := clevent.BuildReply(ev, route.Reply, route.Name, status, "application/json", errorBody(derr.Error()), "")

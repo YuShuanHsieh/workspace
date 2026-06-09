@@ -211,6 +211,29 @@ Required behavior:
 - `4xx` and `5xx` responses are not retried. The sidecar publishes them to the route response subject as response events carrying the HTTP status code, so the publisher can observe the error outcome. `3xx` responses are treated the same as `2xx`.
 - The application response body becomes the `data` field of the response CloudEvent for both success and error outcomes.
 
+`dispatch.path` supports `{fieldName}` template tokens that are resolved at dispatch time against the envelope-level `dispatchpathparams` map (separate from the `data` request payload). Token names must match `[a-zA-Z][a-zA-Z0-9_]*`. Values are URL-path-escaped. Multiple tokens are supported, and the same token may appear more than once.
+
+Example:
+
+```yaml
+dispatch:
+  method: PUT
+  path: /api/tasks/{taskId}/complete
+```
+
+Incoming CloudEvent:
+
+```json
+{
+  "dispatchpathparams": { "taskId": "task-42" },
+  "data": { "title": "Buy milk" }
+}
+```
+
+The sidecar dispatches `PUT /api/tasks/task-42/complete` with `{"title":"Buy milk"}` as the request body. Path parameters travel in their own envelope-level field so the `data` payload stays as the pure HTTP request body.
+
+If a referenced token is absent from `dispatchpathparams`, the event is treated as a permanent failure: the sidecar publishes it to the route DLQ immediately, with no retries. The map values must be strings (the CloudEvent parser rejects non-string values at receive time).
+
 Required forwarded headers:
 
 ```text

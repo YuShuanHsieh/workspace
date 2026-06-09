@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -39,6 +40,7 @@ type HandlerResponse struct {
 	ContentType string `yaml:"contentType"`
 	Body        string `yaml:"body"`
 	Location    string `yaml:"location"`
+	EchoPath    bool   `yaml:"echoPath"`
 }
 
 func main() {
@@ -119,7 +121,10 @@ func makeHandler(h Handler) http.HandlerFunc {
 		}
 		status := cmp.Or(h.Response.Status, http.StatusOK)
 		w.WriteHeader(status)
-		if h.Response.Body != "" {
+		switch {
+		case h.Response.EchoPath:
+			_ = json.NewEncoder(w).Encode(map[string]string{"path": r.URL.Path})
+		case h.Response.Body != "":
 			_, _ = fmt.Fprint(w, h.Response.Body)
 		}
 		log.Printf("  ← %d %s", status, http.StatusText(status))

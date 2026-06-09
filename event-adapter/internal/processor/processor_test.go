@@ -3,6 +3,7 @@ package processor
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	clevent "event-adapter/internal/cloudevent"
 	"event-adapter/internal/config"
 	"event-adapter/internal/dispatcher"
+	pathtemplate "event-adapter/internal/pathtemplate"
 )
 
 type fakeDispatcher struct {
@@ -222,5 +224,38 @@ func TestProcessor3xxWithLocationPublishesHTTPLocation(t *testing.T) {
 	}
 	if got != "/new-path" {
 		t.Fatalf("httplocation = %v, want /new-path", got)
+	}
+}
+
+func TestProcessorPermanentPathErrorGoesStraightToDLQ(t *testing.T) {
+	permErr := fmt.Errorf("dispatcher: resolve path: %w", pathtemplate.ErrPermanent)
+	disp := &fakeDispatcher{err: permErr}
+	pub := &fakePublisher{}
+	p := New(disp, pub)
+
+	ev, err := clevent.Parse([]byte(`{"specversion":"1.0","id":"evt-pt-proc","source":"workspace/task","type":"com.workspace.task.created","datacontenttype":"application/json","data":{"status":"done"}}`))
+	if err != nil {
+		t.Fatalf("parse event: %v", err)
+	}
+	route := config.RouteConfig{
+		Name:     "task-created",
+		Dispatch: config.DispatchConfig{Method: "POST", Path: "/api/tasks/{taskId}/x", Timeout: time.Second},
+		Response: config.ResponseConfig{Type: "x.proc", Source: "task-service", Subject: "out"},
+		Retry:    config.RetryConfig{MaxAttempts: 3, InitialBackoff: time.Millisecond, MaxBackoff: time.Millisecond},
+		DLQ:      config.DLQConfig{Subject: "dlq.tenant-a.task-service"},
+	}
+
+	msg := &fakeHandle{deliveries: 1}
+	if err := p.Process(context.Background(), "t.x.created", ev, route, msg); err != nil {
+		t.Fatalf("Process returned error: %v", err)
+	}
+	if msg.naked != 0 {
+		t.Fatalf("Nak count = %d, want 0 (permanent error must not retry)", msg.naked)
+	}
+	if pub.dlqs != 1 {
+		t.Fatalf("DLQ count = %d, want 1", pub.dlqs)
+	}
+	if msg.acked != 1 {
+		t.Fatalf("Ack count = %d, want 1 (after DLQ the original is acked)", msg.acked)
 	}
 }
