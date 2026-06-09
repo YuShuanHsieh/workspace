@@ -15,12 +15,18 @@ import (
 // and responder use errors.Is to bypass their retry/error paths.
 var ErrPermanent = errors.New("pathtemplate: permanent failure")
 
-// tokenRegex matches a single {fieldName} token. Token names must start with
-// a letter and contain only letters, digits, and underscores.
+// tokenRegex matches a single {fieldName} token anywhere in a path. Used by
+// Resolve to find all tokens to substitute. Token names must start with a
+// letter and contain only letters, digits, and underscores.
 var tokenRegex = regexp.MustCompile(`\{([a-zA-Z][a-zA-Z0-9_]*)\}`)
 
-// looseBraceRegex matches anything between { and } — used to find malformed
-// tokens that tokenRegex does not match, so Validate can report them.
+// strictTokenRegex anchors the same pattern with ^...$ for Validate, which must
+// reject malformed pairs like "{{taskId}}" where the inner "{taskId}" would
+// otherwise match as a substring of an outer "{{taskId}" looseBraceRegex hit.
+var strictTokenRegex = regexp.MustCompile(`^\{[a-zA-Z][a-zA-Z0-9_]*\}$`)
+
+// looseBraceRegex matches anything between { and } — used to find candidate
+// tokens (well-formed or not) so Validate can report bad ones.
 var looseBraceRegex = regexp.MustCompile(`\{([^}]*)\}`)
 
 // Validate parses a path string at config-load time and rejects malformed
@@ -37,11 +43,22 @@ func Validate(path string) error {
 			}
 		}
 	}
-	// Every {...} match must satisfy the strict token regex.
-	for _, m := range looseBraceRegex.FindAllStringSubmatch(path, -1) {
-		raw := m[0]
-		if !tokenRegex.MatchString(raw) {
-			return fmt.Errorf("pathtemplate: invalid token %q in path %q (must match {[a-zA-Z][a-zA-Z0-9_]*})", m[1], path)
+	// Every {...} match must satisfy the strict, anchored token regex. We also
+	// reject any '{' or '}' immediately adjacent to the match (i.e. doubled
+	// braces like "{{x}}") since looseBraceRegex would not catch them alone.
+	for _, idx := range looseBraceRegex.FindAllStringSubmatchIndex(path, -1) {
+		start, end := idx[0], idx[1]
+		raw := path[start:end]
+		if !strictTokenRegex.MatchString(raw) {
+			inner := path[idx[2]:idx[3]]
+			return fmt.Errorf("pathtemplate: invalid token %q in path %q (must match {[a-zA-Z][a-zA-Z0-9_]*})", inner, path)
+		}
+		// Adjacent extra brace ⇒ malformed (e.g. "{{taskId}" or "{taskId}}").
+		if start > 0 && path[start-1] == '{' {
+			return fmt.Errorf("pathtemplate: malformed token in path %q (unexpected '{' before %q)", path, raw)
+		}
+		if end < len(path) && path[end] == '}' {
+			return fmt.Errorf("pathtemplate: malformed token in path %q (unexpected '}' after %q)", path, raw)
 		}
 	}
 	return nil

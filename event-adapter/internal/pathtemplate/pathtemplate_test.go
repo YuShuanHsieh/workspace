@@ -61,6 +61,23 @@ func TestValidateRejectsUnclosedToken(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsDoubleBraces(t *testing.T) {
+	// Regression for an unanchored-regex bug: tokenRegex.MatchString would
+	// return true for "{{taskId}}" because the inner {taskId} matched as a
+	// substring. Validate must require each {...} pair to be a strict full
+	// token, not merely contain a valid token within it.
+	cases := []string{
+		"/api/{{taskId}}/x",
+		"/api/{{taskId}/x",
+		"/api/{taskId}}/x",
+	}
+	for _, p := range cases {
+		if err := pathtemplate.Validate(p); err == nil {
+			t.Errorf("Validate(%q) = nil, want error for malformed token", p)
+		}
+	}
+}
+
 func TestValidateErrorIsNotPermanent(t *testing.T) {
 	// Validation errors happen at config-load, not at dispatch.
 	// They MUST NOT wrap ErrPermanent — the processor only checks for ErrPermanent
