@@ -52,16 +52,24 @@ func (d *Dispatcher) Dispatch(ctx context.Context, dc config.DispatchConfig, ev 
 	if err != nil {
 		return Result{}, fmt.Errorf("dispatcher: resolve path: %w", err)
 	}
-	u, err := url.JoinPath(d.baseURL, resolvedPath)
+	rawPath, rawQuery, _ := strings.Cut(resolvedPath, "?")
+	u, err := url.JoinPath(d.baseURL, rawPath)
 	if err != nil {
 		return Result{}, fmt.Errorf("dispatcher: build url: %w", err)
+	}
+	if rawQuery != "" {
+		u += "?" + rawQuery
 	}
 	if dc.Timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, dc.Timeout)
 		defer cancel()
 	}
-	req, err := http.NewRequestWithContext(ctx, dc.Method, u, bytes.NewReader(body))
+	var reqBody io.Reader = bytes.NewReader(body)
+	if dc.Method == http.MethodGet {
+		reqBody = http.NoBody
+	}
+	req, err := http.NewRequestWithContext(ctx, dc.Method, u, reqBody)
 	if err != nil {
 		return Result{}, fmt.Errorf("dispatcher: create request: %w", err)
 	}

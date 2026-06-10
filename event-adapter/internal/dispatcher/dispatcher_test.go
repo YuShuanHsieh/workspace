@@ -396,6 +396,65 @@ func TestDispatchMissingFieldReturnsErrPermanent(t *testing.T) {
 	}
 }
 
+func TestDispatchGetSendsNoBody(t *testing.T) {
+	var gotBodyBytes []byte
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.Body != nil {
+			gotBodyBytes, _ = io.ReadAll(r.Body)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(bytes.NewBufferString(`{}`)),
+		}, nil
+	})}
+
+	ev, err := clevent.Parse([]byte(`{"specversion":"1.0","id":"evt-get-nobody","source":"workspace/task","type":"com.workspace.task.created","datacontenttype":"application/json","data":{"userId":"u1","taskId":"t1"}}`))
+	if err != nil {
+		t.Fatalf("parse event: %v", err)
+	}
+
+	d := New("http://127.0.0.1:8080", client)
+	_, err = d.Dispatch(context.Background(), config.DispatchConfig{
+		Method: "GET", Path: "/api/users", Timeout: time.Second,
+	}, ev)
+	if err != nil {
+		t.Fatalf("Dispatch returned error: %v", err)
+	}
+	if len(gotBodyBytes) != 0 {
+		t.Fatalf("GET dispatch must send no body, got %d bytes: %s", len(gotBodyBytes), gotBodyBytes)
+	}
+}
+
+func TestDispatchQueryStringPreservedInURL(t *testing.T) {
+	var gotRequestURI string
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		gotRequestURI = r.URL.RequestURI()
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(bytes.NewBufferString(`{}`)),
+		}, nil
+	})}
+
+	ev, err := clevent.Parse([]byte(`{"specversion":"1.0","id":"evt-qs-1","source":"workspace/task","type":"com.workspace.task.created","datacontenttype":"application/json","dispatchpathparams":{"userId":"u1","tenantId":"t1"},"data":{}}`))
+	if err != nil {
+		t.Fatalf("parse event: %v", err)
+	}
+
+	d := New("http://127.0.0.1:8080", client)
+	_, err = d.Dispatch(context.Background(), config.DispatchConfig{
+		Method: "GET", Path: "/api/items?userId={userId}&tenantId={tenantId}", Timeout: time.Second,
+	}, ev)
+	if err != nil {
+		t.Fatalf("Dispatch returned error: %v", err)
+	}
+	want := "/api/items?userId=u1&tenantId=t1"
+	if gotRequestURI != want {
+		t.Fatalf("RequestURI = %q, want %q", gotRequestURI, want)
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {

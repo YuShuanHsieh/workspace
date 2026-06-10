@@ -1,6 +1,7 @@
 package config
 
 import (
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -246,6 +247,14 @@ func TestValidateAcceptsValidPathTemplate(t *testing.T) {
 	cfg.Requests.Routes[0].Dispatch.Path = "/api/uploads/{uploadId}/presign"
 	if errs := Validate(cfg); len(errs) != 0 {
 		t.Fatalf("expected no errors for valid path templates, got %v", errs)
+	}
+}
+
+func TestValidateAcceptsGetDispatchMethod(t *testing.T) {
+	cfg := validConfig()
+	cfg.Routes[0].Dispatch.Method = http.MethodGet
+	if errs := Validate(cfg); len(errs) != 0 {
+		t.Fatalf("expected no errors for GET dispatch method, got %v", errs)
 	}
 }
 
