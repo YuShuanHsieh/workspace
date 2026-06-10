@@ -1,0 +1,62 @@
+# event-adapter configuration template for local development.
+# Used by: docker compose --profile with-adapter up
+#
+# Copy this file, rename it for your service, and edit the fields below.
+# The event-adapter runs as a container alongside NATS, so:
+#   nats.url        → nats://nats:4222               (container-to-container)
+#   app.httpBaseURL → http://host.docker.internal:PORT (container → your host app)
+
+app:
+  id: my-service                                    # unique identifier for this app instance
+  httpBaseURL: http://host.docker.internal:8080     # change 8080 to your app's port
+
+# ── JetStream event consumption ────────────────────────────────────────────────
+# Remove this section if you only need request-reply.
+nats:
+  url: nats://nats:4222
+  stream: workspace-events
+  durableConsumer: my-service-dispatcher
+  filterSubject: events.>              # narrow this to your own subjects
+  workerPoolSize: 4
+  fetchBatch: 8
+  ackWait: 30s
+  maxDeliver: 3
+  maxAckPending: 128
+  defaultDLQSubject: dlq.my-service
+
+routes:
+  - name: my-event
+    match:
+      type: com.example.my-event        # CloudEvent type to handle
+    dispatch:
+      method: POST
+      path: /events/my-event            # endpoint on your app
+      timeout: 5s
+    response:
+      type: com.example.my-event.processed
+      source: my-service
+      subject: events.my-service.processed.my-event
+    retry:
+      maxAttempts: 3
+      initialBackoff: 100ms
+      maxBackoff: 2s
+    dlq:
+      subject: dlq.my-service
+
+# ── Request-reply (synchronous) ────────────────────────────────────────────────
+# Remove this section if you only need JetStream event consumption.
+requests:
+  subject: q.my-service.requests       # core-NATS subject callers send to
+  queueGroup: my-service-responders
+  workerPoolSize: 4
+  routes:
+    - name: my-request
+      match:
+        type: com.example.my-request
+      dispatch:
+        method: POST
+        path: /requests/my-request
+        timeout: 5s
+      reply:
+        source: my-service
+        type: com.example.my-reply
