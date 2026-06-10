@@ -220,8 +220,8 @@ func validateRoute(prefix string, r RouteConfig) []error {
 
 func validateDispatch(prefix string, d DispatchConfig) []error {
 	var errs []error
-	if d.Method != http.MethodPost && d.Method != http.MethodPut && d.Method != http.MethodPatch {
-		errs = append(errs, ValidationError{Path: prefix + ".dispatch.method", Msg: "must be POST, PUT, or PATCH"})
+	if d.Method != http.MethodPost && d.Method != http.MethodPut && d.Method != http.MethodPatch && d.Method != http.MethodGet {
+		errs = append(errs, ValidationError{Path: prefix + ".dispatch.method", Msg: "must be POST, PUT, PATCH, or GET"})
 	}
 	if !strings.HasPrefix(d.Path, "/") {
 		errs = append(errs, ValidationError{Path: prefix + ".dispatch.path", Msg: "must start with /"})

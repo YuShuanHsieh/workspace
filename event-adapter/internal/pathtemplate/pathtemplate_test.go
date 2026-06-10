@@ -176,6 +176,23 @@ func TestResolveNilParamsIsPermanentWhenTokensPresent(t *testing.T) {
 	}
 }
 
+func TestResolveQueryStringTokenUsesQueryEscaping(t *testing.T) {
+	// Tokens in the query portion must use url.QueryEscape so structural
+	// characters like '&', '=', and '+' are percent-encoded and do not corrupt
+	// the query string. url.PathEscape leaves '&' and '+' unescaped.
+	got, err := pathtemplate.Resolve("/api/items?filter={filter}&sort={sort}", map[string]string{
+		"filter": "a&b=c",
+		"sort":   "name+desc",
+	})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	want := "/api/items?filter=a%26b%3Dc&sort=name%2Bdesc"
+	if got != want {
+		t.Fatalf("Resolve = %q, want %q", got, want)
+	}
+}
+
 func TestResolveBadConfigDoesNotWrapPermanent(t *testing.T) {
 	// If Resolve is somehow called with a bad path (config validation missed
 	// it), the error must NOT wrap ErrPermanent — that would silently DLQ

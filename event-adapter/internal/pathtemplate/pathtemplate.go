@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"strings"
 )
 
 // ErrPermanent wraps payload-related Resolve failures that cannot succeed on
@@ -96,6 +97,10 @@ func indexFromOffset(s string, off int, c byte) int {
 // an envelope-level field separate from the data payload. This keeps path
 // templating decoupled from the HTTP request body.
 //
+// Tokens in the path segment use url.PathEscape; tokens in the query string
+// (after the first '?') use url.QueryEscape so structural characters like '&'
+// and '+' are percent-encoded and cannot corrupt the query string.
+//
 // Validation failures (bad token syntax) do NOT wrap ErrPermanent — those are
 // config bugs, not payload bugs.
 func Resolve(path string, params map[string]string) (string, error) {
@@ -107,15 +112,22 @@ func Resolve(path string, params map[string]string) (string, error) {
 		return path, nil
 	}
 
-	out := path
+	pathPart, queryPart, hasQuery := strings.Cut(path, "?")
+
 	for _, name := range uniqueNames(names) {
 		value, ok := params[name]
 		if !ok {
 			return "", fmt.Errorf("%w: field %q not found in dispatchpathparams", ErrPermanent, name)
 		}
-		out = replaceAllToken(out, name, url.PathEscape(value))
+		pathPart = replaceAllToken(pathPart, name, url.PathEscape(value))
+		if hasQuery {
+			queryPart = replaceAllToken(queryPart, name, url.QueryEscape(value))
+		}
 	}
-	return out, nil
+	if hasQuery {
+		return pathPart + "?" + queryPart, nil
+	}
+	return pathPart, nil
 }
 
 func uniqueNames(in []string) []string {
