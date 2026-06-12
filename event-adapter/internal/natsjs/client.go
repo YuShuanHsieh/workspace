@@ -25,8 +25,20 @@ type Message struct {
 	msg          *nats.Msg
 }
 
+// buildOpts builds the nats.Option slice used by Connect based on the supplied
+// configuration. It is extracted from Connect so it can be unit-tested without
+// requiring a real NATS server.
+func buildOpts(cfg config.NATSConfig) []nats.Option {
+	var opts []nats.Option
+	// Add credentials file auth if configured.
+	if cfg.CredsFilePath != "" {
+		opts = append(opts, nats.UserCredentials(cfg.CredsFilePath))
+	}
+	return opts
+}
+
 func Connect(cfg config.NATSConfig) (*Client, error) {
-	nc, err := nats.Connect(cfg.URL)
+	nc, err := nats.Connect(cfg.URL, buildOpts(cfg)...)
 	if err != nil {
 		return nil, fmt.Errorf("nats: connect: %w", err)
 	}

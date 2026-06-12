@@ -151,6 +151,7 @@ nats:
   maxDeliver: 5
   maxAckPending: 1024
   defaultDLQSubject: dlq.tenant-a.task-service
+  credsFilePath: /etc/nats/svc.creds   # optional — set for authenticated NATS
 
 routes:
   - name: task-created
