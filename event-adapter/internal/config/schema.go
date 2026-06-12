@@ -31,6 +31,7 @@ type NATSConfig struct {
 	MaxDeliver        int           `yaml:"maxDeliver"`
 	MaxAckPending     int           `yaml:"maxAckPending"`
 	DefaultDLQSubject string        `yaml:"defaultDLQSubject"`
+	CredsFilePath     string        `yaml:"credsFilePath,omitempty"`
 }
 
 type RouteConfig struct {

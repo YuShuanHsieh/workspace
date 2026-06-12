@@ -10,6 +10,7 @@ import (
 	ce "github.com/cloudevents/sdk-go/v2/event"
 
 	clevent "event-adapter/internal/cloudevent"
+	"event-adapter/internal/config"
 	"event-adapter/internal/processor"
 )
 
@@ -72,5 +73,24 @@ func TestMessageNakRejectsNilMessage(t *testing.T) {
 	err := Message{}.Nak(context.Background(), 0)
 	if err == nil || !strings.Contains(err.Error(), "message is nil") {
 		t.Fatalf("expected nil message error, got %v", err)
+	}
+}
+
+func TestBuildOptsEmptyWhenCredsFilePathUnset(t *testing.T) {
+	cfg := config.NATSConfig{URL: "nats://localhost:4222"}
+	opts := buildOpts(cfg)
+	if len(opts) != 0 {
+		t.Fatalf("buildOpts with no CredsFilePath = %d options, want 0", len(opts))
+	}
+}
+
+func TestBuildOptsIncludesCredsWhenCredsFilePathSet(t *testing.T) {
+	cfg := config.NATSConfig{
+		URL:           "nats://localhost:4222",
+		CredsFilePath: "/etc/nats/svc.creds",
+	}
+	opts := buildOpts(cfg)
+	if len(opts) != 1 {
+		t.Fatalf("buildOpts with CredsFilePath = %d options, want 1 (UserCredentials)", len(opts))
 	}
 }

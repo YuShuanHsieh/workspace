@@ -300,6 +300,9 @@ nats:
   maxDeliver: 5
   maxAckPending: 1024
   defaultDLQSubject: dlq.tenant-a.task-service
+  # Optional: path to a NATS credentials file (.creds JWT) for authenticated
+  # NATS deployments. Leave unset for local dev or unauthenticated NATS.
+  credsFilePath: /etc/nats/svc.creds
 
 routes:
   - name: task-created
