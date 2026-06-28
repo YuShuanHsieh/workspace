@@ -1,0 +1,108 @@
+{
+  "uid": "event-adapter-sli",
+  "title": "Event Adapter — SLIs",
+  "schemaVersion": 39,
+  "editable": true,
+  "time": { "from": "now-15m", "to": "now" },
+  "refresh": "5s",
+  "panels": [
+    {
+      "id": 1,
+      "title": "Delivery rate by status (per s)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (status) (rate(event_adapter_delivery_total[1m]))",
+          "legendFormat": "{{status}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Delivery success rate (%)",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100 }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "100 * sum(rate(event_adapter_delivery_total{status=\"success\"}[5m])) / clamp_min(sum(rate(event_adapter_delivery_total[5m])), 1)",
+          "legendFormat": "success rate"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Conversion time p99 (ms) — target < 50",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "1000 * histogram_quantile(0.99, sum(rate(event_adapter_conversion_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p99"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "1000 * histogram_quantile(0.50, sum(rate(event_adapter_conversion_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p50"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Throughput (events/s)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "event_adapter_events_processed_per_second",
+          "legendFormat": "throughput"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Pending backlog",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "event_adapter_pending_backlog",
+          "legendFormat": "backlog"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Backpressure triggers (total)",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "event_adapter_backpressure_triggered_total",
+          "legendFormat": "triggers"
+        }
+      ]
+    }
+  ]
+}
