@@ -34,12 +34,22 @@ type Metrics interface {
 	RequestDispatchError(ctx context.Context, route string)
 	RequestNoReply(ctx context.Context)
 	InvalidRequestEvent(ctx context.Context, reason string)
+	PanicRecovered(ctx context.Context, component string)
 }
 
 // Subscriber is satisfied by *natsjs.Client.
 type Subscriber interface {
 	SubscribeRequests(subject, queue string, h func(natsjs.RequestMsg)) (*nats.Subscription, error)
 }
+
+// heartbeatInterval is how often Run refreshes the liveness heartbeat while the
+// responder serves, so /live stays fresh for request-reply-only deployments
+// even when no requests arrive. Must stay well below the probe's max age (60s).
+const heartbeatInterval = 10 * time.Second
+
+// beater is the subset of *health.Heartbeat that Run drives; kept as an
+// interface so the heartbeat can be observed in tests.
+type beater interface{ Beat() }
 
 type Responder struct {
 	matcher Matcher
@@ -48,6 +58,7 @@ type Responder struct {
 	appID   string
 	cfg     *config.RequestsConfig
 	stderr  io.Writer
+	hb      beater
 }
 
 func New(matcher Matcher, disp Dispatcher, metrics Metrics, appID string, cfg *config.RequestsConfig, stderr io.Writer) *Responder {
@@ -55,6 +66,14 @@ func New(matcher Matcher, disp Dispatcher, metrics Metrics, appID string, cfg *c
 		stderr = io.Discard
 	}
 	return &Responder{matcher: matcher, disp: disp, metrics: metrics, appID: appID, cfg: cfg, stderr: stderr}
+}
+
+// WithHeartbeat installs a liveness heartbeat that Run beats periodically while
+// the responder is serving, so /live reflects a request-reply-only deployment
+// that runs no JetStream consumer. Returns the receiver for chaining.
+func (r *Responder) WithHeartbeat(hb beater) *Responder {
+	r.hb = hb
+	return r
 }
 
 // Run subscribes and processes requests on a bounded worker pool until ctx is
@@ -84,6 +103,27 @@ func (r *Responder) Run(ctx context.Context, sub Subscriber) error {
 		return err
 	}
 
+	// Drive the liveness heartbeat on a fixed interval (not per-request) so an
+	// idle responder is not mistaken for a wedged one. Only started after a
+	// successful subscribe so a subscribe failure does not block wg.Wait below.
+	if r.hb != nil {
+		r.hb.Beat()
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			t := time.NewTicker(heartbeatInterval)
+			defer t.Stop()
+			for {
+				select {
+				case <-t.C:
+					r.hb.Beat()
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	}
+
 	<-ctx.Done()
 	// Drain stops new callbacks and waits for pending ones to finish, so no
 	// goroutine sends to jobs after this returns — safe to close.
@@ -98,12 +138,23 @@ func (r *Responder) handle(ctx context.Context, m natsjs.RequestMsg) {
 		r.metrics.RequestNoReply(ctx)
 		return
 	}
-	ev, err := clevent.Parse(m.Data)
+	// ev is declared before the recover so the backstop can still build a reply
+	// carrying the request's causationid when the panic occurs after parsing.
+	var ev *clevent.Event
+	defer func() {
+		if rec := recover(); rec != nil {
+			r.metrics.PanicRecovered(ctx, "responder")
+			fmt.Fprintf(r.stderr, "responder: panic recovered: %v\n", rec)
+			r.respond(m, clevent.BuildErrorReply(ev, r.appID, http.StatusInternalServerError, "internal error"))
+		}
+	}()
+	parsed, err := clevent.Parse(m.Data)
 	if err != nil {
 		r.metrics.InvalidRequestEvent(ctx, "parse_error")
 		r.respond(m, clevent.BuildErrorReply(nil, r.appID, http.StatusBadRequest, err.Error()))
 		return
 	}
+	ev = parsed
 	route, ok := r.matcher.Match(ev)
 	if !ok {
 		r.metrics.InvalidRequestEvent(ctx, "no_route")

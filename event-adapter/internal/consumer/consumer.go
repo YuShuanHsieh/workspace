@@ -6,14 +6,28 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/nats-io/nats.go"
 
 	clevent "event-adapter/internal/cloudevent"
 	"event-adapter/internal/config"
+	"event-adapter/internal/health"
 	"event-adapter/internal/natsjs"
 	"event-adapter/internal/processor"
+)
+
+const (
+	// backpressurePause is how long the fetch loop sleeps while the backlog is
+	// above the threshold before re-checking.
+	backpressurePause = 200 * time.Millisecond
+	// backlogCacheTTL bounds how often ConsumerInfo is queried for the backlog.
+	backlogCacheTTL = time.Second
+	// backpressureReleaseRatio is the hysteresis factor: backpressure releases
+	// once the backlog falls below threshold*ratio, avoiding flapping.
+	backpressureReleaseNum = 9
+	backpressureReleaseDen = 10
 )
 
 type Processor interface {
@@ -31,8 +45,11 @@ type DLQPublisher interface {
 type Metrics interface {
 	EventConsumed(ctx context.Context, route string)
 	DispatchLatency(ctx context.Context, route string, d time.Duration)
+	DeliveryLatency(ctx context.Context, route string, d time.Duration)
 	InvalidCloudEvent(ctx context.Context, reason string)
 	RouteMatchFailure(ctx context.Context)
+	BackpressureTriggered(ctx context.Context)
+	PanicRecovered(ctx context.Context, component string)
 }
 
 type Consumer struct {
@@ -45,6 +62,15 @@ type Consumer struct {
 	batch   int
 	workers int
 	stderr  io.Writer
+
+	heartbeat   *health.Heartbeat
+	pending     func(context.Context) (int64, error)
+	bpThreshold int
+	inFlight    atomic.Int64
+
+	cacheMu       sync.Mutex
+	cachedPending int64
+	cachedAtNano  int64
 }
 
 type job struct {
@@ -70,6 +96,66 @@ func New(sub *nats.Subscription, proc Processor, matcher Matcher, dlq DLQPublish
 	}
 }
 
+// WithHeartbeat installs the liveness heartbeat updated on every fetch loop
+// iteration. Returns the receiver for chaining.
+func (c *Consumer) WithHeartbeat(hb *health.Heartbeat) *Consumer {
+	c.heartbeat = hb
+	return c
+}
+
+// WithBackpressure enables backlog-based backpressure. When the backlog reaches
+// threshold the fetch loop pauses (rejecting new work) until it drains; pending
+// supplies the current JetStream NumPending. Returns the receiver for chaining.
+func (c *Consumer) WithBackpressure(threshold int, pending func(context.Context) (int64, error)) *Consumer {
+	c.bpThreshold = threshold
+	c.pending = pending
+	return c
+}
+
+// InFlight reports how many events are currently being processed.
+func (c *Consumer) InFlight() int64 {
+	return c.inFlight.Load()
+}
+
+// Backlog reports the current pending-event backlog: JetStream NumPending plus
+// the events currently in flight.
+func (c *Consumer) Backlog(ctx context.Context) int64 {
+	return c.currentPending(ctx) + c.inFlight.Load()
+}
+
+// pauseForBackpressure reports whether the fetch loop should pause. It engages
+// at the threshold; once engaged it stays paused until the backlog falls below
+// the release point (threshold * release ratio), so intake does not resume in
+// the hysteresis band between the release point and the threshold.
+func (c *Consumer) pauseForBackpressure(backlog int64, engaged bool) bool {
+	if c.bpThreshold <= 0 {
+		return false
+	}
+	if backlog >= int64(c.bpThreshold) {
+		return true
+	}
+	releaseAt := int64(c.bpThreshold) * backpressureReleaseNum / backpressureReleaseDen
+	return engaged && backlog >= releaseAt
+}
+
+// currentPending returns NumPending, cached for backlogCacheTTL so the fetch
+// loop and metric scrapes do not hammer the NATS server with ConsumerInfo calls.
+func (c *Consumer) currentPending(ctx context.Context) int64 {
+	c.cacheMu.Lock()
+	defer c.cacheMu.Unlock()
+	now := time.Now().UnixNano()
+	if c.cachedAtNano != 0 && now-c.cachedAtNano < int64(backlogCacheTTL) {
+		return c.cachedPending
+	}
+	if c.pending != nil {
+		if p, err := c.pending(ctx); err == nil {
+			c.cachedPending = p
+			c.cachedAtNano = now
+		}
+	}
+	return c.cachedPending
+}
+
 // Run blocks until ctx is cancelled. It starts the worker pool, then loops
 // fetching batches and dispatching them; on shutdown it drains the channel and
 // waits for in-flight work to finish.
@@ -81,7 +167,30 @@ func (c *Consumer) Run(ctx context.Context) {
 		go c.work(ctx, jobs, &wg)
 	}
 
+	backpressured := false
 	for ctx.Err() == nil {
+		c.heartbeat.Beat()
+
+		if c.bpThreshold > 0 {
+			backlog := c.Backlog(ctx)
+			if c.pauseForBackpressure(backlog, backpressured) {
+				if !backpressured {
+					c.metrics.BackpressureTriggered(ctx)
+					backpressured = true
+					fmt.Fprintf(c.stderr, "backpressure engaged: backlog=%d threshold=%d\n", backlog, c.bpThreshold)
+				}
+				select {
+				case <-time.After(backpressurePause):
+				case <-ctx.Done():
+				}
+				continue
+			}
+			if backpressured {
+				backpressured = false
+				fmt.Fprintf(c.stderr, "backpressure released: backlog=%d\n", backlog)
+			}
+		}
+
 		msgs, err := natsjs.FetchBatch(ctx, c.sub, c.batch)
 		if err != nil {
 			if ctx.Err() != nil || isEmptyPoll(err) {
@@ -118,12 +227,30 @@ func (c *Consumer) work(ctx context.Context, jobs <-chan job, wg *sync.WaitGroup
 }
 
 func (c *Consumer) handle(ctx context.Context, j job) {
-	ev, err := clevent.Parse(j.data)
+	c.inFlight.Add(1)
+	defer c.inFlight.Add(-1)
+
+	// ev is declared before the recover so the backstop can DLQ the offending
+	// event when the panic occurs after parsing. A panic is treated as a
+	// permanent failure (DLQ + ack) so a poison event cannot wedge a worker or
+	// redeliver forever; recovering also keeps one bad event from crashing the
+	// whole sidecar.
+	var ev *clevent.Event
+	defer func() {
+		if rec := recover(); rec != nil {
+			c.metrics.PanicRecovered(ctx, "consumer")
+			fmt.Fprintf(c.stderr, "panic recovered processing %s: %v\n", j.subject, rec)
+			c.toDefaultDLQ(ctx, ev, fmt.Sprintf("panic: %v", rec), j.subject, j.handle)
+		}
+	}()
+
+	parsed, err := clevent.Parse(j.data)
 	if err != nil {
 		c.metrics.InvalidCloudEvent(ctx, "parse_error")
 		c.toDefaultDLQ(ctx, nil, err.Error(), j.subject, j.handle)
 		return
 	}
+	ev = parsed
 	route, ok := c.matcher.Match(ev)
 	if !ok {
 		c.metrics.RouteMatchFailure(ctx)
@@ -136,7 +263,9 @@ func (c *Consumer) handle(ctx context.Context, j job) {
 		fmt.Fprintf(c.stderr, "process %s: %v\n", j.subject, err)
 		return
 	}
-	c.metrics.DispatchLatency(ctx, route.Name, time.Since(start))
+	elapsed := time.Since(start)
+	c.metrics.DispatchLatency(ctx, route.Name, elapsed)
+	c.metrics.DeliveryLatency(ctx, route.Name, elapsed)
 }
 
 func (c *Consumer) toDefaultDLQ(ctx context.Context, ev *clevent.Event, reason, subject string, ack processor.Acker) {

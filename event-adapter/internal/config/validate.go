@@ -5,10 +5,15 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 
 	"event-adapter/internal/pathtemplate"
 )
+
+// validEnvironments is the allowlist for observability.environment, matching the
+// values the o11y SDK accepts. Single source for both validation and messages.
+var validEnvironments = []string{"production", "staging", "development", "testing"}
 
 type ValidationError struct {
 	Path string
@@ -67,6 +72,18 @@ func Validate(cfg *Config) []error {
 
 	if cfg.NATS.URL == "" {
 		errs = append(errs, ValidationError{Path: "nats.url", Msg: "is required"})
+	}
+
+	// environment is deployment-distinguishing and must be declared explicitly;
+	// it is intentionally not defaulted, so a production deployment cannot
+	// silently publish telemetry mislabeled as a non-production environment. The
+	// value is checked against the allowlist here (not just presence) so a typo
+	// fails fast at config time rather than starting with mislabeled telemetry.
+	switch env := cfg.Observability.Environment; {
+	case env == "":
+		errs = append(errs, ValidationError{Path: "observability.environment", Msg: "is required (one of: " + strings.Join(validEnvironments, ", ") + ")"})
+	case !slices.Contains(validEnvironments, env):
+		errs = append(errs, ValidationError{Path: "observability.environment", Msg: fmt.Sprintf("invalid value %q (must be one of: %s)", env, strings.Join(validEnvironments, ", "))})
 	}
 
 	jetStreamEnabled := len(cfg.Routes) > 0

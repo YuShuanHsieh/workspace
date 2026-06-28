@@ -101,4 +101,6 @@ requests:
       reply:
         source: task-service
         type: com.workspace.redirect.reply
+observability:
+  environment: testing
 

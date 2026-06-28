@@ -6,6 +6,33 @@ import (
 	"time"
 )
 
+func TestObservabilityWithDefaults(t *testing.T) {
+	got := ObservabilityConfig{}.WithDefaults()
+	want := ObservabilityConfig{
+		ServiceName:           "event-adapter",
+		ServiceVersion:        "0.1.0",
+		Environment:           "", // deployment-distinguishing: required, not defaulted
+		ServiceNamespace:      "workspace",
+		HealthAddr:            ":8080",
+		MetricsAddr:           ":2112",
+		BackpressureThreshold: 1000,
+	}
+	if got != want {
+		t.Fatalf("defaults = %+v, want %+v", got, want)
+	}
+}
+
+func TestObservabilityKeepsOverrides(t *testing.T) {
+	in := ObservabilityConfig{ServiceName: "custom", Environment: "production", BackpressureThreshold: 500}
+	got := in.WithDefaults()
+	if got.ServiceName != "custom" || got.Environment != "production" || got.BackpressureThreshold != 500 {
+		t.Fatalf("overrides not preserved: %+v", got)
+	}
+	if got.MetricsAddr != ":2112" {
+		t.Fatalf("unset field not defaulted: %+v", got)
+	}
+}
+
 func TestParseValidConfig(t *testing.T) {
 	raw := []byte(`
 app:

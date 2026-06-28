@@ -85,7 +85,7 @@ func TestBuildOptsEmptyWhenCredsFilePathUnset(t *testing.T) {
 }
 
 func TestBuildOptsIncludesCredsWhenCredsFilePathSet(t *testing.T) {
-	cfg := config.NATSConfig{
+	cfg := config.NATSConfig{ //nolint:gosec // test fixture: file path, not a secret
 		URL:           "nats://localhost:4222",
 		CredsFilePath: "/etc/nats/svc.creds",
 	}

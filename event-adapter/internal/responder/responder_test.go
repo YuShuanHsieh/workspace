@@ -29,9 +29,17 @@ func (f fakeDispatcher) Dispatch(_ context.Context, _ config.DispatchConfig, _ *
 	return f.res, f.err
 }
 
+// panicDispatcher simulates a handler that panics mid-dispatch (e.g. a nil-map
+// access in downstream code), exercising the responder's panic backstop.
+type panicDispatcher struct{ msg string }
+
+func (p panicDispatcher) Dispatch(context.Context, config.DispatchConfig, *clevent.Event) (dispatcher.Result, error) {
+	panic(p.msg)
+}
+
 type fakeMetrics struct {
-	mu                                      sync.Mutex
-	received, dispatchErr, noReply, invalid int
+	mu                                              sync.Mutex
+	received, dispatchErr, noReply, invalid, panics int
 }
 
 func (f *fakeMetrics) RequestReceived(context.Context, string) {
@@ -53,6 +61,11 @@ func (f *fakeMetrics) RequestNoReply(context.Context) {
 func (f *fakeMetrics) InvalidRequestEvent(context.Context, string) {
 	f.mu.Lock()
 	f.invalid++
+	f.mu.Unlock()
+}
+func (f *fakeMetrics) PanicRecovered(context.Context, string) {
+	f.mu.Lock()
+	f.panics++
 	f.mu.Unlock()
 }
 
@@ -231,6 +244,30 @@ func TestHandleNoRoutePreservesRequestIdentity(t *testing.T) {
 	}
 }
 
+func TestHandleRecoversFromPanicAndReplies500(t *testing.T) {
+	met := &fakeMetrics{}
+	r := newResponder(panicDispatcher{msg: "boom"}, met)
+	m, out := capture()
+
+	// Must not propagate the panic; a regressed handler would crash the worker
+	// goroutine and take down the whole sidecar.
+	r.handle(context.Background(), *m)
+
+	reply := decode(t, *out)
+	if reply["httpstatus"].(float64) != 500 {
+		t.Errorf("httpstatus = %v, want 500", reply["httpstatus"])
+	}
+	if reply["type"] != clevent.ErrorReplyType {
+		t.Errorf("type = %v, want error reply type", reply["type"])
+	}
+	if reply["causationid"] != "req-1" {
+		t.Errorf("causationid = %v, want req-1", reply["causationid"])
+	}
+	if met.panics != 1 {
+		t.Errorf("panics = %d, want 1", met.panics)
+	}
+}
+
 func TestHandleNoReplyToIsDropped(t *testing.T) {
 	met := &fakeMetrics{}
 	r := newResponder(fakeDispatcher{}, met)
@@ -242,6 +279,48 @@ func TestHandleNoReplyToIsDropped(t *testing.T) {
 	}
 	if met.noReply != 1 {
 		t.Errorf("noReply = %d", met.noReply)
+	}
+}
+
+type countBeater struct{ beats atomic.Int32 }
+
+func (c *countBeater) Beat() { c.beats.Add(1) }
+
+// A responder-only deployment runs no JetStream consumer, so the responder
+// itself must drive the liveness heartbeat — even with zero incoming requests,
+// otherwise /live goes stale and k8s restarts an idle-but-healthy pod.
+func TestRunBeatsHeartbeatWithoutRequests(t *testing.T) {
+	d := fakeDispatcher{res: dispatcher.Result{StatusCode: 200, ContentType: "application/json", Body: []byte(`{"ok":true}`)}}
+	hb := &countBeater{}
+	r := newResponder(d, &fakeMetrics{}).WithHeartbeat(hb)
+
+	sub := newFakeSubscriber()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() { done <- r.Run(ctx, sub) }()
+
+	select {
+	case <-sub.ready:
+	case <-time.After(2 * time.Second):
+		t.Fatal("responder did not start")
+	}
+
+	// No request is ever sent. The heartbeat must still be beaten.
+	deadline := time.Now().Add(2 * time.Second)
+	for hb.beats.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if hb.beats.Load() == 0 {
+		t.Fatal("responder did not beat the heartbeat without requests")
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not shut down")
 	}
 }
 

@@ -57,6 +57,26 @@ func (c *Client) Close() {
 	}
 }
 
+// IsConnected reports whether the underlying NATS connection is currently
+// established. Used by the /ready health check.
+func (c *Client) IsConnected() bool {
+	return c.nc != nil && c.nc.IsConnected()
+}
+
+// ConsumerPending returns the number of messages the JetStream consumer has not
+// yet delivered (NumPending). Used for the pending-backlog metric and the
+// backpressure decision.
+func (c *Client) ConsumerPending(stream, durable string) (int64, error) {
+	if c.js == nil {
+		return 0, fmt.Errorf("nats: jetstream context is nil")
+	}
+	ci, err := c.js.ConsumerInfo(stream, durable)
+	if err != nil {
+		return 0, fmt.Errorf("nats: consumer info %s/%s: %w", stream, durable, err)
+	}
+	return int64(ci.NumPending), nil
+}
+
 func (c *Client) PublishResponse(ctx context.Context, subject string, ev *ce.Event) error {
 	if ev == nil {
 		return fmt.Errorf("nats: publish response: nil event")

@@ -27,6 +27,14 @@ func (f *fakeProcessor) Process(_ context.Context, _ string, _ *clevent.Event, _
 	return f.err
 }
 
+// panicProcessor simulates a processor that panics mid-process (e.g. a bug in
+// downstream code), exercising the consumer's panic backstop.
+type panicProcessor struct{ msg string }
+
+func (p panicProcessor) Process(context.Context, string, *clevent.Event, config.RouteConfig, processor.MessageHandle) error {
+	panic(p.msg)
+}
+
 type fakeMatcher struct {
 	route config.RouteConfig
 	ok    bool
@@ -50,10 +58,20 @@ func (f *fakeDLQ) PublishDLQ(context.Context, string, processor.DLQEvent) error 
 
 type noopMetrics struct{}
 
-func (noopMetrics) EventConsumed(context.Context, string)               {}
+func (noopMetrics) EventConsumed(context.Context, string)                  {}
 func (noopMetrics) DispatchLatency(context.Context, string, time.Duration) {}
-func (noopMetrics) InvalidCloudEvent(context.Context, string)           {}
-func (noopMetrics) RouteMatchFailure(context.Context)                   {}
+func (noopMetrics) DeliveryLatency(context.Context, string, time.Duration) {}
+func (noopMetrics) InvalidCloudEvent(context.Context, string)              {}
+func (noopMetrics) RouteMatchFailure(context.Context)                      {}
+func (noopMetrics) BackpressureTriggered(context.Context)                  {}
+func (noopMetrics) PanicRecovered(context.Context, string)                 {}
+
+type panicCountMetrics struct {
+	noopMetrics
+	panics atomic.Int32
+}
+
+func (p *panicCountMetrics) PanicRecovered(context.Context, string) { p.panics.Add(1) }
 
 type fakeHandle struct {
 	mu    sync.Mutex
@@ -87,6 +105,61 @@ func validEventBytes(t *testing.T) []byte {
 
 func testConsumer(proc Processor, matcher Matcher, dlq DLQPublisher) *Consumer {
 	return New(nil, proc, matcher, dlq, noopMetrics{}, config.Config{}, 4, 4, nil)
+}
+
+type bpMetrics struct {
+	noopMetrics
+	triggers atomic.Int32
+}
+
+func (b *bpMetrics) BackpressureTriggered(context.Context) { b.triggers.Add(1) }
+
+func TestBackpressureTriggersOnceWhileBacklogAboveThreshold(t *testing.T) {
+	bp := &bpMetrics{}
+	c := New(nil, &fakeProcessor{}, &fakeMatcher{ok: true}, &fakeDLQ{}, bp, config.Config{}, 1, 1, nil)
+	c.WithBackpressure(1000, func(context.Context) (int64, error) { return 5000, nil })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
+	defer cancel()
+	c.Run(ctx)
+
+	if got := bp.triggers.Load(); got != 1 {
+		t.Fatalf("backpressure triggers = %d, want 1 (edge-triggered)", got)
+	}
+}
+
+func TestPauseForBackpressureHysteresis(t *testing.T) {
+	c := New(nil, &fakeProcessor{}, &fakeMatcher{ok: true}, &fakeDLQ{}, noopMetrics{}, config.Config{}, 1, 1, nil)
+	c.WithBackpressure(1000, func(context.Context) (int64, error) { return 0, nil })
+
+	cases := []struct {
+		name      string
+		backlog   int64
+		engaged   bool
+		wantPause bool
+	}{
+		{"below threshold, not engaged", 950, false, false},
+		{"at threshold engages", 1000, false, true},
+		{"engaged stays paused above release point", 950, true, true},
+		{"engaged at release boundary stays paused", 900, true, true},
+		{"engaged releases below release point", 899, true, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := c.pauseForBackpressure(tc.backlog, tc.engaged); got != tc.wantPause {
+				t.Fatalf("pauseForBackpressure(%d, %v) = %v, want %v", tc.backlog, tc.engaged, got, tc.wantPause)
+			}
+		})
+	}
+}
+
+func TestBacklogIsPendingPlusInFlight(t *testing.T) {
+	c := New(nil, &fakeProcessor{}, &fakeMatcher{ok: true}, &fakeDLQ{}, noopMetrics{}, config.Config{}, 1, 1, nil)
+	c.WithBackpressure(1000, func(context.Context) (int64, error) { return 100, nil })
+	c.inFlight.Store(5)
+	if got := c.Backlog(context.Background()); got != 105 {
+		t.Fatalf("Backlog = %d, want 105", got)
+	}
 }
 
 func TestIsEmptyPoll(t *testing.T) {
@@ -139,6 +212,24 @@ func TestHandleMatchedRouteCallsProcessor(t *testing.T) {
 	c.handle(context.Background(), job{subject: "input.subject", data: validEventBytes(t), handle: &fakeHandle{}})
 	if proc.calls != 1 || dlq.calls != 0 {
 		t.Fatalf("expected process call and no dlq, got proc=%d dlq=%d", proc.calls, dlq.calls)
+	}
+}
+
+func TestHandleRecoversFromProcessorPanic(t *testing.T) {
+	dlq := &fakeDLQ{}
+	h := &fakeHandle{}
+	met := &panicCountMetrics{}
+	c := New(nil, panicProcessor{msg: "boom"}, &fakeMatcher{ok: true, route: config.RouteConfig{Name: "r"}}, dlq, met, config.Config{}, 4, 4, nil)
+
+	// Must not propagate the panic; a regressed processor would crash the worker
+	// goroutine and take down the whole sidecar.
+	c.handle(context.Background(), job{subject: "input.subject", data: validEventBytes(t), handle: h})
+
+	if dlq.calls != 1 || h.acked != 1 {
+		t.Fatalf("expected dlq+ack after panic, got dlq=%d ack=%d", dlq.calls, h.acked)
+	}
+	if got := met.panics.Load(); got != 1 {
+		t.Fatalf("panic metric = %d, want 1", got)
 	}
 }
 

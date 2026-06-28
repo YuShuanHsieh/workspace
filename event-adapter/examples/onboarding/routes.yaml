@@ -32,4 +32,5 @@ routes:
       maxBackoff: 2s
     dlq:
       subject: dlq.tenant-a.task-service
-
+observability:
+  environment: development
