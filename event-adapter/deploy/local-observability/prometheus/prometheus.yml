@@ -1,0 +1,10 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  # The event-adapter shares the mock-app container's network namespace, so its
+  # metrics port (:2112) is reachable at mock-app:2112.
+  - job_name: event-adapter
+    static_configs:
+      - targets: ["mock-app:2112"]

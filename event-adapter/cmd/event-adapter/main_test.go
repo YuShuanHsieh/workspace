@@ -29,6 +29,27 @@ func TestRunRejectsEmptyConfigPath(t *testing.T) {
 	}
 }
 
+func TestResolveMetricsMode(t *testing.T) {
+	cases := []struct {
+		name         string
+		otelDisabled bool
+		otlpEndpoint string
+		want         metricsMode
+	}{
+		{"default is pull", false, "", metricsPull},
+		{"otlp endpoint set is push", false, "collector:4318", metricsPush},
+		{"disabled wins over endpoint", true, "collector:4318", metricsOff},
+		{"disabled with no endpoint", true, "", metricsOff},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := resolveMetricsMode(tc.otelDisabled, tc.otlpEndpoint); got != tc.want {
+				t.Fatalf("resolveMetricsMode(%v, %q) = %v, want %v", tc.otelDisabled, tc.otlpEndpoint, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestRunRejectsMissingConfigFile(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := run(context.Background(), []string{"--config", "/no/such/file.yaml"}, &stdout, &stderr)

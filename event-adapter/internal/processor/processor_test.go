@@ -83,6 +83,72 @@ func testRoute(maxAttempts int) config.RouteConfig {
 	}
 }
 
+type recordingMetrics struct {
+	success    int
+	failure    int
+	convs      int
+	lastReason string
+}
+
+func (r *recordingMetrics) ConversionDuration(context.Context, string, time.Duration) { r.convs++ }
+func (r *recordingMetrics) DeliverySuccess(context.Context, string)                   { r.success++ }
+func (r *recordingMetrics) DeliveryFailure(_ context.Context, _, reason string) {
+	r.failure++
+	r.lastReason = reason
+}
+
+func TestProcessorRecordsDeliverySuccessAndConversion(t *testing.T) {
+	rec := &recordingMetrics{}
+	pub := &fakePublisher{}
+	h := &fakeHandle{deliveries: 1}
+	disp := &fakeDispatcher{result: dispatcher.Result{StatusCode: 200, ContentType: "application/json", Body: []byte(`{"ok":true}`)}}
+	p := New(disp, pub).WithObservability(rec, nil)
+	if err := p.Process(context.Background(), "input.subject", newTestEvent(t), testRoute(3), h); err != nil {
+		t.Fatalf("Process returned error: %v", err)
+	}
+	if rec.success != 1 || rec.failure != 0 || rec.convs != 1 {
+		t.Fatalf("metrics success=%d failure=%d convs=%d, want 1/0/1", rec.success, rec.failure, rec.convs)
+	}
+}
+
+func TestProcessorRecordsDeliveryFailureWithReason(t *testing.T) {
+	rec := &recordingMetrics{}
+	pub := &fakePublisher{responseErr: errors.New("nats down")}
+	h := &fakeHandle{deliveries: 1}
+	disp := &fakeDispatcher{result: dispatcher.Result{StatusCode: 200, ContentType: "application/json", Body: []byte(`{"ok":true}`)}}
+	p := New(disp, pub).WithObservability(rec, nil)
+	if err := p.Process(context.Background(), "input.subject", newTestEvent(t), testRoute(3), h); err != nil {
+		t.Fatalf("Process returned error: %v", err)
+	}
+	if rec.failure != 1 || rec.success != 0 {
+		t.Fatalf("metrics failure=%d success=%d, want 1/0", rec.failure, rec.success)
+	}
+	if rec.lastReason != "nats down" {
+		t.Fatalf("failure reason = %q, want %q", rec.lastReason, "nats down")
+	}
+}
+
+func TestProcessorRecordsDeliveryFailureOnDispatchError(t *testing.T) {
+	// A failed HTTP dispatch that exhausts retries and goes to the DLQ is a
+	// delivery failure and must count toward delivery_total{status="failed"};
+	// otherwise an app outage (everything DLQ'd) leaves the success-rate SLO
+	// falsely reporting 100%.
+	rec := &recordingMetrics{}
+	pub := &fakePublisher{}
+	h := &fakeHandle{deliveries: 3}
+	disp := &fakeDispatcher{err: errors.New("backend down")}
+	p := New(disp, pub).WithObservability(rec, nil)
+	if err := p.Process(context.Background(), "input.subject", newTestEvent(t), testRoute(3), h); err != nil {
+		t.Fatalf("Process returned error: %v", err)
+	}
+	if rec.failure != 1 || rec.success != 0 {
+		t.Fatalf("metrics failure=%d success=%d, want 1/0 (dispatch failure must count)", rec.failure, rec.success)
+	}
+	if rec.lastReason != "backend down" {
+		t.Fatalf("failure reason = %q, want %q", rec.lastReason, "backend down")
+	}
+}
+
 func TestProcessorAcksAfterResponsePublish(t *testing.T) {
 	pub := &fakePublisher{}
 	h := &fakeHandle{deliveries: 1}

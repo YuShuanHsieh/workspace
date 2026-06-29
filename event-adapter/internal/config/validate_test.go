@@ -23,6 +23,53 @@ func validConfig() *Config {
 			Retry:    RetryConfig{MaxAttempts: 3, InitialBackoff: 100 * time.Millisecond, MaxBackoff: 2 * time.Second},
 			DLQ:      DLQConfig{Subject: "dlq.tenant-a.task-service"},
 		}},
+		Observability: ObservabilityConfig{Environment: "testing"},
+	}
+}
+
+func TestValidateRequiresObservabilityEnvironment(t *testing.T) {
+	cfg := validConfig()
+	cfg.Observability.Environment = ""
+	errs := Validate(cfg)
+	if len(errs) == 0 {
+		t.Fatal("expected validation error for missing observability.environment")
+	}
+	found := false
+	for _, e := range errs {
+		if strings.Contains(e.Error(), "observability.environment") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected observability.environment error, got %v", errs)
+	}
+}
+
+func TestValidateRejectsUnknownEnvironment(t *testing.T) {
+	cfg := validConfig()
+	cfg.Observability.Environment = "prodution" // typo, not in the allowlist
+	errs := Validate(cfg)
+	if len(errs) == 0 {
+		t.Fatal("expected validation error for invalid observability.environment")
+	}
+	found := false
+	for _, e := range errs {
+		if strings.Contains(e.Error(), "observability.environment") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected observability.environment error, got %v", errs)
+	}
+}
+
+func TestValidateAcceptsAllValidEnvironments(t *testing.T) {
+	for _, env := range []string{"production", "staging", "development", "testing"} {
+		cfg := validConfig()
+		cfg.Observability.Environment = env
+		if errs := Validate(cfg); len(errs) != 0 {
+			t.Fatalf("environment %q: expected no errors, got %v", env, errs)
+		}
 	}
 }
 
@@ -176,9 +223,10 @@ func baseRequests() *RequestsConfig {
 
 func TestValidatePureResponder(t *testing.T) {
 	cfg := &Config{
-		App:      AppConfig{ID: "upload-service", HTTPBaseURL: "http://127.0.0.1:8080"},
-		NATS:     NATSConfig{URL: "nats://127.0.0.1:4222"},
-		Requests: baseRequests(),
+		App:           AppConfig{ID: "upload-service", HTTPBaseURL: "http://127.0.0.1:8080"},
+		NATS:          NATSConfig{URL: "nats://127.0.0.1:4222"},
+		Requests:      baseRequests(),
+		Observability: ObservabilityConfig{Environment: "testing"},
 	}
 	if errs := Validate(cfg); len(errs) != 0 {
 		t.Fatalf("expected no errors, got %v", errs)

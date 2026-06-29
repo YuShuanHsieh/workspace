@@ -60,3 +60,8 @@ requests:
       reply:
         source: my-service
         type: com.example.my-reply
+
+# ── Observability ──────────────────────────────────────────────────────────────
+# environment is required (one of: production, staging, development, testing).
+observability:
+  environment: development

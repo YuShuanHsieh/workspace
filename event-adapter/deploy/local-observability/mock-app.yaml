@@ -1,0 +1,9 @@
+addr: 0.0.0.0:18080
+
+handlers:
+  - method: POST
+    path: /events/demo
+    response:
+      status: 200
+      contentType: application/json
+      body: '{"ok":true}'

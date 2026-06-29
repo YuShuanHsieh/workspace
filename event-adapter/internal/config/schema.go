@@ -9,10 +9,52 @@ import (
 )
 
 type Config struct {
-	App      AppConfig       `yaml:"app"`
-	NATS     NATSConfig      `yaml:"nats"`
-	Routes   []RouteConfig   `yaml:"routes"`
-	Requests *RequestsConfig `yaml:"requests"`
+	App           AppConfig           `yaml:"app"`
+	NATS          NATSConfig          `yaml:"nats"`
+	Routes        []RouteConfig       `yaml:"routes"`
+	Requests      *RequestsConfig     `yaml:"requests"`
+	Observability ObservabilityConfig `yaml:"observability"`
+}
+
+// ObservabilityConfig configures the o11y SDK, the health-check HTTP server, and
+// the backpressure threshold. Every field is optional; WithDefaults fills in the
+// values used when a field is left empty so existing route configs keep working
+// without an observability block.
+type ObservabilityConfig struct {
+	ServiceName           string `yaml:"serviceName"`
+	ServiceVersion        string `yaml:"serviceVersion"`
+	Environment           string `yaml:"environment"`
+	ServiceNamespace      string `yaml:"serviceNamespace"`
+	HealthAddr            string `yaml:"healthAddr"`
+	MetricsAddr           string `yaml:"metricsAddr"`
+	MetricsOTLPEndpoint   string `yaml:"metricsOTLPEndpoint"` // when set, metrics push via OTLP instead of Prometheus pull
+	BackpressureThreshold int    `yaml:"backpressureThreshold"`
+}
+
+// WithDefaults returns a copy of o with empty fields replaced by their defaults.
+func (o ObservabilityConfig) WithDefaults() ObservabilityConfig {
+	if o.ServiceName == "" {
+		o.ServiceName = "event-adapter"
+	}
+	if o.ServiceVersion == "" {
+		o.ServiceVersion = "0.1.0"
+	}
+	// Environment is intentionally NOT defaulted: it is deployment-distinguishing
+	// and required via Validate, so an unset value fails fast rather than
+	// silently mislabeling production telemetry as "testing".
+	if o.ServiceNamespace == "" {
+		o.ServiceNamespace = "workspace"
+	}
+	if o.HealthAddr == "" {
+		o.HealthAddr = ":8080"
+	}
+	if o.MetricsAddr == "" {
+		o.MetricsAddr = ":2112"
+	}
+	if o.BackpressureThreshold == 0 {
+		o.BackpressureThreshold = 1000
+	}
+	return o
 }
 
 type AppConfig struct {

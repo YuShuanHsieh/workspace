@@ -1,0 +1,43 @@
+# event-adapter config for the local observability stack.
+# httpBaseURL is loopback because the event-adapter container shares the
+# mock-app container's network namespace (network_mode: service:mock-app).
+app:
+  id: demo-service
+  httpBaseURL: http://127.0.0.1:18080
+nats:
+  url: nats://nats:4222
+  stream: demo-events
+  durableConsumer: demo-dispatcher
+  filterSubject: demo.events.created
+  workerPoolSize: 8
+  fetchBatch: 8
+  ackWait: 30s
+  maxDeliver: 3
+  maxAckPending: 256
+  defaultDLQSubject: dlq.demo
+routes:
+  - name: demo-event
+    match:
+      type: com.demo.event
+    dispatch:
+      method: POST
+      path: /events/demo
+      timeout: 2s
+    response:
+      type: com.demo.event.processed
+      source: demo-service
+      subject: demo.events.processed
+    retry:
+      maxAttempts: 3
+      initialBackoff: 100ms
+      maxBackoff: 2s
+    dlq:
+      subject: dlq.demo
+observability:
+  serviceName: event-adapter
+  serviceVersion: 0.1.0
+  environment: testing
+  serviceNamespace: workspace
+  healthAddr: ":8080"
+  metricsAddr: ":2112"
+  backpressureThreshold: 1000
