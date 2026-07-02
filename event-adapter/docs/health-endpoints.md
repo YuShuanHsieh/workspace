@@ -1,7 +1,7 @@
 # Health endpoints
 
 The event-adapter serves two health endpoints on the **health port**
-(`healthAddr`, default `:8080`) — separate from the metrics port (`:2112`).
+(`healthAddr`, default `:8080`) — separate from the metrics port (`:8200`).
 Both respond with `Content-Type: application/json`.
 
 | Endpoint | Probe | Healthy | Unhealthy |
@@ -78,4 +78,4 @@ livenessProbe:
   failureThreshold: 3
 ```
 
-> Point probes at the **health port (8080)**, not the metrics port (2112).
+> Point probes at the **health port (8080)**, not the metrics port (8200).

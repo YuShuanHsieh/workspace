@@ -14,7 +14,7 @@ func TestObservabilityWithDefaults(t *testing.T) {
 		Environment:           "", // deployment-distinguishing: required, not defaulted
 		ServiceNamespace:      "workspace",
 		HealthAddr:            ":8080",
-		MetricsAddr:           ":2112",
+		MetricsAddr:           ":8200",
 		BackpressureThreshold: 1000,
 	}
 	if got != want {
@@ -28,7 +28,7 @@ func TestObservabilityKeepsOverrides(t *testing.T) {
 	if got.ServiceName != "custom" || got.Environment != "production" || got.BackpressureThreshold != 500 {
 		t.Fatalf("overrides not preserved: %+v", got)
 	}
-	if got.MetricsAddr != ":2112" {
+	if got.MetricsAddr != ":8200" {
 		t.Fatalf("unset field not defaulted: %+v", got)
 	}
 }

@@ -39,5 +39,5 @@ observability:
   environment: testing
   serviceNamespace: workspace
   healthAddr: ":8080"
-  metricsAddr: ":2112"
+  metricsAddr: ":8200"
   backpressureThreshold: 1000

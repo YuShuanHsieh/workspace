@@ -49,7 +49,7 @@ func (o ObservabilityConfig) WithDefaults() ObservabilityConfig {
 		o.HealthAddr = ":8080"
 	}
 	if o.MetricsAddr == "" {
-		o.MetricsAddr = ":2112"
+		o.MetricsAddr = ":8200"
 	}
 	if o.BackpressureThreshold == 0 {
 		o.BackpressureThreshold = 1000
