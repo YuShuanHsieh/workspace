@@ -15,14 +15,14 @@ obs, err := o11y.Init(ctx,
     o11y.WithServiceVersion(obsCfg.ServiceVersion),   // default "0.1.0"
     o11y.WithEnvironment(obsCfg.Environment),         // REQUIRED — no default
     o11y.WithServiceNamespace(obsCfg.ServiceNamespace), // default "workspace"
-    o11y.WithMetricsAddr(obsCfg.MetricsAddr),         // default ":2112"
+    o11y.WithMetricsAddr(obsCfg.MetricsAddr),         // default ":8200"
 )
 m := metrics.New(obs.Meter("event-adapter"))
 ```
 
 `o11y.Init` returns a handle that:
 
-- starts an HTTP server serving **`/metrics`** on `MetricsAddr` (default `:2112`)
+- starts an HTTP server serving **`/metrics`** on `MetricsAddr` (default `:8200`)
 - exposes an OpenTelemetry **`Meter`** used by `metrics.New` to create all
   instruments
 - exports via the OpenTelemetry → Prometheus exporter (`_total` on counters,
@@ -40,7 +40,7 @@ Health checks are **not** part of the SDK — they run on a separate HTTP server
 
 | Port | Path | Served by | Purpose |
 |---|---|---|---|
-| `:2112` | `/metrics` | o11y SDK | Prometheus scrape target |
+| `:8200` | `/metrics` | o11y SDK | Prometheus scrape target |
 | `:8080` | `/ready`, `/live` | adapter health server | Kubernetes probes |
 
 ---
@@ -58,7 +58,7 @@ observability:
   serviceVersion: 0.1.0         # default
   serviceNamespace: workspace   # default
   healthAddr: ":8080"           # default
-  metricsAddr: ":2112"          # default (Prometheus pull endpoint)
+  metricsAddr: ":8200"          # default (Prometheus pull endpoint)
   metricsOTLPEndpoint: ""       # when set, metrics push via OTLP instead of pull
   backpressureThreshold: 1000   # default; pending backlog at which consumption pauses
 ```
@@ -69,7 +69,7 @@ Metrics export is selectable; the mode is resolved at startup and logged:
 
 | Mode | How to select | Behaviour |
 |---|---|---|
-| **Pull** (default) | leave `metricsOTLPEndpoint` empty | serves `/metrics` on `metricsAddr` (`:2112`) for Prometheus scrape |
+| **Pull** (default) | leave `metricsOTLPEndpoint` empty | serves `/metrics` on `metricsAddr` (`:8200`) for Prometheus scrape |
 | **Push** | set `metricsOTLPEndpoint` | exports via OTLP to the given collector endpoint; `metricsAddr` is ignored |
 | **Off** | pass `--otel-disabled` | no metrics server and no OTLP push (for local dev without infra); wins over the others |
 
@@ -84,7 +84,7 @@ Metrics export is selectable; the mode is resolved at startup and logged:
 ### 1. Scraping the metrics
 
 **With Prometheus Operator (kube-prometheus-stack):** a `Service` exposing port
-2112 plus a `ServiceMonitor` selecting it.
+8200 plus a `ServiceMonitor` selecting it.
 
 ```yaml
 apiVersion: v1
@@ -98,8 +98,8 @@ spec:
     app: event-adapter
   ports:
     - name: metrics
-      port: 2112
-      targetPort: 2112
+      port: 8200
+      targetPort: 8200
 ---
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
@@ -118,7 +118,7 @@ spec:
 ```
 
 **Without the operator (plain Prometheus):** a `Service` (or pod annotations)
-plus a scrape config targeting `:2112/metrics` — no `ServiceMonitor` needed.
+plus a scrape config targeting `:8200/metrics` — no `ServiceMonitor` needed.
 
 ### 2. Health probes
 

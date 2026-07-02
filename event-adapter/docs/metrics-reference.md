@@ -1,6 +1,6 @@
 # Metrics reference
 
-All metrics are exposed in Prometheus text format at `http://<host>:2112/metrics`
+All metrics are exposed in Prometheus text format at `http://<host>:8200/metrics`
 (see [sre-integration.md](sre-integration.md) for how the endpoint is wired).
 
 Naming follows the OpenTelemetry → Prometheus exporter conventions:

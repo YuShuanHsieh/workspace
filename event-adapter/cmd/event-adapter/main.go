@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/flywindy/o11y"
+	o11yhttp "github.com/flywindy/o11y/http"
 
 	"event-adapter/internal/config"
 	"event-adapter/internal/consumer"
@@ -117,6 +118,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		o11y.WithServiceVersion(obsCfg.ServiceVersion),
 		o11y.WithEnvironment(obsCfg.Environment),
 		o11y.WithServiceNamespace(obsCfg.ServiceNamespace),
+		// Enable all three signals by default, independent of any ambient
+		// O11Y_*_ENABLED env vars. Metrics can still be turned off below: the
+		// mode switch appends after these, and the last option wins, so
+		// --otel-disabled (WithMetricsEnabled(false)) overrides this default.
+		o11y.WithMetricsEnabled(true),
+		o11y.WithTraceEnabled(true),
+		o11y.WithLogEnabled(true),
 	}
 	switch mode {
 	case metricsOff:
@@ -139,7 +147,24 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		}
 	}()
 	m := metrics.New(obs.Meter("event-adapter"))
-	httpDispatcher := dispatcher.New(cfg.App.HTTPBaseURL, nil)
+	// Dispatch over an o11y-instrumented transport so outbound calls to the app
+	// produce client spans named "METHOD /path" (e.g. "POST /orders") instead of
+	// the default "HTTP POST". CheckRedirect mirrors dispatcher.New's own default.
+	dispatchClient := &http.Client{
+		Transport: o11yhttp.NewTransport(
+			http.DefaultTransport,
+			obs.TracerProvider(),
+			obs.MeterProvider(),
+			obs.Propagator,
+			o11yhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
+				return r.Method + " " + r.URL.Path
+			}),
+		),
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	httpDispatcher := dispatcher.New(cfg.App.HTTPBaseURL, dispatchClient)
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
