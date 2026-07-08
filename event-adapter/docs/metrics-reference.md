@@ -23,8 +23,6 @@ Naming follows the OpenTelemetry → Prometheus exporter conventions:
 | `event_adapter_delivery_total` | counter | `route`, `status` (`success`\|`failed`) | delivery outcomes; the success-rate SLI |
 | `event_adapter_conversion_duration_seconds` | histogram | `route` | time to build the response CloudEvent from the HTTP response (conversion only, excludes dispatch) |
 | `event_adapter_delivery_latency_seconds` | histogram | `route` | total time from receiving an event to publishing its response |
-| `event_adapter_events_processed_per_second` | gauge | — | throughput, computed per scrape from the processed-event delta |
-| `event_adapter_pending_backlog` | gauge | — | JetStream `NumPending` plus events currently in flight |
 | `event_adapter_backpressure_triggered_total` | counter | — | edge-triggered: +1 each time the backlog crosses the threshold from below |
 | `cts_route_match_failures_total` | counter | — | events with no matching route |
 | `cts_invalid_cloudevents_total` | counter | `reason` (e.g. `parse_error`) | messages that could not be parsed as a CloudEvent |
@@ -47,6 +45,23 @@ Naming follows the OpenTelemetry → Prometheus exporter conventions:
 
 ---
 
+## Derived / externally-sourced signals
+
+Throughput and pending backlog are **not** emitted by the adapter. They used to
+be in-process `ObservableGauge`s that each held a mutex on the scrape path (and
+the backlog also did a NATS round-trip per scrape). Both are available from a
+better source with no lock:
+
+| Signal | Where it comes from | How to query |
+|---|---|---|
+| Events processed / sec | derived from the `event_adapter_delivery_total` counter | `sum(rate(event_adapter_delivery_total[1m]))` |
+| Pending backlog | NATS/JetStream `NumPending`, exposed by the Prometheus NATS exporter / Surveyor | `jetstream_consumer_num_pending{stream="...", consumer="..."}` |
+
+> The adapter still reads `NumPending` internally for its **backpressure**
+> decision (`Consumer.Backlog`); that is unrelated to the removed metric.
+
+---
+
 ## Key SLI semantics
 
 - **`event_adapter_delivery_total`** — `status="success"` when the response
@@ -60,9 +75,9 @@ Naming follows the OpenTelemetry → Prometheus exporter conventions:
   the sidecar's own overhead, not the app's HTTP latency). Target: p99 < 50 ms.
 - **`event_adapter_delivery_latency_seconds`** — the full per-event journey
   (receive → dispatch → convert → publish).
-- **`event_adapter_pending_backlog`** — sustained growth indicates the adapter
-  cannot drain fast enough; backpressure engages at the configured threshold
-  (default 1000).
+- **Pending backlog** (via `jetstream_consumer_num_pending`, see above) —
+  sustained growth indicates the adapter cannot drain fast enough; backpressure
+  engages at the configured threshold (default 1000).
 
 ### Useful PromQL
 
@@ -74,8 +89,11 @@ sum(rate(event_adapter_delivery_total{status="success"}[5m]))
 # Conversion time p99 (target < 0.05s)
 histogram_quantile(0.99, sum(rate(event_adapter_conversion_duration_seconds_bucket[5m])) by (le))
 
-# Current backlog
-event_adapter_pending_backlog
+# Throughput (events processed per second)
+sum(rate(event_adapter_delivery_total[1m]))
+
+# Current backlog (from the NATS exporter, not the adapter)
+jetstream_consumer_num_pending{stream="...", consumer="..."}
 
 # Recovered panics by component
 sum(rate(event_adapter_panics_recovered_total[5m])) by (component)
@@ -89,9 +107,10 @@ The async consumer protects itself by **pausing consumption** rather than
 rejecting work: when the backlog is too high it stops fetching new batches, so
 messages stay safely in the JetStream stream until it catches up.
 
-- **Backlog** = JetStream `NumPending` + events currently in flight, surfaced as
-  the `event_adapter_pending_backlog` gauge. `NumPending` is cached for ~1s so
-  the fetch loop and metric scrapes don't hammer the NATS server.
+- **Backlog** = JetStream `NumPending` + events currently in flight. `NumPending`
+  is cached for ~1s so the fetch loop doesn't hammer the NATS server. (For
+  monitoring, read `jetstream_consumer_num_pending` from the NATS exporter — the
+  adapter no longer emits a backlog gauge.)
 - **Engage** — when the backlog reaches `backpressureThreshold` (default
   `1000`), the fetch loop pauses for ~200 ms at a time and re-checks, instead of
   pulling more messages.

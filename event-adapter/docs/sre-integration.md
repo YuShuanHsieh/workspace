@@ -128,8 +128,11 @@ Wire `readinessProbe` → `/ready` and `livenessProbe` → `/live` on port **808
 ### 3. Alerting
 
 Alert rules are currently deferred pending SRE review of thresholds and
-coverage. The SLI metrics needed to build them (delivery success rate, pending
-backlog, latency histograms) are emitted today.
+coverage. The SLI metrics needed to build them are available today: delivery
+success rate and latency histograms are emitted by the adapter; pending backlog
+comes from the NATS exporter (`jetstream_consumer_num_pending`) and throughput
+is derived via `rate(event_adapter_delivery_total)`. See
+[metrics-reference.md](metrics-reference.md).
 
 ---
 
