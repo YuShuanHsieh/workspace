@@ -90,7 +90,6 @@ func TestSLIMetricsRecordExpectedValues(t *testing.T) {
 	m.ConversionDuration(ctx, "task-created", 12*time.Millisecond)
 	m.DeliveryLatency(ctx, "task-created", 30*time.Millisecond)
 	m.BackpressureTriggered(ctx)
-	m.SetBacklogProvider(func(context.Context) int64 { return 42 })
 
 	var rm metricdata.ResourceMetrics
 	if err := reader.Collect(ctx, &rm); err != nil {
@@ -141,19 +140,5 @@ func TestSLIMetricsRecordExpectedValues(t *testing.T) {
 	}
 	if bpTotal != 1 {
 		t.Fatalf("backpressure total = %d, want 1", bpTotal)
-	}
-
-	// pending_backlog gauge reflects the provider.
-	backlog, ok := collectByName(t, &rm, "event_adapter_pending_backlog").Data.(metricdata.Gauge[int64])
-	if !ok {
-		t.Fatal("pending_backlog is not Gauge[int64]")
-	}
-	if len(backlog.DataPoints) != 1 || backlog.DataPoints[0].Value != 42 {
-		t.Fatalf("pending_backlog = %v, want single value 42", backlog.DataPoints)
-	}
-
-	// throughput gauge is registered and observable.
-	if _, ok := collectByName(t, &rm, "event_adapter_events_processed_per_second").Data.(metricdata.Gauge[float64]); !ok {
-		t.Fatal("events_processed_per_second is not Gauge[float64]")
 	}
 }

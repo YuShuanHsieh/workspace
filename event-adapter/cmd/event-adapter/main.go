@@ -224,7 +224,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		cons.WithHeartbeat(heartbeat).WithBackpressure(obsCfg.BackpressureThreshold, func(c context.Context) (int64, error) {
 			return js.ConsumerPending(cfg.NATS.Stream, cfg.NATS.DurableConsumer)
 		})
-		m.SetBacklogProvider(cons.Backlog)
 		fmt.Fprintf(stdout, "event-adapter consuming %q with %d workers (batch %d)\n", cfg.NATS.FilterSubject, cfg.NATS.WorkerPoolSize, cfg.NATS.FetchBatch)
 		wg.Add(1)
 		go func() {
