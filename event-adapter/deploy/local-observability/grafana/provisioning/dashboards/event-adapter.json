@@ -69,14 +69,14 @@
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "event_adapter_events_processed_per_second",
+          "expr": "sum(rate(event_adapter_delivery_total[1m]))",
           "legendFormat": "throughput"
         }
       ]
     },
     {
       "id": 5,
-      "title": "Pending backlog",
+      "title": "Pending backlog (from NATS exporter)",
       "type": "timeseries",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
@@ -84,7 +84,7 @@
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "event_adapter_pending_backlog",
+          "expr": "jetstream_consumer_num_pending{stream=\"demo-events\", consumer=\"demo-dispatcher\"}",
           "legendFormat": "backlog"
         }
       ]
