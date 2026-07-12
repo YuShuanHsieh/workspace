@@ -6,9 +6,12 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -103,6 +106,24 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	obsCfg := cfg.Observability.WithDefaults()
 
+	// Observability settings may be overridden by environment variables, falling
+	// back to the values from the config file. This lets a deployment tune the
+	// sidecar's o11y (service identity, metrics transport, signal enablement, and
+	// log level) without editing the mounted route config.
+	serviceName := getEnvOrDefault("O11Y_SERVICE_NAME", obsCfg.ServiceName)
+	serviceVersion := getEnvOrDefault("O11Y_SERVICE_VERSION", obsCfg.ServiceVersion)
+	environment := getEnvOrDefault("O11Y_ENVIRONMENT", obsCfg.Environment)
+	serviceNamespace := getEnvOrDefault("O11Y_SERVICE_NAMESPACE", obsCfg.ServiceNamespace)
+	metricsAddr := getEnvOrDefault("METRICS_ADDR", obsCfg.MetricsAddr)
+	otlpEndpoint := getEnvOrDefault("OTLP_ENDPOINT", obsCfg.OTLPEndpoint)
+	traceEnabled := getEnvBool("O11Y_TRACE_ENABLED", tracingEnabled(opts.otelDisabled, otlpEndpoint))
+	logEnabled := getEnvBool("O11Y_LOG_ENABLED", tracingEnabled(opts.otelDisabled, otlpEndpoint))
+	logLevel := getEnvOrDefault("O11Y_LOG_LEVEL", "info")
+
+	// Metrics transport is config-driven: Prometheus pull (default), OTLP push
+	// when an OTLP endpoint is set, or fully disabled via --otel-disabled.
+	mode := resolveMetricsMode(opts.otelDisabled, otlpEndpoint)
+
 	js, err := natsjs.Connect(cfg.NATS)
 	if err != nil {
 		fmt.Fprintf(stderr, "connect nats: %v\n", err)
@@ -110,29 +131,35 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	defer js.Close()
 
-	// Metrics transport is config-driven: Prometheus pull (default), OTLP push
-	// when an OTLP endpoint is set, or fully disabled via --otel-disabled.
-	mode := resolveMetricsMode(opts.otelDisabled, obsCfg.MetricsOTLPEndpoint)
 	o11yOpts := []o11y.Option{
-		o11y.WithServiceName(obsCfg.ServiceName),
-		o11y.WithServiceVersion(obsCfg.ServiceVersion),
-		o11y.WithEnvironment(obsCfg.Environment),
-		o11y.WithServiceNamespace(obsCfg.ServiceNamespace),
-		// Enable all three signals by default, independent of any ambient
-		// O11Y_*_ENABLED env vars. Metrics can still be turned off below: the
-		// mode switch appends after these, and the last option wins, so
-		// --otel-disabled (WithMetricsEnabled(false)) overrides this default.
+		o11y.WithServiceName(serviceName),
+		o11y.WithServiceVersion(serviceVersion),
+		o11y.WithEnvironment(environment),
+		o11y.WithServiceNamespace(serviceNamespace),
+		// Metrics defaults on here; the mode switch below turns it off for
+		// --otel-disabled (last option wins). Trace and log enablement come from
+		// the O11Y_*_ENABLED env vars, defaulting to on.
 		o11y.WithMetricsEnabled(true),
-		o11y.WithTraceEnabled(true),
-		o11y.WithLogEnabled(true),
+		o11y.WithTraceEnabled(traceEnabled),
+		o11y.WithLogEnabled(logEnabled),
+		o11y.WithLogLevel(parseLogLevel(logLevel)),
 	}
+	// When an OTLP endpoint is set, all signals (including metrics) export via
+	// OTLP; otherwise traces are not sampled (local dev / Prometheus-pull metrics).
+	if otlpEndpoint != "" {
+		o11yOpts = append(o11yOpts, o11y.WithOTLPEndpoint(otlpEndpoint))
+	} else {
+		o11yOpts = append(o11yOpts, o11y.WithSamplingRatio(0))
+	}
+	// Metrics transport: disabled under --otel-disabled, pushed via the OTLP
+	// endpoint appended above, or served for Prometheus pull on metricsAddr.
 	switch mode {
 	case metricsOff:
 		o11yOpts = append(o11yOpts, o11y.WithMetricsEnabled(false))
 	case metricsPush:
-		o11yOpts = append(o11yOpts, o11y.WithMetricsOTLPEndpoint(obsCfg.MetricsOTLPEndpoint))
+		// metrics export through the OTLP endpoint configured above
 	default:
-		o11yOpts = append(o11yOpts, o11y.WithMetricsAddr(obsCfg.MetricsAddr))
+		o11yOpts = append(o11yOpts, o11y.WithMetricsAddr(metricsAddr))
 	}
 	obs, err := o11y.Init(ctx, o11yOpts...)
 	if err != nil {
@@ -140,10 +167,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	defer func() {
-		shutdownCtx, cancelShutdown := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		defer cancelShutdown()
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
 		if sErr := obs.Shutdown(shutdownCtx); sErr != nil {
-			fmt.Fprintf(stderr, "o11y shutdown: %v\n", sErr)
+			obs.Logger.ErrorContext(shutdownCtx, "o11y shutdown", slog.Any("error", sErr))
 		}
 	}()
 	m := metrics.New(obs.Meter("event-adapter"))
@@ -172,7 +199,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	errCh := make(chan error, 1)
 
 	// Health-check server: /ready (NATS connectivity) and /live (event-loop
-	// heartbeat). Metrics are served separately by the o11y SDK on obsCfg.MetricsAddr.
+	// heartbeat). Metrics are served separately by the o11y SDK on metricsAddr.
 	heartbeat := &health.Heartbeat{}
 	checker := &health.Checker{
 		NATSConnected:   js.IsConnected,
@@ -200,11 +227,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	var metricsDesc string
 	switch mode {
 	case metricsPush:
-		metricsDesc = "metrics push (OTLP) to " + obsCfg.MetricsOTLPEndpoint
+		metricsDesc = "metrics push (OTLP) to " + otlpEndpoint
 	case metricsOff:
 		metricsDesc = "metrics disabled"
 	default:
-		metricsDesc = "metrics pull on " + obsCfg.MetricsAddr + "/metrics"
+		metricsDesc = "metrics pull on " + metricsAddr + "/metrics"
 	}
 	fmt.Fprintf(stdout, "event-adapter health on %s (/ready, /live), %s\n", obsCfg.HealthAddr, metricsDesc)
 
@@ -277,4 +304,47 @@ func loadConfig(path string) (*config.Config, error) {
 		return nil, fmt.Errorf("validate config: %w", errs[0])
 	}
 	return cfg, nil
+}
+
+// getEnvOrDefault returns the value of the environment variable named key, or
+// defaultValue when the variable is unset or empty.
+func getEnvOrDefault(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
+}
+
+// getEnvBool parses the environment variable named key as a boolean, returning
+// defaultValue when the variable is unset, empty, or not a valid boolean.
+func getEnvBool(key string, defaultValue bool) bool {
+	if value := os.Getenv(key); value != "" {
+		if b, err := strconv.ParseBool(value); err == nil {
+			return b
+		}
+	}
+	return defaultValue
+}
+
+// tracingEnabled is the default enablement for the trace and log signals when
+// no explicit O11Y_*_ENABLED override is set: signals default on unless OTel is
+// disabled for local development, and stay on regardless when an OTLP endpoint
+// is configured to receive them.
+func tracingEnabled(otelDisabled bool, otlpEndpoint string) bool {
+	return !otelDisabled || otlpEndpoint != ""
+}
+
+// parseLogLevel maps a textual log level (debug, info, warn, error) to an
+// slog.Level, defaulting to info for empty or unrecognized values.
+func parseLogLevel(level string) slog.Level {
+	switch strings.ToLower(strings.TrimSpace(level)) {
+	case "debug":
+		return slog.LevelDebug
+	case "warn", "warning":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
 }

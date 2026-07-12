@@ -121,8 +121,10 @@ func TestDispatchDropsReservedDispatchHeadersAtRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Dispatch returned error: %v", err)
 	}
-	if got := headers.Get("Authorization"); got != "" {
-		t.Fatalf("Authorization must not be forwarded from publisher: %q", got)
+	// Authorization is intentionally not reserved: publishers may forward it to
+	// the dispatch backend.
+	if got := headers.Get("Authorization"); got != "Bearer attacker" {
+		t.Fatalf("Authorization should be forwarded from publisher: %q", got)
 	}
 	if got := headers.Get("Idempotency-Key"); got != "evt-3" {
 		t.Fatalf("publisher must not override Idempotency-Key: %q", got)

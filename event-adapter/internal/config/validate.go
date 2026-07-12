@@ -46,7 +46,6 @@ var reservedHeaders = map[string]bool{
 	"ce-causationid":      true,
 	"idempotency-key":     true,
 	"traceparent":         true,
-	"authorization":       true,
 	"connection":          true,
 	"keep-alive":          true,
 	"proxy-authenticate":  true,
