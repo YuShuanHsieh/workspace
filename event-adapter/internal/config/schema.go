@@ -28,6 +28,7 @@ type ObservabilityConfig struct {
 	HealthAddr            string `yaml:"healthAddr"`
 	MetricsAddr           string `yaml:"metricsAddr"`
 	MetricsOTLPEndpoint   string `yaml:"metricsOTLPEndpoint"` // when set, metrics push via OTLP instead of Prometheus pull
+	OTLPEndpoint          string `yaml:"otlpEndpoint"`        // when set, all signals export via OTLP to this endpoint
 	BackpressureThreshold int    `yaml:"backpressureThreshold"`
 }
 

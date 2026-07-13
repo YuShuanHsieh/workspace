@@ -105,13 +105,23 @@ func TestValidateRejectsStaticHeaderOverride(t *testing.T) {
 
 func TestValidateRejectsReservedForwardHeader(t *testing.T) {
 	cfg := validConfig()
-	cfg.Routes[0].Dispatch.ForwardHeaders = []string{"Authorization"}
+	cfg.Routes[0].Dispatch.ForwardHeaders = []string{"Connection"}
 	errs := Validate(cfg)
 	if len(errs) == 0 {
 		t.Fatal("expected validation error")
 	}
 	if !strings.Contains(errs[0].Error(), "reserved header") {
 		t.Fatalf("expected reserved header error, got %v", errs[0])
+	}
+}
+
+// Authorization is intentionally no longer reserved: routes may forward the
+// client's Authorization header to the dispatch backend.
+func TestValidateAllowsForwardingAuthorization(t *testing.T) {
+	cfg := validConfig()
+	cfg.Routes[0].Dispatch.ForwardHeaders = []string{"Authorization"}
+	if errs := Validate(cfg); len(errs) != 0 {
+		t.Fatalf("expected Authorization to be a valid forward header, got %v", errs)
 	}
 }
 
