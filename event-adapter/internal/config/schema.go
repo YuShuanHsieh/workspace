@@ -11,9 +11,20 @@ import (
 type Config struct {
 	App           AppConfig           `yaml:"app"`
 	NATS          NATSConfig          `yaml:"nats"`
+	NatsAuth      *NATSAuthConfig     `yaml:"natsAuth"`
 	Routes        []RouteConfig       `yaml:"routes"`
 	Requests      *RequestsConfig     `yaml:"requests"`
 	Observability ObservabilityConfig `yaml:"observability"`
+}
+
+// NATSAuthConfig configures dynamic NATS credential minting via the auth-service
+// (an alternative to a static nats.credsFilePath). These values are routes.yaml
+// fallbacks; each is overridden by the matching EVENT_ADAPTER_* env var at
+// startup. The app token itself is env-only (never in config). When absent (and
+// no EVENT_ADAPTER_AUTH_URL is set), event-adapter uses the static creds path.
+type NATSAuthConfig struct {
+	AuthURL       string        `yaml:"authURL"`       // required: auth-service base URL exposing /auth
+	RefreshBuffer time.Duration `yaml:"refreshBuffer"` // optional: re-mint this long before JWT expiry; default 1m
 }
 
 // ObservabilityConfig configures the o11y SDK, the health-check HTTP server, and
@@ -60,6 +71,7 @@ func (o ObservabilityConfig) WithDefaults() ObservabilityConfig {
 
 type AppConfig struct {
 	ID          string `yaml:"id"`
+	Namespace   string `yaml:"namespace"` // sent to /auth as "namespace"; fallback for EVENT_ADAPTER_NAMESPACE
 	HTTPBaseURL string `yaml:"httpBaseURL"`
 }
 

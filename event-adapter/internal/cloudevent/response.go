@@ -33,7 +33,7 @@ func BuildResponse(in *Event, route config.RouteConfig, status int, contentType 
 	if err := setHTTPData(&out, contentType, body); err != nil {
 		return nil, fmt.Errorf("response: %w", err)
 	}
-	out.SetExtension("httpstatus", int32(status))
+	out.SetExtension("httpstatus", int32(status)) // #nosec G115 -- HTTP status code (100-599) always fits int32
 	out.SetExtension("causationid", in.ID())
 	if corr, ok := in.Extensions()["correlationid"]; ok {
 		out.SetExtension("correlationid", corr)
@@ -62,7 +62,7 @@ func BuildReply(in *Event, reply config.ReplyConfig, routeName string, status in
 	if err := setHTTPData(&out, contentType, body); err != nil {
 		return nil, fmt.Errorf("reply: %w", err)
 	}
-	out.SetExtension("httpstatus", int32(status))
+	out.SetExtension("httpstatus", int32(status)) // #nosec G115 -- HTTP status code (100-599) always fits int32
 	out.SetExtension("causationid", in.ID())
 	if corr, ok := in.Extensions()["correlationid"]; ok {
 		out.SetExtension("correlationid", corr)
@@ -86,7 +86,7 @@ func BuildErrorReply(in *Event, source string, status int, message string) *ce.E
 	out.SetSource(source)
 	out.SetTime(time.Now().UTC())
 	_ = out.SetData("application/json", map[string]string{"error": message})
-	out.SetExtension("httpstatus", int32(status))
+	out.SetExtension("httpstatus", int32(status)) // #nosec G115 -- HTTP status code (100-599) always fits int32
 	if in != nil {
 		out.SetExtension("causationid", in.ID())
 		if corr, ok := in.Extensions()["correlationid"]; ok {

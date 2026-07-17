@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "1.25.12"
+
+jobs:
+  # Static Application Security Testing. Blocking gate: fails the run on any
+  # medium+ gosec finding, any reachable govulncheck vulnerability, or any
+  # semgrep WARNING/ERROR. Runs `make sast` so it is byte-identical to what
+  # developers run locally (cd event-adapter && make sast). To require it, add
+  # this job to the branch protection rules for the protected branch.
+  sast:
+    name: SAST (gosec + govulncheck + semgrep)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: event-adapter
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: event-adapter/go.sum
+
+      # Install the pinned SAST toolchain (gosec, govulncheck, semgrep) via the
+      # Makefile so CI and local `make sast` stay in lockstep. pipx is
+      # preinstalled on ubuntu-latest; semgrep lands in ~/.local/bin.
+      - name: Install SAST tools
+        run: |
+          make tools
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      # Explicit `set -o pipefail` so make's exit status (not tee's) drives the
+      # step outcome.
+      - name: SAST (fail on medium+)
+        run: |
+          set -o pipefail
+          make sast 2>&1 | tee /tmp/sast.log
+
+      - name: Write SAST log to step summary
+        if: always()
+        run: |
+          f=/tmp/sast.log
+          [ -f "$f" ] || exit 0
+          {
+            echo "## SAST scan log"
+            echo ""
+            echo '<details><summary>Full output</summary>'
+            echo ''
+            echo '```'
+            tail -c 300000 "$f"
+            echo '```'
+            echo '</details>'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # On failure, surface the tail of the log as a job annotation so the
+      # failing scanner and its findings are visible without drilling in.
+      - name: Surface SAST failure tail
+        if: failure()
+        run: |
+          f=/tmp/sast.log
+          [ -f "$f" ] || exit 0
+          echo "::group::tail of $f"
+          tail -n 400 "$f"
+          echo "::endgroup::"

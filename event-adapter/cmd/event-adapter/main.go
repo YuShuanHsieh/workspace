@@ -18,12 +18,14 @@ import (
 
 	"github.com/flywindy/o11y"
 	o11yhttp "github.com/flywindy/o11y/http"
+	"github.com/nats-io/nats.go"
 
 	"event-adapter/internal/config"
 	"event-adapter/internal/consumer"
 	"event-adapter/internal/dispatcher"
 	"event-adapter/internal/health"
 	"event-adapter/internal/metrics"
+	"event-adapter/internal/natscreds"
 	"event-adapter/internal/natsjs"
 	"event-adapter/internal/processor"
 	"event-adapter/internal/responder"
@@ -124,7 +126,33 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// when an OTLP endpoint is set, or fully disabled via --otel-disabled.
 	mode := resolveMetricsMode(opts.otelDisabled, otlpEndpoint)
 
-	js, err := natsjs.Connect(cfg.NATS)
+	// Dynamic NATS credentials: when configured (natsAuth in the config or the
+	// EVENT_ADAPTER_* env vars), mint a NATS JWT from the auth-service instead of
+	// using a static creds file. Values resolve env-first, then routes.yaml.
+	authCfg, dynamicAuth, err := resolveNatsAuth(cfg, os.Getenv)
+	if err != nil {
+		fmt.Fprintf(stderr, "nats auth config: %v\n", err)
+		return 1
+	}
+	var credsProvider *natscreds.Provider
+	var natsOpts []nats.Option
+	if dynamicAuth {
+		credsProvider, err = natscreds.New(authCfg)
+		if err != nil {
+			fmt.Fprintf(stderr, "nats auth: %v\n", err)
+			return 1
+		}
+		if err := credsProvider.Mint(ctx); err != nil {
+			fmt.Fprintf(stderr, "nats auth: initial mint: %v\n", err)
+			return 1
+		}
+		natsOpts = []nats.Option{
+			nats.UserJWT(credsProvider.JWT, credsProvider.Sign),
+			nats.MaxReconnects(-1),
+		}
+	}
+
+	js, err := natsjs.Connect(cfg.NATS, natsOpts...)
 	if err != nil {
 		fmt.Fprintf(stderr, "connect nats: %v\n", err)
 		return 1
@@ -197,6 +225,18 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	defer cancel()
 	var wg sync.WaitGroup
 	errCh := make(chan error, 1)
+
+	// Proactively refresh the NATS JWT before it expires, reconnecting with the
+	// fresh creds. Tied to the cancellable ctx and wg so it is cancelled and
+	// joined on shutdown (before the deferred js.Close), and is never left
+	// running by a later startup failure.
+	if dynamicAuth {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = credsProvider.Run(ctx, js.ForceReconnect)
+		}()
+	}
 
 	// Health-check server: /ready (NATS connectivity) and /live (event-loop
 	// heartbeat). Metrics are served separately by the o11y SDK on metricsAddr.
@@ -292,7 +332,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 }
 
 func loadConfig(path string) (*config.Config, error) {
-	raw, err := os.ReadFile(path)
+	raw, err := os.ReadFile(path) // #nosec G304 -- config path is the trusted operator-supplied --config flag
 	if err != nil {
 		return nil, fmt.Errorf("read config: %w", err)
 	}
