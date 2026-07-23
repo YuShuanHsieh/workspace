@@ -434,6 +434,9 @@ func TestDispatchDeleteSendsCloudEventData(t *testing.T) {
 		if r.Method != http.MethodDelete {
 			t.Errorf("method = %q, want %q", r.Method, http.MethodDelete)
 		}
+		if r.URL.Path != "/orders/ord-456" {
+			t.Errorf("path = %q, want %q", r.URL.Path, "/orders/ord-456")
+		}
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			t.Errorf("read request body: %v", err)
