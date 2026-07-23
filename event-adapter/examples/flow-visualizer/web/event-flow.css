@@ -139,14 +139,11 @@ h2 {
 }
 
 .flow-lane-heading {
-  border-left: 4px solid var(--platform);
-  color: var(--platform);
+  border-left: 4px solid var(--line);
+  color: var(--muted);
   margin: 0;
   padding: 0.3rem 0.65rem;
 }
-
-.flow-lane-heading:first-child { border-color: var(--caller); color: var(--caller); }
-.flow-lane-heading:last-child { border-color: var(--application); color: var(--application); }
 
 .flow-lanes ol {
   display: grid;
@@ -172,9 +169,9 @@ h2 {
 
 .flow-step[data-owner="caller"] { --owner: var(--caller); }
 .flow-step[data-owner="application"] { --owner: var(--application); }
-.flow-step.state-active { background: #fffaf0; border-color: #f2d28e; }
-.flow-step.state-completed { background: #f2fbf6; border-color: #bde5cf; }
-.flow-step.state-failed { background: #fff5f5; border-color: #f1b7bd; --owner: var(--failed); }
+.flow-step.state-active { background: #fffaf0; border-color: #f2d28e; border-left-color: var(--owner); }
+.flow-step.state-completed { background: #f2fbf6; border-color: #bde5cf; border-left-color: var(--owner); }
+.flow-step.state-failed { background: #fff5f5; border-color: #f1b7bd; border-left-color: var(--owner); --owner: var(--failed); }
 
 .step-lane {
   color: var(--owner);

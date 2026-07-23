@@ -189,6 +189,30 @@ test('reloads for a changed request ID, closing the previous source and resettin
   assert.equal(element.trace.steps.get('dispatch').status, 'waiting');
 });
 
+test('does not reload when an observed attribute is assigned its existing value', async () => {
+  const { EventFlowElement } = await loadComponent();
+  const { FakeLiveSource, instances } = createSourceClass();
+  EventFlowElement.LiveSourceClass = FakeLiveSource;
+  let fetches = 0;
+  globalThis.fetch = async () => {
+    fetches += 1;
+    return { ok: true, json: async () => validConfig() };
+  };
+  const element = new EventFlowElement();
+  element.setAttribute('config-url', '/config.json');
+  element.setAttribute('request-id', 'req-42');
+  element.isConnected = true;
+  element.connectedCallback();
+  await flush();
+  const trace = element.trace;
+  element.setAttribute('request-id', 'req-42');
+  await flush();
+
+  assert.equal(fetches, 1);
+  assert.equal(instances.length, 1);
+  assert.equal(element.trace, trace);
+});
+
 test('disconnect closes the source and invalidates its pending load', async () => {
   const { EventFlowElement } = await loadComponent();
   const { FakeLiveSource, instances } = createSourceClass();
@@ -206,6 +230,24 @@ test('disconnect closes the source and invalidates its pending load', async () =
   await flush();
 
   assert.equal(instances.length, 0);
+  assert.equal(element.source, null);
+});
+
+test('disconnect closes an active live source', async () => {
+  const { EventFlowElement } = await loadComponent();
+  const { FakeLiveSource, instances } = createSourceClass();
+  EventFlowElement.LiveSourceClass = FakeLiveSource;
+  globalThis.fetch = async () => ({ ok: true, json: async () => validConfig() });
+  const element = new EventFlowElement();
+  element.setAttribute('config-url', '/config.json');
+  element.setAttribute('request-id', 'req-42');
+  element.isConnected = true;
+  element.connectedCallback();
+  await flush();
+  element.disconnectedCallback();
+  element.isConnected = false;
+
+  assert.equal(instances[0].closed, true);
   assert.equal(element.source, null);
 });
 
@@ -233,6 +275,30 @@ test('does not let a stale config fetch replace a newer attribute set', async ()
   assert.equal(element.trace.requestID, 'second');
 });
 
+test('ignores callbacks from a source replaced by a request reload', async () => {
+  const { EventFlowElement } = await loadComponent();
+  const { FakeLiveSource, instances } = createSourceClass();
+  EventFlowElement.LiveSourceClass = FakeLiveSource;
+  globalThis.fetch = async () => ({ ok: true, json: async () => validConfig() });
+  const element = new EventFlowElement();
+  element.setAttribute('config-url', '/config.json');
+  element.setAttribute('request-id', 'first');
+  element.isConnected = true;
+  element.connectedCallback();
+  await flush();
+  const first = instances[0];
+  element.setAttribute('request-id', 'second');
+  await flush();
+  const html = element.shadowRoot.innerHTML;
+  first.options.onState('live');
+  first.options.onEvent({ event: 'dispatch.completed', status: 'completed', requestid: 'first', timestamp: '2026-07-23T12:00:00Z' });
+
+  assert.equal(instances.length, 2);
+  assert.equal(element.trace.requestID, 'second');
+  assert.equal(element.trace.steps.get('dispatch').status, 'waiting');
+  assert.equal(element.shadowRoot.innerHTML, html);
+});
+
 test('renders an escaped setup alert for a failed config fetch', async () => {
   const { EventFlowElement } = await loadComponent();
   globalThis.fetch = async () => ({ ok: false, status: '<503>' });
@@ -245,6 +311,70 @@ test('renders an escaped setup alert for a failed config fetch', async () => {
 
   assert.match(element.shadowRoot.innerHTML, /class="setup-error" role="alert"/);
   assert.match(element.shadowRoot.innerHTML, /&lt;503&gt;/);
+  assert.equal(element.source, null);
+});
+
+test('renders an escaped setup alert when fetch rejects', async () => {
+  const { EventFlowElement } = await loadComponent();
+  globalThis.fetch = async () => { throw new Error('network <down>'); };
+  const element = new EventFlowElement();
+  element.setAttribute('config-url', '/config.json');
+  element.setAttribute('request-id', 'req-42');
+  element.isConnected = true;
+
+  await element.load();
+
+  assert.match(element.shadowRoot.innerHTML, /class="setup-error" role="alert"/);
+  assert.match(element.shadowRoot.innerHTML, /network &lt;down&gt;/);
+  assert.equal(element.source, null);
+});
+
+test('renders an escaped setup alert when config JSON parsing throws', async () => {
+  const { EventFlowElement } = await loadComponent();
+  globalThis.fetch = async () => ({ ok: true, json: async () => { throw new Error('json <broken>'); } });
+  const element = new EventFlowElement();
+  element.setAttribute('config-url', '/config.json');
+  element.setAttribute('request-id', 'req-42');
+  element.isConnected = true;
+
+  await element.load();
+
+  assert.match(element.shadowRoot.innerHTML, /json &lt;broken&gt;/);
+  assert.equal(element.source, null);
+});
+
+test('renders a setup alert when config normalization rejects the JSON', async () => {
+  const { EventFlowElement } = await loadComponent();
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ ...validConfig(), version: 2 }) });
+  const element = new EventFlowElement();
+  element.setAttribute('config-url', '/config.json');
+  element.setAttribute('request-id', 'req-42');
+  element.isConnected = true;
+
+  await element.load();
+
+  assert.match(element.shadowRoot.innerHTML, /class="setup-error" role="alert"/);
+  assert.match(element.shadowRoot.innerHTML, /config.version must be 1/);
+  assert.equal(element.source, null);
+});
+
+test('renders an escaped setup alert when live source construction throws', async () => {
+  const { EventFlowElement } = await loadComponent();
+  class FailingLiveSource {
+    constructor() {
+      throw new Error('source <construction failed>');
+    }
+  }
+  EventFlowElement.LiveSourceClass = FailingLiveSource;
+  globalThis.fetch = async () => ({ ok: true, json: async () => validConfig() });
+  const element = new EventFlowElement();
+  element.setAttribute('config-url', '/config.json');
+  element.setAttribute('request-id', 'req-42');
+  element.isConnected = true;
+
+  await element.load();
+
+  assert.match(element.shadowRoot.innerHTML, /source &lt;construction failed&gt;/);
   assert.equal(element.source, null);
 });
 
@@ -288,6 +418,20 @@ test('keeps step status text visibly available in the stylesheet', async () => {
   assert.doesNotMatch(rule, /clip(?:-path)?\s*:/);
   assert.doesNotMatch(rule, /position\s*:\s*absolute/);
   assert.doesNotMatch(rule, /height\s*:\s*1px/);
+});
+
+test('uses neutral lane headings and preserves owner-color step borders for every state', async () => {
+  const css = await readFile(new URL('./event-flow.css', import.meta.url), 'utf8');
+  const headings = css.match(/\.flow-lane-heading\s*\{([^}]*)\}/)?.[1];
+
+  assert.ok(headings, 'expected a .flow-lane-heading CSS rule');
+  assert.doesNotMatch(headings, /var\(--(?:caller|platform|application)\)/);
+  assert.doesNotMatch(css, /\.flow-lane-heading:(?:first|last)-child/);
+  for (const state of ['active', 'completed', 'failed']) {
+    const rule = css.match(new RegExp(`\\.flow-step\\.state-${state}\\s*\\{([^}]*)\\}`))?.[1];
+    assert.ok(rule, `expected a ${state} state rule`);
+    assert.match(rule, /border-left-color\s*:\s*var\(--owner\)/);
+  }
 });
 
 test('registers once when custom elements are available and does not require them', async () => {

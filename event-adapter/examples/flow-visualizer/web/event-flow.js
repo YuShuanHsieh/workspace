@@ -32,8 +32,8 @@ export class EventFlowElement extends HTMLElementBase {
     this.closeSource();
   }
 
-  attributeChangedCallback() {
-    if (this.isConnected) this.load();
+  attributeChangedCallback(name, oldValue, newValue) {
+    if (oldValue !== newValue && this.isConnected) this.load();
   }
 
   async load() {
