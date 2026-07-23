@@ -213,8 +213,9 @@ Allowed methods are `GET`, `POST`, `PUT`, `PATCH`, and `DELETE`. Prefixes are
 optional and use path-segment boundaries. A full URL, traversal, malformed
 path, unsupported method, or other invalid target returns 400 without calling
 your app. With direct dispatch disabled and no exact route, the caller gets
-404. Direct dispatch is never available for JetStream; static JetStream routes
-may nevertheless use `DELETE`.
+404. `directDispatch.timeout` is required, must be positive, and applies to
+every direct dispatch. Direct dispatch is never available for JetStream; static
+JetStream routes may nevertheless use `DELETE`.
 
 Example direct request (the query string is preserved):
 
@@ -233,7 +234,9 @@ Example direct request (the query string is preserved):
 
 Generic direct replies use type `io.eventadapter.direct.reply`, source
 `app.id`, and no subject. They preserve correlation/causation, HTTP status,
-redirect location, response headers/cookies, and timeout behavior.
+redirect location, and response content type/body. Incoming publisher headers
+and cookies continue to follow the existing forwarding and reserved-header
+rules; response headers and cookies are not copied into the reply CloudEvent.
 
 ## 4. Reply Contract
 

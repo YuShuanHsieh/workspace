@@ -51,9 +51,12 @@ The adapter joins the relative path only to the validated loopback
 targets return a structured 400 reply without a backend call. If direct
 dispatch is disabled and no exact route matches, the reply is 404. Generic
 direct replies use type `io.eventadapter.direct.reply`, source `app.id`, and no
-subject while preserving correlation/causation, status, location, headers,
-cookies, and timeout behavior. JetStream routes remain static (though they may
-now use `DELETE`) and never accept publisher-selected targets.
+subject while preserving correlation/causation, status, location, and response
+content type/body. Incoming publisher headers and cookies use the existing
+forwarding and reserved-header rules. `directDispatch.timeout` is required,
+must be positive, and applies to every direct dispatch. JetStream routes remain
+static (though they may now use `DELETE`) and never accept publisher-selected
+targets.
 
 ## Repo layout
 

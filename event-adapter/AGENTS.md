@@ -118,9 +118,14 @@ validated paths using path-segment boundaries. Invalid targets return a 400
 reply without calling the app; disabled direct dispatch with no matching route
 returns 404.
 
+`directDispatch.timeout` is required and must be positive; it applies to every
+direct dispatch.
+
 Direct replies use type `io.eventadapter.direct.reply`, source `app.id`, and no
 subject. They preserve correlation/causation, HTTP status, redirect location,
-content type/body, headers/cookies, and timeout behavior of request-reply.
+and response content type/body. Incoming publisher headers and cookies continue
+to follow the existing forwarding and reserved-header rules, and the direct
+timeout applies to the backend call.
 Static JetStream routes may use `DELETE`, but JetStream never accepts
 publisher-selected targets.
 
