@@ -4,7 +4,7 @@ NATS-to-local-HTTP dispatch sidecar. Bridges NATS messages to an app's loopback
 HTTP handlers so the app never embeds NATS client code.
 
 Design source: `../prd/event-adapter/prd.md`. Request-reply design:
-`../docs/superpowers/specs/2026-06-07-event-adapter-req-reply-design.md`.
+`../docs/superpowers/specs/2026-07-23-event-adapter-direct-request-dispatch-design.md`.
 
 Two inbound delivery models share one dispatch core (`parse CloudEvent → match by
 type → call the local HTTP handler`):
@@ -26,6 +26,34 @@ event backbone:
 - acknowledge original messages only after response or DLQ publish confirmation
 
 Either model may be configured alone or both together; at least one is required.
+
+### Direct request dispatch
+
+Request-reply direct dispatch is disabled unless `requests.directDispatch.enabled`
+is explicitly enabled. Exact request routes take precedence. For an unmatched
+type, an authorized publisher may provide a fully resolved relative
+`dispatchpath` and `dispatchmethod` (`GET`, `POST`, `PUT`, `PATCH`, or `DELETE`):
+
+```yaml
+requests:
+  subject: q.tenant-a.app.orders.request
+  queueGroup: order-responders
+  workerPoolSize: 16
+  directDispatch:
+    enabled: true
+    timeout: 3s
+    allowedPathPrefixes:
+      - /orders/
+```
+
+The adapter joins the relative path only to the validated loopback
+`app.httpBaseURL`; publishers cannot choose a host, scheme, or port. Invalid
+targets return a structured 400 reply without a backend call. If direct
+dispatch is disabled and no exact route matches, the reply is 404. Generic
+direct replies use type `io.eventadapter.direct.reply`, source `app.id`, and no
+subject while preserving correlation/causation, status, location, headers,
+cookies, and timeout behavior. JetStream routes remain static (though they may
+now use `DELETE`) and never accept publisher-selected targets.
 
 ## Repo layout
 

@@ -175,7 +175,7 @@ Important fields:
   one member of the group.
 - `requests.workerPoolSize` bounds in-flight local HTTP dispatches.
 - `match.type` must identify exactly one request route.
-- `dispatch.method` must be `POST`, `PUT`, or `PATCH`.
+- `dispatch.method` must be `GET`, `POST`, `PUT`, `PATCH`, or `DELETE`.
 - `dispatch.path` must start with `/` and match an endpoint your app exposes.
 - `dispatch.timeout` should fit the caller's waiting budget.
 - `dispatch.headers` defines static headers the sidecar adds to app requests.
@@ -188,6 +188,52 @@ Important fields:
 
 A request route has no `response`, `retry`, or `dlq` keys. The strict YAML parser
 rejects those fields under `requests.routes`.
+
+### Optional direct dispatch
+
+Direct dispatch is an opt-in request-reply fallback for operations that would
+otherwise require many static routes. Exact request type routes always win. If
+no exact route matches, the publisher supplies a fully resolved relative
+`dispatchpath` and `dispatchmethod`; the adapter joins that path only to the
+validated loopback `app.httpBaseURL`.
+
+```yaml
+requests:
+  subject: q.tenant-a.app.orders.request
+  queueGroup: order-responders
+  workerPoolSize: 16
+  directDispatch:
+    enabled: true
+    timeout: 3s
+    allowedPathPrefixes:
+      - /orders/
+```
+
+Allowed methods are `GET`, `POST`, `PUT`, `PATCH`, and `DELETE`. Prefixes are
+optional and use path-segment boundaries. A full URL, traversal, malformed
+path, unsupported method, or other invalid target returns 400 without calling
+your app. With direct dispatch disabled and no exact route, the caller gets
+404. Direct dispatch is never available for JetStream; static JetStream routes
+may nevertheless use `DELETE`.
+
+Example direct request (the query string is preserved):
+
+```json
+{
+  "specversion": "1.0",
+  "id": "req-456",
+  "source": "checkout-service",
+  "type": "com.workspace.orders.modify.request",
+  "dispatchmethod": "DELETE",
+  "dispatchpath": "/orders/ord-456?hard=true",
+  "correlationid": "checkout-789",
+  "data": {}
+}
+```
+
+Generic direct replies use type `io.eventadapter.direct.reply`, source
+`app.id`, and no subject. They preserve correlation/causation, HTTP status,
+redirect location, response headers/cookies, and timeout behavior.
 
 ## 4. Reply Contract
 

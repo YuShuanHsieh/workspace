@@ -414,7 +414,7 @@ These targets should be validated with load tests before production rollout.
 
 The request-reply responder lets a backend service answer NATS request-reply calls over its existing loopback HTTP handlers, with no NATS code of its own. It is the **primary** model; the JetStream consumption path (sections 4–10) is opt-in for durable fan-out.
 
-Design reference: [`../../docs/superpowers/specs/2026-06-07-event-adapter-req-reply-design.md`](../../docs/superpowers/specs/2026-06-07-event-adapter-req-reply-design.md).
+Design reference: [`../../docs/superpowers/specs/2026-07-23-event-adapter-direct-request-dispatch-design.md`](../../docs/superpowers/specs/2026-07-23-event-adapter-direct-request-dispatch-design.md).
 
 ### 17.1 When to use which model
 
@@ -430,7 +430,7 @@ Design reference: [`../../docs/superpowers/specs/2026-06-07-event-adapter-req-re
 1. A NATS-native caller publishes a request CloudEvent to the configured subject, with a reply inbox set (standard NATS request-reply).
 2. The sidecar's responder, subscribed within a queue group, receives the request on a bounded worker pool.
 3. The responder validates the CloudEvent envelope and matches it to a request route by `type`.
-4. The responder dispatches the CloudEvent `data` to the configured loopback HTTP method and path — the same dispatch contract as section 7.
+4. An exact route takes precedence. If none matches and direct dispatch is enabled, the responder validates publisher-supplied `dispatchmethod` and fully resolved relative `dispatchpath`, then dispatches to the loopback app; otherwise it returns 404.
 5. The app returns an HTTP response (success or business rejection).
 6. The responder builds a reply CloudEvent (response body as `data`, HTTP status in `httpstatus`, `httplocation` carrying the `Location` header when the app returns a `3xx`, `causationid` = request id, `correlationid` passed through) and sends it on the caller's reply inbox.
 
@@ -452,6 +452,11 @@ requests:
   subject: q.tenant-a.app.uploads.request   # core-NATS subject to answer; may be wildcard
   queueGroup: upload-responders             # one delivery per group; horizontal scale
   workerPoolSize: 16                         # bounded in-flight HTTP dispatches
+  directDispatch:
+    enabled: true
+    timeout: 3s
+    allowedPathPrefixes:
+      - /orders/
   routes:
     - name: upload-presign
       match:
@@ -469,9 +474,17 @@ requests:
 
 Request routes differ from event routes (enforced by validation): they carry a `reply` block (`source` + `type`, optional `dataschema`) instead of `response`, and have **no** `retry` or `dlq`. Request `match.type` values are unique within `requests.routes`, in a namespace separate from event routes.
 
+Direct dispatch is opt-in and request-reply-only. It supports `GET`, `POST`,
+`PUT`, `PATCH`, and `DELETE`. `dispatchpath` is relative and is joined only to
+the validated loopback `app.httpBaseURL`; `allowedPathPrefixes`, when set,
+uses path-segment boundaries. Invalid targets return 400 without a backend
+call, while direct dispatch disabled with no exact route returns 404. Static
+JetStream routes may use `DELETE`, but JetStream cannot use publisher-selected
+targets.
+
 ### 17.4 Reply contract
 
-- The reply is a CloudEvent: configured `reply.type` and `reply.source`, response body in `data`, current timestamp, `httpstatus` extension, `causationid` set to the request id, and `correlationid` copied from the request when present. The reply has **no** `subject` — it travels on the inbox.
+- The reply is a CloudEvent: configured `reply.type` and `reply.source` for static routes; direct replies use type `io.eventadapter.direct.reply` and source `app.id`. Response body is in `data`, with current timestamp, `httpstatus`, `causationid` set to the request id, and `correlationid` copied from the request when present. The reply has **no** `subject` — it travels on the inbox.
 - An app success and an app business rejection are **both replies**, distinguished by `httpstatus`. App `4xx`/`5xx` responses are forwarded as normal replies, not treated as failures.
 - Reply IDs are deterministic for a given request id and route.
 
@@ -484,6 +497,7 @@ Every outcome is a reply to a live caller; nothing is silently dropped, and ther
 | App returns 4xx/5xx | Normal reply, `httpstatus` = the app status, app body forwarded |
 | Malformed request CloudEvent | Error reply, `httpstatus` = 400 |
 | No matching route | Error reply, `httpstatus` = 404 |
+| Invalid direct-dispatch metadata or target | Error reply, `httpstatus` = 400; no backend call |
 | App down / connection refused | Error reply, `httpstatus` = 502 (no retry) |
 | App exceeds `dispatch.timeout` | Error reply, `httpstatus` = 504 |
 | Request has no reply inbox (misuse) | Dropped; counted in a metric, no dispatch |
