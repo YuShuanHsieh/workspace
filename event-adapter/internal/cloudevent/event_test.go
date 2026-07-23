@@ -1,6 +1,9 @@
 package cloudevent
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParseJSONCloudEvent(t *testing.T) {
 	raw := []byte(`{"specversion":"1.0","id":"evt-1","source":"workspace/task","type":"com.workspace.task.created","datacontenttype":"application/json","data":{"taskId":"t1"}}`)
@@ -63,5 +66,60 @@ func TestParseRejectsNonStringDispatchCookies(t *testing.T) {
 	raw := []byte(`{"specversion":"1.0","id":"evt-c3","source":"workspace/task","type":"com.workspace.task.created","datacontenttype":"application/json","dispatchcookies":{"session":123},"data":{"taskId":"t1"}}`)
 	if _, err := Parse(raw); err == nil {
 		t.Fatal("expected error for non-string-valued dispatchcookies")
+	}
+}
+
+func TestParseExtractsAndStripsDirectDispatchMetadata(t *testing.T) {
+	raw := []byte(`{"specversion":"1.0","id":"evt-dd1","source":"workspace/task","type":"com.workspace.task.created","datacontenttype":"application/json","dispatchmethod":"DELETE","dispatchpath":"/orders/ord-456?hard=true","data":{"taskId":"t1"}}`)
+	ev, err := Parse(raw)
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+	if ev.DispatchMethod != "DELETE" {
+		t.Fatalf("unexpected dispatch method: %q", ev.DispatchMethod)
+	}
+	if ev.DispatchPath != "/orders/ord-456?hard=true" {
+		t.Fatalf("unexpected dispatch path: %q", ev.DispatchPath)
+	}
+	for _, name := range []string{"dispatchmethod", "dispatchpath"} {
+		if _, ok := ev.Extensions()[name]; ok {
+			t.Fatalf("%s leaked into CloudEvent extensions", name)
+		}
+	}
+}
+
+func TestParseDirectDispatchMetadataAbsentIsEmpty(t *testing.T) {
+	raw := []byte(`{"specversion":"1.0","id":"evt-dd2","source":"workspace/task","type":"com.workspace.task.created","datacontenttype":"application/json","data":{"taskId":"t1"}}`)
+	ev, err := Parse(raw)
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+	if ev.DispatchMethod != "" {
+		t.Fatalf("expected empty dispatch method, got %q", ev.DispatchMethod)
+	}
+	if ev.DispatchPath != "" {
+		t.Fatalf("expected empty dispatch path, got %q", ev.DispatchPath)
+	}
+}
+
+func TestParseRejectsNonStringDirectDispatchMetadata(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		field string
+		value string
+	}{
+		{name: "method", field: "dispatchmethod", value: `123`},
+		{name: "path", field: "dispatchpath", value: `{"order":"ord-456"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := []byte(`{"specversion":"1.0","id":"evt-dd3","source":"workspace/task","type":"com.workspace.task.created","datacontenttype":"application/json","` + tc.field + `":` + tc.value + `,"data":{"taskId":"t1"}}`)
+			_, err := Parse(raw)
+			if err == nil {
+				t.Fatalf("expected error for non-string %s", tc.field)
+			}
+			if !strings.Contains(err.Error(), tc.field) || !strings.Contains(err.Error(), "must be a string") {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
 	}
 }
