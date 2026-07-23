@@ -1,0 +1,11 @@
+{
+  "specversion": "1.0",
+  "id": "req-direct-delete-1",
+  "source": "workspace/orders-client",
+  "type": "com.workspace.orders.delete.request",
+  "datacontenttype": "application/json",
+  "correlationid": "corr-direct-delete-1",
+  "dispatchmethod": "DELETE",
+  "dispatchpath": "/requests/orders/ord-456?hard=true",
+  "data": {"reason": "cleanup"}
+}
