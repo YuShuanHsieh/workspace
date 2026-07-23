@@ -237,6 +237,17 @@ Generic direct replies use type `io.eventadapter.direct.reply`, source
 redirect location, and response content type/body. Incoming publisher headers
 and cookies continue to follow the existing forwarding and reserved-header
 rules; response headers and cookies are not copied into the reply CloudEvent.
+The inbound CloudEvent `dispatchheaders` and `dispatchcookies` fields are
+request metadata, distinct from these reply fields. Configure
+`allowedPathPrefixes` whenever your local app exposes internal or admin
+endpoints.
+`dispatchmethod` is case-insensitive and normalized to uppercase. The
+`dispatchmethod` and `dispatchpath` fields are control metadata removed before
+CloudEvent parsing, so they are not forwarded as `ce-` headers. `dispatchpath`
+must have exactly one leading slash and rejects full/network URLs, fragments,
+backslashes, traversal or encoded separators, and control characters. Direct
+reply IDs are deterministic and telemetry uses the bounded route label
+`direct`.
 
 ## 4. Reply Contract
 

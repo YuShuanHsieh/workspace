@@ -480,7 +480,21 @@ the validated loopback `app.httpBaseURL`; `allowedPathPrefixes`, when set,
 uses path-segment boundaries. Invalid targets return 400 without a backend
 call, while direct dispatch disabled with no exact route returns 404. Static
 JetStream routes may use `DELETE`, but JetStream cannot use publisher-selected
-targets.
+targets. `directDispatch.timeout` is required, must be positive, and applies to
+every direct dispatch. Inbound CloudEvent `dispatchheaders` and
+`dispatchcookies` are request metadata forwarded under the existing reserved-
+header and cookie rules; they are distinct from reply fields. Direct replies
+carry status, redirect location, response content type, and body, and do not
+copy response headers or cookies into the reply CloudEvent. Operators should
+configure `allowedPathPrefixes` whenever the local app exposes internal or
+admin endpoints.
+`dispatchmethod` is case-insensitive and normalized to uppercase.
+`dispatchmethod` and `dispatchpath` are control metadata stripped before
+CloudEvent SDK parsing, so they are not forwarded as `ce-` headers.
+`dispatchpath` requires exactly one leading slash and rejects full/network URLs,
+fragments, backslashes, traversal (including encoded separators), and control
+characters. Direct reply IDs are deterministic, and direct-dispatch telemetry
+uses the bounded route label `direct`.
 
 ### 17.4 Reply contract
 

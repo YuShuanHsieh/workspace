@@ -126,6 +126,16 @@ subject. They preserve correlation/causation, HTTP status, redirect location,
 and response content type/body. Incoming publisher headers and cookies continue
 to follow the existing forwarding and reserved-header rules, and the direct
 timeout applies to the backend call.
+Specifically, inbound CloudEvent `dispatchheaders` and `dispatchcookies` are
+request metadata and are distinct from reply fields; response headers/cookies
+are not copied into the direct reply CloudEvent. Operators should configure
+`allowedPathPrefixes` whenever the local app exposes internal or admin endpoints.
+`dispatchmethod` is case-insensitive and normalized to uppercase. Both
+`dispatchmethod` and `dispatchpath` are control metadata stripped before
+CloudEvent SDK parsing, so they are not sent as `ce-` headers. Paths require
+exactly one leading slash and reject full/network URLs, fragments, backslashes,
+traversal (including encoded separators), and control characters. Direct reply
+IDs are deterministic, and telemetry uses the bounded route label `direct`.
 Static JetStream routes may use `DELETE`, but JetStream never accepts
 publisher-selected targets.
 

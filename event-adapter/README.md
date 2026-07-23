@@ -56,7 +56,16 @@ content type/body. Incoming publisher headers and cookies use the existing
 forwarding and reserved-header rules. `directDispatch.timeout` is required,
 must be positive, and applies to every direct dispatch. JetStream routes remain
 static (though they may now use `DELETE`) and never accept publisher-selected
-targets.
+targets. Inbound CloudEvent `dispatchheaders` and `dispatchcookies` are request
+metadata, distinct from reply fields; response headers/cookies are not copied
+into the direct reply CloudEvent. Configure `allowedPathPrefixes` whenever the
+local app exposes internal or admin endpoints.
+`dispatchmethod` is case-insensitive and normalized to uppercase. The
+`dispatchmethod` and `dispatchpath` fields are control metadata removed before
+CloudEvent parsing and are not forwarded as `ce-` headers. Paths require
+exactly one leading slash and reject full/network URLs, fragments, backslashes,
+traversal (including encoded separators), and control characters. Direct reply
+IDs are deterministic; metrics use the bounded route label `direct`.
 
 ## Repo layout
 
