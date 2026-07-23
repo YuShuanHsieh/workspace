@@ -104,6 +104,41 @@ func TestBuildReplySuccess(t *testing.T) {
 	}
 }
 
+func TestBuildDirectReplyUsesGenericEnvelope(t *testing.T) {
+	in := mustEvent(t, `{"specversion":"1.0","id":"req-direct","source":"client","type":"orders.delete","correlationid":"corr-1","data":{}}`)
+
+	a, err := BuildReply(in, DirectReplyConfig("order-service"), DirectRouteName, 204, "application/json", nil, "")
+	if err != nil {
+		t.Fatalf("BuildReply: %v", err)
+	}
+	b, err := BuildReply(in, DirectReplyConfig("order-service"), DirectRouteName, 204, "application/json", nil, "")
+	if err != nil {
+		t.Fatalf("BuildReply: %v", err)
+	}
+
+	if a.Type() != DirectReplyType {
+		t.Errorf("type = %q, want %q", a.Type(), DirectReplyType)
+	}
+	if a.Source() != "order-service" {
+		t.Errorf("source = %q, want %q", a.Source(), "order-service")
+	}
+	if a.Subject() != "" {
+		t.Errorf("reply must have no subject, got %q", a.Subject())
+	}
+	if got := a.Extensions()["httpstatus"]; got != int32(204) {
+		t.Errorf("httpstatus = %v, want %v", got, int32(204))
+	}
+	if got := a.Extensions()["causationid"]; got != "req-direct" {
+		t.Errorf("causationid = %v, want %q", got, "req-direct")
+	}
+	if got := a.Extensions()["correlationid"]; got != "corr-1" {
+		t.Errorf("correlationid = %v, want %q", got, "corr-1")
+	}
+	if a.ID() == "" || a.ID() != b.ID() {
+		t.Errorf("direct reply id must be nonempty and deterministic: %q != %q", a.ID(), b.ID())
+	}
+}
+
 func TestBuildResponseSetsHTTPLocationWhenNonEmpty(t *testing.T) {
 	in := mustEvent(t, `{"specversion":"1.0","id":"evt-loc-1","source":"workspace/task","type":"com.workspace.task.created","datacontenttype":"application/json","data":{"taskId":"t1"}}`)
 	route := config.RouteConfig{

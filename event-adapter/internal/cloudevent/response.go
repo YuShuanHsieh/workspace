@@ -13,9 +13,17 @@ import (
 	"event-adapter/internal/config"
 )
 
-// ErrorReplyType is the CloudEvent type used for replies the sidecar generates
-// itself (parse failures, no matching route) rather than from an app response.
-const ErrorReplyType = "io.eventadapter.error.reply"
+const (
+	// ErrorReplyType is the CloudEvent type used for replies the sidecar generates
+	// itself (parse failures, no matching route) rather than from an app response.
+	ErrorReplyType  = "io.eventadapter.error.reply"
+	DirectReplyType = "io.eventadapter.direct.reply"
+	DirectRouteName = "direct"
+)
+
+func DirectReplyConfig(source string) config.ReplyConfig {
+	return config.ReplyConfig{Source: source, Type: DirectReplyType}
+}
 
 func BuildResponse(in *Event, route config.RouteConfig, status int, contentType string, body []byte, location string) (*ce.Event, error) {
 	if in == nil {
