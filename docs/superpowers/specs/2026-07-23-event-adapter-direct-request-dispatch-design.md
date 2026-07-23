@@ -15,7 +15,9 @@ CloudEvent. This removes the need for one route entry per backend operation
 while preserving existing routes, replies, worker limits, and the loopback-only
 trust boundary.
 
-JetStream event processing is unchanged.
+JetStream does not gain publisher-directed dispatch. Its static routes gain
+`DELETE` support, while response, retry, acknowledgement, and DLQ behavior stay
+unchanged.
 
 ## Goals
 
@@ -28,6 +30,8 @@ JetStream event processing is unchanged.
   timeout, and concurrency behavior.
 - Prevent publishers from selecting another host or reaching paths outside an
   optional configured allowlist.
+- Support `DELETE` consistently in direct dispatch and existing static request
+  and event routes.
 
 ## Non-goals
 
@@ -35,7 +39,7 @@ JetStream event processing is unchanged.
 - Publisher-selected schemes, hosts, ports, or Kubernetes services.
 - Path-template or path-parameter substitution by the adapter.
 - Removing static request routes.
-- Supporting HTTP methods beyond `GET`, `POST`, `PUT`, and `PATCH`.
+- Supporting HTTP methods beyond `GET`, `POST`, `PUT`, `PATCH`, and `DELETE`.
 - Changing the JetStream response, retry, acknowledgement, or DLQ contracts.
 
 ## Configuration
@@ -136,7 +140,7 @@ The dispatcher continues to join the path only to the validated
 
 Before any HTTP request is created, direct-dispatch validation must:
 
-- Allow only `GET`, `POST`, `PUT`, and `PATCH`.
+- Allow only `GET`, `POST`, `PUT`, `PATCH`, and `DELETE`.
 - Require an absolute-path reference beginning with exactly one `/`.
 - Reject full URLs, scheme-relative paths beginning with `//`, authorities,
   fragments, malformed escaping, control characters, and backslashes.
@@ -229,6 +233,7 @@ Unit coverage must include:
 - fallback when no exact route matches
 - disabled fallback returning `404`
 - missing metadata and unsupported methods returning `400`
+- `DELETE` dispatch through direct requests and static request/event routes
 - full URLs, `//` paths, fragments, traversal, encoded traversal, encoded
   separators, malformed escaping, and prefix escapes being rejected
 - path-prefix boundary behavior
@@ -236,7 +241,8 @@ Unit coverage must include:
 - timeout, transport failure, backend status, redirect, and `GET` body behavior
 - generic reply metadata and correlation/causation preservation
 - bounded observability labels
-- no behavior changes in JetStream processing or existing static routes
+- no behavior changes in JetStream processing or existing static routes except
+  accepting `DELETE` as a configured dispatch method
 
 An e2e test must send a synchronous request for a type absent from
 `requests.routes`, dispatch it to a resolved local path, and verify the reply
@@ -245,9 +251,10 @@ status and data.
 ## Rollout and Compatibility
 
 The feature is opt-in and additive. Deployments without
-`requests.directDispatch.enabled: true` behave exactly as before. Services can
-migrate incrementally: keep exceptional static routes and remove repetitive
-routes after their publishers send valid direct-dispatch metadata.
+`requests.directDispatch.enabled: true` keep their existing behavior; they may
+add `DELETE` routes explicitly. Services can migrate incrementally: keep
+exceptional static routes and remove repetitive routes after their publishers
+send valid direct-dispatch metadata.
 
 Documentation must emphasize that enabling direct dispatch delegates local
 endpoint selection to authorized NATS publishers. Operators should configure
