@@ -91,7 +91,7 @@ func (p *Processor) WithObservability(m Metrics, l *slog.Logger) *Processor {
 
 func (p *Processor) Process(ctx context.Context, subject string, ev *clevent.Event, route config.RouteConfig, msg MessageHandle) error {
 	policy := RetryPolicy{MaxAttempts: route.Retry.MaxAttempts, InitialBackoff: route.Retry.InitialBackoff, MaxBackoff: route.Retry.MaxBackoff}
-	delivery := int(msg.Deliveries())
+	delivery := int(msg.Deliveries()) // #nosec G115 -- redelivery count, bounded by MaxDeliver
 	if delivery < 1 {
 		delivery = 1
 	}

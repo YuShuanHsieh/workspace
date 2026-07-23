@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"time"
 )
 
 func main() {
@@ -22,7 +23,15 @@ func main() {
 			"tenantId":       r.Header.Get("X-Workspace-Tenant-Id"),
 		})
 	})
-	if err := http.ListenAndServe("127.0.0.1:8080", nil); err != nil {
+	// Explicit server with a read-header timeout to bound slow-client
+	// connections (gosec G114 / CWE-400). Handler nil uses DefaultServeMux.
+	srv := &http.Server{
+		Addr:              "127.0.0.1:8080",
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
+	}
+	if err := srv.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}
 }

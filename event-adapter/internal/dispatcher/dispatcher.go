@@ -157,6 +157,10 @@ func setPublisherHeaders(req *http.Request, dc config.DispatchConfig, ev *cleven
 
 func setPublisherCookies(req *http.Request, ev *clevent.Event) {
 	for name, value := range ev.DispatchCookies {
-		req.AddCookie(&http.Cookie{Name: name, Value: value})
+		// Outbound request cookie (Cookie header), not a Set-Cookie response, so
+		// Secure/HttpOnly/SameSite do not apply. Suppress the response-cookie
+		// linters: gosec G124 (#nosec) and semgrep cookie rules (nosemgrep).
+		// nosemgrep
+		req.AddCookie(&http.Cookie{Name: name, Value: value}) // #nosec G124
 	}
 }

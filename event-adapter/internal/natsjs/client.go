@@ -28,17 +28,19 @@ type Message struct {
 // buildOpts builds the nats.Option slice used by Connect based on the supplied
 // configuration. It is extracted from Connect so it can be unit-tested without
 // requiring a real NATS server.
-func buildOpts(cfg config.NATSConfig) []nats.Option {
+func buildOpts(cfg config.NATSConfig, extra ...nats.Option) []nats.Option {
 	var opts []nats.Option
 	// Add credentials file auth if configured.
 	if cfg.CredsFilePath != "" {
 		opts = append(opts, nats.UserCredentials(cfg.CredsFilePath))
 	}
+	// Caller-supplied options (e.g. dynamic UserJWT auth, reconnect tuning).
+	opts = append(opts, extra...)
 	return opts
 }
 
-func Connect(cfg config.NATSConfig) (*Client, error) {
-	nc, err := nats.Connect(cfg.URL, buildOpts(cfg)...)
+func Connect(cfg config.NATSConfig, extra ...nats.Option) (*Client, error) {
+	nc, err := nats.Connect(cfg.URL, buildOpts(cfg, extra...)...)
 	if err != nil {
 		return nil, fmt.Errorf("nats: connect: %w", err)
 	}
@@ -63,6 +65,16 @@ func (c *Client) IsConnected() bool {
 	return c.nc != nil && c.nc.IsConnected()
 }
 
+// ForceReconnect triggers a reconnect to the server. The dynamic-credentials
+// refresh loop calls this after minting a fresh JWT so NATS re-invokes the
+// UserJWT callback and picks up the new credentials.
+func (c *Client) ForceReconnect() error {
+	if c.nc == nil {
+		return fmt.Errorf("nats: no connection")
+	}
+	return c.nc.ForceReconnect()
+}
+
 // ConsumerPending returns the number of messages the JetStream consumer has not
 // yet delivered (NumPending). Used for the pending-backlog metric and the
 // backpressure decision.
@@ -74,7 +86,7 @@ func (c *Client) ConsumerPending(stream, durable string) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("nats: consumer info %s/%s: %w", stream, durable, err)
 	}
-	return int64(ci.NumPending), nil
+	return int64(ci.NumPending), nil // #nosec G115 -- NATS pending count, never exceeds int64
 }
 
 func (c *Client) PublishResponse(ctx context.Context, subject string, ev *ce.Event) error {
