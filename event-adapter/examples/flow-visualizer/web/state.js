@@ -1,4 +1,5 @@
 const PRECEDENCE = { waiting: 0, active: 1, completed: 2, failed: 3 };
+const WIRE_STATUS = { active: 'started', completed: 'completed', failed: 'failed' };
 
 export function createTrace(config, requestID) {
   return {
@@ -42,7 +43,7 @@ function normalizeObservation(trace, liveEvent, config) {
   if (typeof correlationField !== 'string' || liveEvent[correlationField] !== trace.requestID) return null;
 
   const mapping = config.eventIndex?.get(liveEvent.event);
-  if (!mapping || mapping.status !== liveEvent.status || !PRECEDENCE[liveEvent.status]) return null;
+  if (!mapping || WIRE_STATUS[mapping.status] !== liveEvent.status) return null;
   if (!isObject(liveEvent.detail) && liveEvent.detail !== undefined) return null;
 
   const allowed = config.detailFields?.get(mapping.stepId);
@@ -56,7 +57,7 @@ function normalizeObservation(trace, liveEvent, config) {
 
   return {
     stepId: mapping.stepId,
-    event: { event: liveEvent.event, status: liveEvent.status, timestamp: liveEvent.timestamp, detail },
+    event: { event: liveEvent.event, status: mapping.status, timestamp: liveEvent.timestamp, detail },
   };
 }
 

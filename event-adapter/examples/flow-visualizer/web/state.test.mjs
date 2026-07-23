@@ -63,7 +63,7 @@ test('records a matching completion with allowlisted details', () => {
 test('handles active, completed, and failed statuses', () => {
   const cfg = config();
   const initial = createTrace(cfg, 'request-1');
-  const active = reduceLiveEvent(initial, event({ event: 'dispatch.started', status: 'active' }), cfg);
+  const active = reduceLiveEvent(initial, event({ event: 'dispatch.started', status: 'started' }), cfg);
   const completed = reduceLiveEvent(active, event({ event: 'dispatch.completed', status: 'completed', timestamp: '2026-07-23T10:01:00.000Z' }), cfg);
   const failed = reduceLiveEvent(completed, event({ event: 'dispatch.failed', status: 'failed', timestamp: '2026-07-23T10:02:00.000Z' }), cfg);
 
@@ -86,6 +86,7 @@ test('ignores an event whose supplied status does not match its mapping', () => 
   const trace = createTrace(cfg, 'request-1');
 
   assert.equal(reduceLiveEvent(trace, event({ event: 'dispatch.started', status: 'completed' }), cfg), trace);
+  assert.equal(reduceLiveEvent(trace, event({ event: 'dispatch.started', status: 'active' }), cfg), trace);
   assert.equal(reduceLiveEvent(trace, event({ event: 'dispatch.completed', status: 'failed' }), cfg), trace);
   assert.equal(reduceLiveEvent(trace, event({ event: 'dispatch.failed', status: 'active' }), cfg), trace);
 });
@@ -104,7 +105,7 @@ test('defensively copies allowlisted detail values', () => {
 test('is idempotent for duplicate events and orders observations by timestamp', () => {
   const cfg = config();
   const completed = event();
-  const earlierActive = event({ event: 'dispatch.started', status: 'active', timestamp: '2026-07-23T09:00:00.000Z', detail: { attempt: 0 } });
+  const earlierActive = event({ event: 'dispatch.started', status: 'started', timestamp: '2026-07-23T09:00:00.000Z', detail: { attempt: 0 } });
   const once = reduceLiveEvent(createTrace(cfg, 'request-1'), completed, cfg);
   const duplicate = reduceLiveEvent(once, completed, cfg);
   const reconciled = reduceLiveEvent(duplicate, earlierActive, cfg);
@@ -122,7 +123,7 @@ test('uses later timestamps for equal-precedence detail without downgrading conf
   const cfg = config();
   const first = reduceLiveEvent(createTrace(cfg, 'request-1'), event({ detail: { attempt: 1 } }), cfg);
   const later = reduceLiveEvent(first, event({ timestamp: '2026-07-23T11:00:00.000Z', detail: { attempt: 2 } }), cfg);
-  const afterActive = reduceLiveEvent(later, event({ event: 'dispatch.started', status: 'active', timestamp: '2026-07-23T12:00:00.000Z' }), cfg);
+  const afterActive = reduceLiveEvent(later, event({ event: 'dispatch.started', status: 'started', timestamp: '2026-07-23T12:00:00.000Z' }), cfg);
 
   assert.equal(later.steps.get('dispatch').timestamp, '2026-07-23T11:00:00.000Z');
   assert.deepEqual(later.steps.get('dispatch').detail, { attempt: 2 });
