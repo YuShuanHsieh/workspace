@@ -137,7 +137,14 @@ type RequestsConfig struct {
 	Subject        string               `yaml:"subject"`
 	QueueGroup     string               `yaml:"queueGroup"`
 	WorkerPoolSize int                  `yaml:"workerPoolSize"`
+	DirectDispatch DirectDispatchConfig `yaml:"directDispatch"`
 	Routes         []RequestRouteConfig `yaml:"routes"`
+}
+
+type DirectDispatchConfig struct {
+	Enabled             bool          `yaml:"enabled"`
+	Timeout             time.Duration `yaml:"timeout"`
+	AllowedPathPrefixes []string      `yaml:"allowedPathPrefixes"`
 }
 
 type RequestRouteConfig struct {

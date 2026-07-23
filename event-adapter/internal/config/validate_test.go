@@ -231,6 +231,78 @@ func baseRequests() *RequestsConfig {
 	}
 }
 
+func directOnlyConfig() *Config {
+	return &Config{
+		App:  AppConfig{ID: "upload-service", HTTPBaseURL: "http://127.0.0.1:8080"},
+		NATS: NATSConfig{URL: "nats://127.0.0.1:4222"},
+		Requests: &RequestsConfig{
+			Subject:        "q.tenant-a.app.uploads.request",
+			QueueGroup:     "upload-responders",
+			WorkerPoolSize: 4,
+			DirectDispatch: DirectDispatchConfig{Enabled: true, Timeout: 3 * time.Second, AllowedPathPrefixes: []string{"/orders/"}},
+		},
+		Observability: ObservabilityConfig{Environment: "testing"},
+	}
+}
+
+func TestValidateDirectOnlyResponder(t *testing.T) {
+	if errs := Validate(directOnlyConfig()); len(errs) != 0 {
+		t.Fatalf("expected no errors, got %v", errs)
+	}
+}
+
+func TestValidateRequestsRequiresRoutesOrDirectDispatch(t *testing.T) {
+	cfg := directOnlyConfig()
+	cfg.Requests.DirectDispatch.Enabled = false
+	if !hasErr(Validate(cfg), "requests: must configure routes or enable directDispatch") {
+		t.Fatalf("expected direct-dispatch-or-routes error, got %v", Validate(cfg))
+	}
+}
+
+func TestValidateDirectDispatchRequiresPositiveTimeout(t *testing.T) {
+	for _, timeout := range []time.Duration{0, -time.Second} {
+		t.Run(timeout.String(), func(t *testing.T) {
+			cfg := directOnlyConfig()
+			cfg.Requests.DirectDispatch.Timeout = timeout
+			if !hasErr(Validate(cfg), "requests.directDispatch.timeout: must be positive") {
+				t.Fatalf("expected timeout error, got %v", Validate(cfg))
+			}
+		})
+	}
+}
+
+func TestValidateDirectDispatchRejectsUnsafePrefix(t *testing.T) {
+	for _, prefix := range []string{"/orders/../admin", "/orders/?page=1"} {
+		t.Run(prefix, func(t *testing.T) {
+			cfg := directOnlyConfig()
+			cfg.Requests.DirectDispatch.AllowedPathPrefixes = []string{prefix}
+			errs := Validate(cfg)
+			if !hasErr(errs, "requests.directDispatch.allowedPathPrefixes[0]") {
+				t.Fatalf("expected indexed prefix error, got %v", errs)
+			}
+			if !hasErr(errs, "traversal segment") && !hasErr(errs, "must not contain a query") {
+				t.Fatalf("expected prefix validator reason, got %v", errs)
+			}
+		})
+	}
+}
+
+func TestValidateStaticRoutesAndDirectDispatch(t *testing.T) {
+	cfg := directOnlyConfig()
+	cfg.Requests.Routes = baseRequests().Routes
+	if errs := Validate(cfg); len(errs) != 0 {
+		t.Fatalf("expected no errors, got %v", errs)
+	}
+}
+
+func TestValidateDirectDispatchAllowsEmptyPrefixes(t *testing.T) {
+	cfg := directOnlyConfig()
+	cfg.Requests.DirectDispatch.AllowedPathPrefixes = nil
+	if errs := Validate(cfg); len(errs) != 0 {
+		t.Fatalf("expected no errors, got %v", errs)
+	}
+}
+
 func TestValidatePureResponder(t *testing.T) {
 	cfg := &Config{
 		App:           AppConfig{ID: "upload-service", HTTPBaseURL: "http://127.0.0.1:8080"},

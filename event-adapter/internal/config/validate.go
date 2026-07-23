@@ -170,8 +170,21 @@ func validateRequests(rc *RequestsConfig) []error {
 	if rc.WorkerPoolSize <= 0 {
 		errs = append(errs, ValidationError{Path: "requests.workerPoolSize", Msg: "must be positive"})
 	}
-	if len(rc.Routes) == 0 {
-		errs = append(errs, ValidationError{Path: "requests.routes", Msg: "must contain at least one route"})
+	if len(rc.Routes) == 0 && !rc.DirectDispatch.Enabled {
+		errs = append(errs, ValidationError{Path: "requests", Msg: "must configure routes or enable directDispatch"})
+	}
+	if rc.DirectDispatch.Enabled {
+		if rc.DirectDispatch.Timeout <= 0 {
+			errs = append(errs, ValidationError{Path: "requests.directDispatch.timeout", Msg: "must be positive"})
+		}
+		for i, prefix := range rc.DirectDispatch.AllowedPathPrefixes {
+			if err := requesttarget.ValidatePrefix(prefix); err != nil {
+				errs = append(errs, ValidationError{
+					Path: fmt.Sprintf("requests.directDispatch.allowedPathPrefixes[%d]", i),
+					Msg:  err.Error(),
+				})
+			}
+		}
 	}
 	seen := make(map[string]int, len(rc.Routes))
 	for i, r := range rc.Routes {

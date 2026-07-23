@@ -139,6 +139,44 @@ requests:
 	}
 }
 
+func TestParseDirectOnlyRequestsBlock(t *testing.T) {
+	raw := []byte(`
+app:
+  id: upload-service
+  httpBaseURL: http://127.0.0.1:8080
+nats:
+  url: nats://127.0.0.1:4222
+requests:
+  subject: q.tenant-a.app.uploads.request
+  queueGroup: upload-responders
+  workerPoolSize: 8
+  directDispatch:
+    enabled: true
+    timeout: 3s
+    allowedPathPrefixes:
+      - /orders/
+`)
+	cfg, err := Parse(raw)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if cfg.Requests == nil {
+		t.Fatal("Requests is nil")
+	}
+	if !cfg.Requests.DirectDispatch.Enabled {
+		t.Error("directDispatch.enabled = false, want true")
+	}
+	if cfg.Requests.DirectDispatch.Timeout != 3*time.Second {
+		t.Errorf("directDispatch.timeout = %v, want 3s", cfg.Requests.DirectDispatch.Timeout)
+	}
+	if got := cfg.Requests.DirectDispatch.AllowedPathPrefixes; len(got) != 1 || got[0] != "/orders/" {
+		t.Errorf("directDispatch.allowedPathPrefixes = %#v, want [/orders/]", got)
+	}
+	if len(cfg.Requests.Routes) != 0 {
+		t.Errorf("routes len = %d, want 0", len(cfg.Requests.Routes))
+	}
+}
+
 func TestParseRequestRouteRejectsResponseKey(t *testing.T) {
 	// KnownFields(true) means response/retry/dlq under a request route is a parse error.
 	raw := []byte(`
@@ -160,6 +198,27 @@ requests:
 `)
 	if _, err := Parse(raw); err == nil {
 		t.Fatal("expected parse error for retry key on request route, got nil")
+	}
+}
+
+func TestParseDirectDispatchRejectsUnknownField(t *testing.T) {
+	raw := []byte(`
+app:
+  id: x
+  httpBaseURL: http://127.0.0.1:8080
+nats:
+  url: nats://127.0.0.1:4222
+requests:
+  subject: s
+  queueGroup: g
+  workerPoolSize: 1
+  directDispatch:
+    enabled: true
+    timeout: 1s
+    unknown: true
+`)
+	if _, err := Parse(raw); err == nil || !strings.Contains(err.Error(), "field unknown") {
+		t.Fatalf("expected unknown-field error, got: %v", err)
 	}
 }
 
