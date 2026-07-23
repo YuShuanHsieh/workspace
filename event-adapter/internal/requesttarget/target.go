@@ -148,14 +148,17 @@ func validateLocalTarget(raw string, allowQuery bool) (localTarget, error) {
 			return localTarget{}, fmt.Errorf("request target %q contains a traversal segment", raw)
 		}
 	}
-
-	if unescapedAgain, secondErr := url.PathUnescape(decodedPath); secondErr == nil && unescapedAgain != decodedPath {
-		return localTarget{}, fmt.Errorf("request target %q contains nested escaping", raw)
+	// A percent remaining after the first decode could be reinterpreted by a
+	// downstream decoder. Reject it even when the following bytes are not a
+	// valid escape, because malformed escapes can mask later nested traversal.
+	if strings.ContainsRune(decodedPath, '%') {
+		return localTarget{}, fmt.Errorf("request target %q contains nested path escaping", raw)
 	}
 
+	canonicalDecodedPath := path.Clean(decodedPath)
 	return localTarget{
-		escapedPath: path.Clean(rawPath),
-		decodedPath: path.Clean(decodedPath),
+		escapedPath: (&url.URL{Path: canonicalDecodedPath}).EscapedPath(),
+		decodedPath: canonicalDecodedPath,
 		query:       query,
 	}, nil
 }

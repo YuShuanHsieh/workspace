@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"event-adapter/internal/pathtemplate"
 )
 
 func TestNormalizeMethodAcceptsSupportedMethods(t *testing.T) {
@@ -74,6 +76,8 @@ func TestResolveRejectsUnsafeTargets(t *testing.T) {
 		{name: "encoded backslash lowercase", target: "/orders%5cadmin"},
 		{name: "encoded backslash uppercase", target: "/orders%5Cadmin"},
 		{name: "nested traversal escape", target: "/orders/%252e%252e/admin"},
+		{name: "masked nested traversal escape", target: "/orders/%25zz/%252e%252e/%252e%252e/admin"},
+		{name: "encoded percent", target: "/orders/%25value"},
 		{name: "literal backslash", target: `/orders\admin`},
 		{name: "malformed escape", target: "/orders/%zz"},
 		{name: "malformed query escape", target: "/orders?next=%zz"},
@@ -91,6 +95,56 @@ func TestResolveRejectsUnsafeTargets(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if _, err := Resolve(http.MethodGet, tt.target, nil); err == nil {
 				t.Fatalf("Resolve(%q) returned nil error", tt.target)
+			}
+		})
+	}
+}
+
+func TestResolveNeutralizesPathTemplateTokens(t *testing.T) {
+	for _, rawTarget := range []string{
+		"/orders/{p}/admin",
+		"/orders/%7Bp%7D/admin",
+	} {
+		t.Run(rawTarget, func(t *testing.T) {
+			got, err := Resolve(http.MethodGet, rawTarget, []string{"/orders"})
+			if err != nil {
+				t.Fatalf("Resolve() returned error: %v", err)
+			}
+
+			const want = "/orders/%7Bp%7D/admin"
+			if got.Path != want {
+				t.Fatalf("Resolve().Path = %q, want %q", got.Path, want)
+			}
+
+			afterTemplateResolution, err := pathtemplate.Resolve(got.Path, map[string]string{"p": ".."})
+			if err != nil {
+				t.Fatalf("pathtemplate.Resolve() returned error: %v", err)
+			}
+			if afterTemplateResolution != want {
+				t.Fatalf("pathtemplate.Resolve() = %q, want unchanged %q", afterTemplateResolution, want)
+			}
+		})
+	}
+}
+
+func TestResolveCanonicalizesUnicodeAndMatchesPrefixesAfterDecoding(t *testing.T) {
+	tests := []struct {
+		name   string
+		target string
+		prefix string
+	}{
+		{name: "literal target encoded prefix", target: "/orders/café", prefix: "/orders/caf%C3%A9"},
+		{name: "encoded target literal prefix", target: "/orders/caf%C3%A9", prefix: "/orders/café"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := Resolve(http.MethodGet, tt.target, []string{tt.prefix})
+			if err != nil {
+				t.Fatalf("Resolve() returned error: %v", err)
+			}
+			if got.Path != "/orders/caf%C3%A9" {
+				t.Fatalf("Resolve().Path = %q, want %q", got.Path, "/orders/caf%C3%A9")
 			}
 		})
 	}
