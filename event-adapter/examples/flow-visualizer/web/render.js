@@ -22,10 +22,12 @@ export function escapeHTML(value) {
 }
 
 export function renderFlow(config, trace, connection) {
-  const connectionState = CONNECTION_LABELS[connection] ? connection : 'disconnected';
+  const connectionState = Object.hasOwn(CONNECTION_LABELS, connection) ? connection : 'disconnected';
   const connectionLabel = CONNECTION_LABELS[connectionState];
   const elapsed = renderElapsed(trace.startedAt, trace.updatedAt);
-  const lanes = config.lanes.map((lane) => renderLane(lane, config.steps, trace.steps)).join('');
+  const laneByID = new Map(config.lanes.map((lane, index) => [lane.id, { ...lane, index: index + 1 }]));
+  const laneHeadings = config.lanes.map(renderLaneHeading).join('');
+  const steps = config.steps.map((step) => renderStep(step, trace.steps.get(step.id), laneByID.get(step.lane))).join('');
 
   return `<main class="flow-visualizer">
   <h1>${escapeHTML(config.title)}</h1>
@@ -37,25 +39,25 @@ export function renderFlow(config, trace, connection) {
   </section>
   <p class="focused-request">Focused request: <code>${escapeHTML(trace.requestID)}</code></p>
   <p class="elapsed">Elapsed: ${elapsed}</p>
-  <div class="flow-lanes">${lanes}</div>
+  <section class="flow-lanes" aria-label="Flow lanes">
+    <div class="flow-lane-headings">${laneHeadings}</div>
+    <ol>${steps}</ol>
+  </section>
 </main>`;
 }
 
-function renderLane(lane, steps, traceSteps) {
-  const laneSteps = steps.filter((step) => step.lane === lane.id);
-  const headingID = `lane-${escapeHTML(lane.id)}-heading`;
-  return `<section class="flow-lane" data-owner="${escapeHTML(lane.owner)}" aria-labelledby="${headingID}">
-  <h2 id="${headingID}">${escapeHTML(lane.label)}</h2>
-  <ol>${laneSteps.map((step) => renderStep(step, traceSteps.get(step.id))).join('')}</ol>
-</section>`;
+function renderLaneHeading(lane, index) {
+  return `<h2 id="lane-heading-${index + 1}" class="flow-lane-heading">${escapeHTML(lane.label)}</h2>`;
 }
 
-function renderStep(step, state = {}) {
-  const statusName = STEP_STATUS[state.status] ? state.status : 'waiting';
+function renderStep(step, state = {}, lane) {
+  const statusName = state !== null && Object.hasOwn(STEP_STATUS, state.status) ? state.status : 'waiting';
   const status = STEP_STATUS[statusName];
   const description = step.description === undefined ? '' : `<p class="step-description">${escapeHTML(step.description)}</p>`;
   const details = renderDetails(state.detail);
-  return `<li class="flow-step state-${statusName}" data-owner="${escapeHTML(step.owner)}" aria-label="${escapeHTML(step.label)}: ${status.label}">
+  const headingID = `lane-heading-${lane.index}`;
+  return `<li class="flow-step state-${statusName}" data-owner="${escapeHTML(step.owner)}" data-lane="${escapeHTML(step.lane)}" aria-label="${escapeHTML(step.label)}: ${status.label}" aria-describedby="${headingID}">
+  <span class="step-lane">${escapeHTML(lane.label)}</span>
   <span class="step-status" aria-hidden="true">${status.icon}</span> <span class="step-status-text">${status.label}</span>
   <span class="step-order">${step.order}.</span> <span class="step-label">${escapeHTML(step.label)}</span>${description}${details}
 </li>`;
