@@ -7,9 +7,9 @@ const CONNECTION_LABELS = {
 
 const STEP_STATUS = {
   waiting: { icon: '○', label: 'Waiting' },
-  active: { icon: '◐', label: 'Active' },
+  active: { icon: '◌', label: 'In progress' },
   completed: { icon: '✓', label: 'Completed' },
-  failed: { icon: '✕', label: 'Failed' },
+  failed: { icon: '!', label: 'Failed' },
 };
 
 export function escapeHTML(value) {
@@ -43,8 +43,9 @@ export function renderFlow(config, trace, connection) {
 
 function renderLane(lane, steps, traceSteps) {
   const laneSteps = steps.filter((step) => step.lane === lane.id);
-  return `<section class="flow-lane" data-owner="${escapeHTML(lane.owner)}">
-  <h2>${escapeHTML(lane.label)}</h2>
+  const headingID = `lane-${escapeHTML(lane.id)}-heading`;
+  return `<section class="flow-lane" data-owner="${escapeHTML(lane.owner)}" aria-labelledby="${headingID}">
+  <h2 id="${headingID}">${escapeHTML(lane.label)}</h2>
   <ol>${laneSteps.map((step) => renderStep(step, traceSteps.get(step.id))).join('')}</ol>
 </section>`;
 }
@@ -54,9 +55,9 @@ function renderStep(step, state = {}) {
   const status = STEP_STATUS[statusName];
   const description = step.description === undefined ? '' : `<p class="step-description">${escapeHTML(step.description)}</p>`;
   const details = renderDetails(state.detail);
-  return `<li class="flow-step state-${statusName}" data-owner="${escapeHTML(step.owner)}" aria-label="${escapeHTML(step.label)}: ${statusName}">
+  return `<li class="flow-step state-${statusName}" data-owner="${escapeHTML(step.owner)}" aria-label="${escapeHTML(step.label)}: ${status.label}">
   <span class="step-status" aria-hidden="true">${status.icon}</span> <span class="step-status-text">${status.label}</span>
-  <span class="step-label">${escapeHTML(step.label)}</span>${description}${details}
+  <span class="step-order">${step.order}.</span> <span class="step-label">${escapeHTML(step.label)}</span>${description}${details}
 </li>`;
 }
 

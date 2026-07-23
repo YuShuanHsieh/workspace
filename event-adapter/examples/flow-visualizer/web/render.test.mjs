@@ -57,22 +57,29 @@ test('renders the comparison, focused request, elapsed time, lanes, and ordered 
   assert.match(html, /1,234 ms/);
   assert.match(html, /role="status"[^>]*>Live</);
 
-  const caller = html.indexOf('<h2>Caller</h2>');
-  const platform = html.indexOf('<h2>Platform</h2>');
-  const application = html.indexOf('<h2>Application</h2>');
+  const caller = html.indexOf('<h2 id="lane-caller-heading">Caller</h2>');
+  const platform = html.indexOf('<h2 id="lane-platform-heading">Platform</h2>');
+  const application = html.indexOf('<h2 id="lane-app-heading">Application</h2>');
   assert.ok(caller < platform && platform < application);
   assert.ok(html.indexOf('Send request') < html.indexOf('Publish request'));
   assert.ok(html.indexOf('Publish request') < html.indexOf('Dispatch handler'));
   assert.ok(html.indexOf('Dispatch handler') < html.indexOf('Return reply'));
-  assert.match(html, /<section[^>]*data-owner="caller"[^>]*>/);
-  assert.match(html, /<section[^>]*data-owner="platform"[^>]*>/);
-  assert.match(html, /<section[^>]*data-owner="application"[^>]*>/);
+  assert.match(html, /<section[^>]*data-owner="caller"[^>]*aria-labelledby="lane-caller-heading"[^>]*>/);
+  assert.match(html, /<section[^>]*data-owner="platform"[^>]*aria-labelledby="lane-platform-heading"[^>]*>/);
+  assert.match(html, /<section[^>]*data-owner="application"[^>]*aria-labelledby="lane-app-heading"[^>]*>/);
+  assert.match(html, /<h2 id="lane-caller-heading">Caller<\/h2>/);
+  assert.match(html, /<h2 id="lane-platform-heading">Platform<\/h2>/);
+  assert.match(html, /<h2 id="lane-app-heading">Application<\/h2>/);
   assert.match(html, /<ol>/);
+  for (const step of cfg.steps) {
+    assert.match(html, new RegExp(`<li[^>]*flow-step[^>]*data-owner="${step.owner}"`));
+    assert.match(html, new RegExp(`<span class="step-order">${step.order}\.<\\/span>`));
+  }
   assert.match(html, /The caller starts the flow\./);
   assert.match(html, /<dt>attempt<\/dt><dd>2<\/dd>/);
 });
 
-test('renders every connection and step status with textual accessible status', () => {
+test('renders every connection and step status with prescribed text, icon, and accessible label', () => {
   const cfg = config();
   const trace = traceFor(cfg);
 
@@ -83,10 +90,15 @@ test('renders every connection and step status with textual accessible status', 
   }
 
   const html = renderFlow(cfg, trace, 'live');
-  for (const [id, status] of Object.entries({ request: 'active', publish: 'completed', dispatch: 'failed', reply: 'waiting' })) {
+  for (const [id, expected] of Object.entries({
+    request: { state: 'active', text: 'In progress', icon: '◌' },
+    publish: { state: 'completed', text: 'Completed', icon: '✓' },
+    dispatch: { state: 'failed', text: 'Failed', icon: '!' },
+    reply: { state: 'waiting', text: 'Waiting', icon: '○' },
+  })) {
     const label = cfg.steps.find((step) => step.id === id).label;
-    assert.match(html, new RegExp(`<li[^>]*state-${status}[^>]*aria-label="${label}: ${status}"`));
-    assert.match(html, new RegExp(`>${status}<`, 'i'));
+    assert.match(html, new RegExp(`<li[^>]*state-${expected.state}[^>]*aria-label="${label}: ${expected.text}"`));
+    assert.match(html, new RegExp(`<span class="step-status" aria-hidden="true">${expected.icon}<\\/span> <span class="step-status-text">${expected.text}<\\/span>`));
   }
 });
 
