@@ -18,6 +18,7 @@ import (
 	"event-adapter/internal/dispatcher"
 	"event-adapter/internal/natsjs"
 	pathtemplate "event-adapter/internal/pathtemplate"
+	"event-adapter/internal/requesttarget"
 )
 
 type Dispatcher interface {
@@ -157,9 +158,30 @@ func (r *Responder) handle(ctx context.Context, m natsjs.RequestMsg) {
 	ev = parsed
 	route, ok := r.matcher.Match(ev)
 	if !ok {
-		r.metrics.InvalidRequestEvent(ctx, "no_route")
-		r.respond(m, clevent.BuildErrorReply(ev, r.appID, http.StatusNotFound, "no matching route"))
-		return
+		if !r.cfg.DirectDispatch.Enabled {
+			r.metrics.InvalidRequestEvent(ctx, "no_route")
+			r.respond(m, clevent.BuildErrorReply(ev, r.appID, http.StatusNotFound, "no matching route"))
+			return
+		}
+		target, targetErr := requesttarget.Resolve(
+			ev.DispatchMethod,
+			ev.DispatchPath,
+			r.cfg.DirectDispatch.AllowedPathPrefixes,
+		)
+		if targetErr != nil {
+			r.metrics.InvalidRequestEvent(ctx, "invalid_dispatch_target")
+			r.respond(m, clevent.BuildErrorReply(ev, r.appID, http.StatusBadRequest, targetErr.Error()))
+			return
+		}
+		route = config.RequestRouteConfig{
+			Name: clevent.DirectRouteName,
+			Dispatch: config.DispatchConfig{
+				Method:  target.Method,
+				Path:    target.Path,
+				Timeout: r.cfg.DirectDispatch.Timeout,
+			},
+			Reply: clevent.DirectReplyConfig(r.appID),
+		}
 	}
 	r.metrics.RequestReceived(ctx, route.Name)
 	start := time.Now()
