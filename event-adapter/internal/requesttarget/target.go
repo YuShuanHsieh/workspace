@@ -115,7 +115,7 @@ func validateLocalTarget(raw string, allowQuery bool) (localTarget, error) {
 		return localTarget{}, fmt.Errorf("request target %q must be a local absolute path", raw)
 	}
 	if query != "" {
-		if _, queryErr := url.QueryUnescape(query[1:]); queryErr != nil {
+		if queryErr := validateRawQuery(query[1:]); queryErr != nil {
 			return localTarget{}, fmt.Errorf("invalid request target query in %q: %w", raw, queryErr)
 		}
 	}
@@ -158,6 +158,36 @@ func validateLocalTarget(raw string, allowQuery bool) (localTarget, error) {
 		decodedPath: path.Clean(decodedPath),
 		query:       query,
 	}, nil
+}
+
+func validateRawQuery(raw string) error {
+	for index := 0; index < len(raw); index++ {
+		char := raw[index]
+		if isASCIIAlphaNumeric(char) || strings.ContainsRune("-._~!$&'()*+,;=:@/?", rune(char)) {
+			continue
+		}
+		if char == '%' {
+			if index+2 >= len(raw) || !isHexDigit(raw[index+1]) || !isHexDigit(raw[index+2]) {
+				return fmt.Errorf("malformed percent escape at byte %d", index)
+			}
+			index += 2
+			continue
+		}
+		return fmt.Errorf("disallowed raw character at byte %d", index)
+	}
+	return nil
+}
+
+func isASCIIAlphaNumeric(char byte) bool {
+	return char >= 'a' && char <= 'z' ||
+		char >= 'A' && char <= 'Z' ||
+		char >= '0' && char <= '9'
+}
+
+func isHexDigit(char byte) bool {
+	return char >= 'a' && char <= 'f' ||
+		char >= 'A' && char <= 'F' ||
+		char >= '0' && char <= '9'
 }
 
 func pathHasPrefix(targetPath, prefix string) bool {

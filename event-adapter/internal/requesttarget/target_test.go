@@ -77,6 +77,13 @@ func TestResolveRejectsUnsafeTargets(t *testing.T) {
 		{name: "literal backslash", target: `/orders\admin`},
 		{name: "malformed escape", target: "/orders/%zz"},
 		{name: "malformed query escape", target: "/orders?next=%zz"},
+		{name: "incomplete query escape", target: "/orders?next=%2"},
+		{name: "literal query space", target: "/orders?value=a b"},
+		{name: "literal query tab", target: "/orders?value=a\tb"},
+		{name: "literal query control", target: "/orders?value=a\x00b"},
+		{name: "raw query opening bracket", target: "/orders?value=[a"},
+		{name: "raw query closing bracket", target: "/orders?value=a]"},
+		{name: "raw query non ASCII", target: "/orders?value=café"},
 		{name: "control character", target: "/orders/\x00admin"},
 	}
 
@@ -179,13 +186,20 @@ func TestResolveRejectsInvalidMethodAndMissingPath(t *testing.T) {
 }
 
 func TestResolvePreservesQueryAndAppliesPrefixOnlyToPath(t *testing.T) {
-	rawTarget := "/orders/ord-1?next=%2Fadmin%3Fraw%3Dtrue&token=a%252Fb"
-	got, err := Resolve(http.MethodGet, rawTarget, []string{"/orders"})
-	if err != nil {
-		t.Fatalf("Resolve() returned error: %v", err)
-	}
-	if got.Path != rawTarget {
-		t.Fatalf("Resolve().Path = %q, want %q", got.Path, rawTarget)
+	for _, rawTarget := range []string{
+		"/orders/ord-1?next=%2Fadmin%3Fraw%3Dtrue&token=a%252Fb",
+		"/orders/ord-1?value=a%20b&next=%2Forders%3Fx%3D1",
+		"/orders/ord-1?value=a+b",
+	} {
+		t.Run(rawTarget, func(t *testing.T) {
+			got, err := Resolve(http.MethodGet, rawTarget, []string{"/orders"})
+			if err != nil {
+				t.Fatalf("Resolve() returned error: %v", err)
+			}
+			if got.Path != rawTarget {
+				t.Fatalf("Resolve().Path = %q, want %q", got.Path, rawTarget)
+			}
+		})
 	}
 }
 
