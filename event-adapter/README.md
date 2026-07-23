@@ -17,6 +17,9 @@ event backbone:
 - return the HTTP response as a reply CloudEvent on the caller's inbox
 - return structured error replies (400/404/502/504) instead of hanging; no retry/DLQ
 
+For PM demos, [`examples/flow-visualizer`](examples/flow-visualizer/) provides a
+configurable live request-reply processing trace driven by correlated SSE events.
+
 **JetStream event consumption (opt-in)** — for durable, fire-and-forget fan-out:
 
 - consume CloudEvents from JetStream durable consumers
