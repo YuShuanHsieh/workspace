@@ -37,7 +37,7 @@ function normalizeComparison(input) {
     beforeLabel: requiredString(comparison.beforeLabel, 'config.comparison.beforeLabel'),
     before: stringList(comparison.before, 'config.comparison.before'),
     afterLabel: requiredString(comparison.afterLabel, 'config.comparison.afterLabel'),
-    after: stringList(comparison.after, 'config.comparison.after'),
+    after: requiredString(comparison.after, 'config.comparison.after'),
   };
 }
 

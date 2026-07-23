@@ -11,7 +11,7 @@ function validConfig() {
       beforeLabel: 'Before',
       before: ['Caller uploads directly'],
       afterLabel: 'After',
-      after: ['Platform coordinates upload'],
+      after: 'One HTTP business handler',
     },
     source: {
       transport: 'sse',
@@ -94,6 +94,20 @@ test('rejects invalid or empty before comparison', () => {
   const empty = validConfig();
   empty.comparison.before = [''];
   assert.throws(() => normalizeConfig(empty));
+});
+
+test('rejects missing, empty, or non-string after comparison', () => {
+  const missing = validConfig();
+  delete missing.comparison.after;
+  assert.throws(() => normalizeConfig(missing));
+
+  const empty = validConfig();
+  empty.comparison.after = '';
+  assert.throws(() => normalizeConfig(empty));
+
+  const nonString = validConfig();
+  nonString.comparison.after = ['One HTTP business handler'];
+  assert.throws(() => normalizeConfig(nonString));
 });
 
 test('rejects duplicate lane ID', () => {
