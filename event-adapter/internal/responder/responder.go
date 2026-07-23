@@ -170,7 +170,7 @@ func (r *Responder) handle(ctx context.Context, m natsjs.RequestMsg) {
 		)
 		if targetErr != nil {
 			r.metrics.InvalidRequestEvent(ctx, "invalid_dispatch_target")
-			r.respond(m, clevent.BuildErrorReply(ev, r.appID, http.StatusBadRequest, targetErr.Error()))
+			r.respond(m, clevent.BuildDirectErrorReply(ev, r.appID, http.StatusBadRequest, targetErr.Error()))
 			return
 		}
 		route = config.RequestRouteConfig{

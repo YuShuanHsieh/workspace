@@ -413,6 +413,37 @@ func TestHandleDirectRejectsInvalidDispatchTarget(t *testing.T) {
 	}
 }
 
+func TestHandleInvalidDirectTargetReplyIDIncludesIncomingSource(t *testing.T) {
+	r := newDirectResponder(t, fakeDispatcher{}, &fakeMetrics{}, nil)
+	first, firstOut := directMessage(t, "com.workspace.orders.cleanup.request", "OPTIONS", "/orders/ord-456")
+	second, secondOut := directMessage(t, "com.workspace.orders.cleanup.request", "OPTIONS", "/orders/ord-456")
+	var secondEnvelope map[string]any
+	if err := json.Unmarshal(second.Data, &secondEnvelope); err != nil {
+		t.Fatalf("decode second request: %v", err)
+	}
+	secondEnvelope["source"] = "another-caller"
+	var err error
+	second.Data, err = json.Marshal(secondEnvelope)
+	if err != nil {
+		t.Fatalf("encode second request: %v", err)
+	}
+
+	r.handle(context.Background(), first)
+	r.handle(context.Background(), second)
+
+	firstReply := decode(t, *firstOut)
+	secondReply := decode(t, *secondOut)
+	if firstReply["id"] == secondReply["id"] {
+		t.Errorf("invalid-direct-target reply IDs collide for distinct CloudEvent sources")
+	}
+	if firstReply["type"] != clevent.ErrorReplyType || secondReply["type"] != clevent.ErrorReplyType {
+		t.Errorf("invalid-direct-target replies must use error envelope type")
+	}
+	if firstReply["correlationid"] != "corr-1" || secondReply["correlationid"] != "corr-1" {
+		t.Errorf("invalid-direct-target replies must preserve correlation ID")
+	}
+}
+
 func TestHandleDirectDispatchErrorsUseGenericReply(t *testing.T) {
 	tests := []struct {
 		name   string
