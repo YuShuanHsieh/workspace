@@ -3,12 +3,12 @@ package config
 import (
 	"fmt"
 	"net"
-	"net/http"
 	"net/url"
 	"slices"
 	"strings"
 
 	"event-adapter/internal/pathtemplate"
+	"event-adapter/internal/requesttarget"
 )
 
 // validEnvironments is the allowlist for observability.environment, matching the
@@ -236,8 +236,8 @@ func validateRoute(prefix string, r RouteConfig) []error {
 
 func validateDispatch(prefix string, d DispatchConfig) []error {
 	var errs []error
-	if d.Method != http.MethodPost && d.Method != http.MethodPut && d.Method != http.MethodPatch && d.Method != http.MethodGet {
-		errs = append(errs, ValidationError{Path: prefix + ".dispatch.method", Msg: "must be POST, PUT, PATCH, or GET"})
+	if _, err := requesttarget.NormalizeMethod(d.Method); err != nil {
+		errs = append(errs, ValidationError{Path: prefix + ".dispatch.method", Msg: "must be GET, POST, PUT, PATCH, or DELETE"})
 	}
 	if !strings.HasPrefix(d.Path, "/") {
 		errs = append(errs, ValidationError{Path: prefix + ".dispatch.path", Msg: "must start with /"})

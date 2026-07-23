@@ -428,6 +428,37 @@ func TestDispatchGetSendsNoBody(t *testing.T) {
 	}
 }
 
+func TestDispatchDeleteSendsCloudEventData(t *testing.T) {
+	const wantBody = `{"reason":"cleanup"}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			t.Errorf("method = %q, want %q", r.Method, http.MethodDelete)
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read request body: %v", err)
+			return
+		}
+		if string(body) != wantBody {
+			t.Errorf("body = %q, want %q", body, wantBody)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	ev, err := clevent.Parse([]byte(`{"specversion":"1.0","id":"evt-delete","source":"workspace/orders","type":"com.workspace.orders.deleted","datacontenttype":"application/json","data":{"reason":"cleanup"}}`))
+	if err != nil {
+		t.Fatalf("parse event: %v", err)
+	}
+
+	d := New(server.URL, nil)
+	if _, err := d.Dispatch(context.Background(), config.DispatchConfig{
+		Method: http.MethodDelete, Path: "/orders/ord-456", Timeout: time.Second,
+	}, ev); err != nil {
+		t.Fatalf("Dispatch returned error: %v", err)
+	}
+}
+
 func TestDispatchQueryStringPreservedInURL(t *testing.T) {
 	var gotRequestURI string
 	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {

@@ -316,6 +316,16 @@ func TestValidateAcceptsGetDispatchMethod(t *testing.T) {
 	}
 }
 
+func TestValidateAcceptsDeleteDispatchMethodForEventAndRequestRoutes(t *testing.T) {
+	cfg := validConfig()
+	cfg.Routes[0].Dispatch.Method = http.MethodDelete
+	cfg.Requests = baseRequests()
+	cfg.Requests.Routes[0].Dispatch.Method = http.MethodDelete
+	if errs := Validate(cfg); len(errs) != 0 {
+		t.Fatalf("expected no errors for DELETE dispatch method, got %v", errs)
+	}
+}
+
 func TestValidateDuplicateRequestType(t *testing.T) {
 	reqs := baseRequests()
 	dup := reqs.Routes[0]
