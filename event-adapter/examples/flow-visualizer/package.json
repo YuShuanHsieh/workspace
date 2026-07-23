@@ -1,0 +1,9 @@
+{
+  "name": "event-adapter-flow-visualizer",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "pretest": "go run . --config request-reply.yaml --normalize-output web/generated-request-reply.json",
+    "test": "node --test web/*.test.mjs"
+  }
+}

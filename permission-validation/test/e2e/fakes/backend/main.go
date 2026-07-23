@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"sync"
+	"time"
 )
 
 type calls struct {
@@ -55,7 +56,8 @@ func main() {
 	})
 
 	log.Printf("fake-backend: listening on %s", *addr)
-	if err := http.ListenAndServe(*addr, mux); err != nil {
+	srv := &http.Server{Addr: *addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	if err := srv.ListenAndServe(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

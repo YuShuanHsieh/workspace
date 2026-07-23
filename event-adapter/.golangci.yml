@@ -1,0 +1,77 @@
+version: 2
+
+linters:
+  # Keep the standard defaults: errcheck, govet, ineffassign, staticcheck, unused
+  default: standard
+  enable:
+    - bodyclose      # HTTP response body must be closed
+    - contextcheck   # functions must propagate context, not use context.Background()
+    - errorlint      # correct use of Go 1.13 error wrapping (%w, errors.Is/As)
+    - gocritic       # opinionated diagnostics: performance, style, correctness
+    - gosec          # security: hardcoded credentials, weak crypto, etc.
+    - misspell       # typos in comments and strings
+    - revive         # drop-in golint replacement with configurable rules
+
+  settings:
+    errcheck:
+      # fmt.Fprint* writes to an io.Writer (stderr/stdout) in a CLI binary.
+      # Write errors here are unrecoverable; ignoring them is idiomatic.
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - performance
+      disabled-checks:
+        # RouteConfig is 240 bytes; passing by value is an improvement to make
+        # when the struct stabilises. Tracked as a performance opportunity, not a bug.
+        - hugeParam
+        - rangeValCopy
+
+    gosec:
+      excludes:
+        # G104 duplicates errcheck; already covered above.
+        - G104
+        # G304: os.ReadFile with a path from a CLI flag is expected for a sidecar binary.
+        - G304
+        # G704: the event-adapter IS an HTTP dispatcher to configured URLs — SSRF by design.
+        - G704
+        # G115: int32 cast of HTTP status is safe; status codes are always 100–599.
+        - G115
+        # G114: examples/onboarding/app.go is a local smoke-test helper, not production code.
+        - G114
+        # G705/G706: mock-app intentionally logs every incoming request (method, path, headers, body)
+        # so developers can inspect what the sidecar sends. Taint tracking of request data is by design.
+        - G705
+        - G706
+
+    revive:
+      rules:
+        # exported requires godoc on every public symbol. Adding docs to all
+        # existing exported symbols is a separate documentation task.
+        - name: exported
+          disabled: true
+        - name: indent-error-flow
+          disabled: false
+        - name: error-return
+          disabled: false
+        - name: if-return
+          disabled: false
+
+issues:
+  exclude-rules:
+    # examples/ contains local smoke-test helpers, not production code.
+    - path: examples/
+      linters:
+        - gosec
+    # Test file package names sometimes shadow stdlib packages (e.g. metrics vs runtime/metrics).
+    - path: _test\.go
+      text: "avoid package names that conflict with Go standard library"
+      linters:
+        - revive
+
+  max-issues-per-linter: 0
+  max-same-issues: 0

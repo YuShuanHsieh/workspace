@@ -1,0 +1,40 @@
+addr: 0.0.0.0:18080
+
+handlers:
+  - method: POST
+    path: /events/task-created
+    requireHeaders:
+      - X-Workspace-Actor-Id
+    requireCookies:
+      - session
+    response:
+      status: 200
+      contentType: application/json
+      body: '{"ok":true}'
+  - method: POST
+    path: /requests/upload-presign
+    response:
+      status: 200
+      contentType: application/json
+      body: '{"uploadId":"up-1","url":"https://example-bucket.s3/put?sig=abc"}'
+  - method: POST
+    path: /events/redirect-me
+    requireHeaders:
+      - X-Workspace-Actor-Id
+    response:
+      status: 307
+      location: /events/post-redirect
+  - method: POST
+    path: /events/post-redirect
+    response:
+      status: 200
+      contentType: application/json
+      body: '{"reached":"target"}'
+  - method: POST
+    path: /api/tasks/{taskId}/complete
+    requireHeaders:
+      - X-Workspace-Actor-Id
+    response:
+      status: 200
+      contentType: application/json
+      echoPath: true

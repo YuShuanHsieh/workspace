@@ -1,0 +1,15 @@
+{
+  "specversion": "1.0",
+  "id": "evt-manual-1",
+  "source": "workspace/task",
+  "type": "com.workspace.task.created",
+  "datacontenttype": "application/json",
+  "dispatchheaders": {
+    "X-Workspace-Actor-Id": "user-1",
+    "X-Workspace-Tenant-Id": "tenant-a"
+  },
+  "dispatchcookies": {
+    "session": "sess-abc123"
+  },
+  "data": {"taskId": "task-1"}
+}

@@ -1,0 +1,111 @@
+# Complete local observability stack for the event-adapter.
+#
+#   NATS ──> event-adapter ──> mock-app
+#                │
+#                └─ /metrics (:8200, served by the o11y SDK) ──> Prometheus ──> Grafana
+#                   /ready /live (:8080)
+#
+# A publisher continuously sends demo CloudEvents so the SLI metrics move.
+#
+# Run from this directory:
+#   docker compose up -d --build
+# Then open:
+#   Grafana    → http://localhost:3000  (dashboard: "Event Adapter — SLIs")
+#   Prometheus → http://localhost:9090
+#   Metrics    → http://localhost:8200/metrics
+#   Health     → http://localhost:8080/ready  and  /live
+name: ea-observability
+
+services:
+  nats:
+    image: nats:2.11
+    command: ["-js", "-sd", "/data"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+
+  # Creates the JetStream stream before the event-adapter starts.
+  nats-setup:
+    image: natsio/nats-box:latest
+    depends_on: [nats]
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        until nc -z nats 4222 2>/dev/null; do echo "waiting for nats..."; sleep 1; done
+        nats stream add demo-events \
+          --server nats://nats:4222 \
+          --subjects "demo.events.>,dlq.>" \
+          --storage file --retention limits --discard old \
+          --max-msgs=-1 --max-bytes=-1 --max-age=0s --replicas=1 --defaults \
+          2>/dev/null && echo "stream created" || echo "stream already exists"
+
+  # The local application the event-adapter dispatches HTTP requests to.
+  # The event-adapter shares this container's network namespace, so ports
+  # 8080 (health) and 8200 (metrics) are published here.
+  mock-app:
+    build:
+      context: ../..
+      dockerfile: test/e2e/Dockerfile.mock-app
+    volumes:
+      - ./mock-app.yaml:/config/mock-app.yaml:ro
+    command: ["--config", "/config/mock-app.yaml"]
+    ports:
+      - "18080:18080"  # mock-app HTTP
+      - "8080:8080"    # event-adapter /ready /live
+      - "8200:8200"    # event-adapter /metrics
+
+  event-adapter:
+    build:
+      context: ../..
+      dockerfile: test/e2e/Dockerfile.event-adapter
+    network_mode: "service:mock-app"
+    volumes:
+      - ./routes.yaml:/config/routes.yaml:ro
+    command: ["--config", "/config/routes.yaml"]
+    depends_on:
+      nats-setup:
+        condition: service_completed_successfully
+      mock-app:
+        condition: service_started
+
+  # Continuously publishes demo CloudEvents so the metrics keep moving.
+  publisher:
+    image: natsio/nats-box:latest
+    depends_on:
+      event-adapter:
+        condition: service_started
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        i=0
+        while true; do
+          nats pub demo.events.created \
+            "{\"specversion\":\"1.0\",\"id\":\"evt-$$i\",\"source\":\"demo\",\"type\":\"com.demo.event\",\"datacontenttype\":\"application/json\",\"data\":{\"n\":$$i}}" \
+            --server nats://nats:4222 >/dev/null 2>&1
+          i=$$((i+1))
+          sleep 1
+        done
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    depends_on: [event-adapter]
+
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      # Local-only stack: anonymous read-only access for convenience. Viewer (not
+      # Admin) so an exposed :3000 cannot be administered without credentials.
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+      - GF_AUTH_DISABLE_LOGIN_FORM=true
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "3000:3000"
+    depends_on: [prometheus]
