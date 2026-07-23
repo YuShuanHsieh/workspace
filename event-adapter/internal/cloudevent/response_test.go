@@ -48,6 +48,27 @@ func TestBuildResponseUsesDeterministicIDAndCausation(t *testing.T) {
 	}
 }
 
+func TestBuildResponseIDIncludesIncomingSource(t *testing.T) {
+	first := mustEvent(t, `{"specversion":"1.0","id":"evt-shared","source":"workspace/tasks-a","type":"com.workspace.task.created","data":{}}`)
+	second := mustEvent(t, `{"specversion":"1.0","id":"evt-shared","source":"workspace/tasks-b","type":"com.workspace.task.created","data":{}}`)
+	route := config.RouteConfig{
+		Name:     "task-created",
+		Response: config.ResponseConfig{Type: "com.workspace.task.processed", Source: "task-service", Subject: "tasks.processed"},
+	}
+
+	a, err := BuildResponse(first, route, 200, "application/json", nil, "")
+	if err != nil {
+		t.Fatalf("BuildResponse first: %v", err)
+	}
+	b, err := BuildResponse(second, route, 200, "application/json", nil, "")
+	if err != nil {
+		t.Fatalf("BuildResponse second: %v", err)
+	}
+	if a.ID() == b.ID() {
+		t.Errorf("response IDs collide for distinct CloudEvent sources")
+	}
+}
+
 func TestBuildResponseStampsErrorStatus(t *testing.T) {
 	in := ce.New()
 	in.SetID("evt-1")
@@ -136,6 +157,24 @@ func TestBuildDirectReplyUsesGenericEnvelope(t *testing.T) {
 	}
 	if a.ID() == "" || a.ID() != b.ID() {
 		t.Errorf("direct reply id must be nonempty and deterministic: %q != %q", a.ID(), b.ID())
+	}
+}
+
+func TestBuildDirectReplyIDIncludesIncomingSource(t *testing.T) {
+	first := mustEvent(t, `{"specversion":"1.0","id":"req-shared","source":"client-a","type":"orders.delete","data":{}}`)
+	second := mustEvent(t, `{"specversion":"1.0","id":"req-shared","source":"client-b","type":"orders.delete","data":{}}`)
+	reply := DirectReplyConfig("order-service")
+
+	a, err := BuildReply(first, reply, DirectRouteName, 204, "application/json", nil, "")
+	if err != nil {
+		t.Fatalf("BuildReply first: %v", err)
+	}
+	b, err := BuildReply(second, reply, DirectRouteName, 204, "application/json", nil, "")
+	if err != nil {
+		t.Fatalf("BuildReply second: %v", err)
+	}
+	if a.ID() == b.ID() {
+		t.Errorf("direct reply IDs collide for distinct CloudEvent sources")
 	}
 }
 
@@ -235,5 +274,16 @@ func TestBuildErrorReply(t *testing.T) {
 	out2 := BuildErrorReply(other, "upload-service", 404, "no matching route")
 	if out.ID() == out2.ID() {
 		t.Fatalf("error-reply IDs must vary by triggering request, got %q", out.ID())
+	}
+}
+
+func TestBuildErrorReplyIDIncludesIncomingSource(t *testing.T) {
+	first := mustEvent(t, `{"specversion":"1.0","id":"req-shared","source":"client-a","type":"com.x.request","data":{}}`)
+	second := mustEvent(t, `{"specversion":"1.0","id":"req-shared","source":"client-b","type":"com.x.request","data":{}}`)
+
+	a := BuildErrorReply(first, "upload-service", 404, "no matching route")
+	b := BuildErrorReply(second, "upload-service", 404, "no matching route")
+	if a.ID() == b.ID() {
+		t.Errorf("error reply IDs collide for distinct CloudEvent sources")
 	}
 }

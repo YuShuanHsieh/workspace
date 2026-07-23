@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -488,6 +489,91 @@ func TestDispatchQueryStringPreservedInURL(t *testing.T) {
 	want := "/api/items?userId=u1&tenantId=t1"
 	if gotRequestURI != want {
 		t.Fatalf("RequestURI = %q, want %q", gotRequestURI, want)
+	}
+}
+
+func TestDispatchAttachesBoundedTelemetryRoute(t *testing.T) {
+	ev, err := clevent.Parse([]byte(`{"specversion":"1.0","id":"evt-telemetry","source":"workspace/task","type":"com.workspace.task.created","data":{}}`))
+	if err != nil {
+		t.Fatalf("parse event: %v", err)
+	}
+	tests := []struct {
+		name           string
+		method         string
+		path           string
+		telemetryRoute string
+		wantSpan       string
+	}{
+		{
+			name:           "direct resource path",
+			method:         http.MethodDelete,
+			path:           "/orders/ord-456?hard=true",
+			telemetryRoute: "direct",
+			wantSpan:       "DELETE direct",
+		},
+		{
+			name:           "static event route",
+			method:         http.MethodPost,
+			path:           "/events/orders/ord-456",
+			telemetryRoute: "order-created",
+			wantSpan:       "POST order-created",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotSpan string
+			client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				gotSpan = SpanName("", r)
+				return &http.Response{
+					StatusCode: http.StatusNoContent,
+					Header:     http.Header{},
+					Body:       http.NoBody,
+				}, nil
+			})}
+			d := New("http://127.0.0.1:8080", client)
+
+			if _, err := d.Dispatch(context.Background(), config.DispatchConfig{
+				Method:         tt.method,
+				Path:           tt.path,
+				Timeout:        time.Second,
+				TelemetryRoute: tt.telemetryRoute,
+			}, ev); err != nil {
+				t.Fatalf("Dispatch returned error: %v", err)
+			}
+			if gotSpan != tt.wantSpan {
+				t.Errorf("span name = %q, want %q", gotSpan, tt.wantSpan)
+			}
+			if strings.Contains(gotSpan, "ord-456") {
+				t.Errorf("span name contains concrete resource ID")
+			}
+		})
+	}
+}
+
+func TestSpanNameUsesBoundedFallback(t *testing.T) {
+	req, err := http.NewRequest(http.MethodGet, "http://127.0.0.1:8080/orders/ord-456", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	if got := SpanName("", req); got != "GET local-dispatch" {
+		t.Errorf("SpanName = %q, want GET local-dispatch", got)
+	}
+}
+
+func TestShouldTraceOmitsQueryBearingRequests(t *testing.T) {
+	withQuery, err := http.NewRequest(http.MethodGet, "http://127.0.0.1:8080/orders?token=secret", nil)
+	if err != nil {
+		t.Fatalf("new query request: %v", err)
+	}
+	withoutQuery, err := http.NewRequest(http.MethodGet, "http://127.0.0.1:8080/orders", nil)
+	if err != nil {
+		t.Fatalf("new plain request: %v", err)
+	}
+	if ShouldTrace(withQuery) {
+		t.Error("query-bearing request must not produce a client span")
+	}
+	if !ShouldTrace(withoutQuery) {
+		t.Error("request without query must produce a client span")
 	}
 }
 

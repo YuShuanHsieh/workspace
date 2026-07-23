@@ -187,7 +187,9 @@ func (r *Responder) handle(ctx context.Context, m natsjs.RequestMsg) {
 	start := time.Now()
 	defer func() { r.metrics.RequestReplyLatency(ctx, route.Name, time.Since(start)) }()
 
-	res, derr := r.disp.Dispatch(ctx, route.Dispatch, ev)
+	dispatchConfig := route.Dispatch
+	dispatchConfig.TelemetryRoute = route.Name
+	res, derr := r.disp.Dispatch(ctx, dispatchConfig, ev)
 	if derr != nil {
 		r.metrics.RequestDispatchError(ctx, route.Name)
 		status := http.StatusBadGateway

@@ -114,6 +114,7 @@ type DispatchConfig struct {
 	Timeout        time.Duration     `yaml:"timeout"`
 	Headers        map[string]string `yaml:"headers"`
 	ForwardHeaders []string          `yaml:"forwardHeaders"`
+	TelemetryRoute string            `yaml:"-"`
 }
 
 type ResponseConfig struct {

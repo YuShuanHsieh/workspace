@@ -222,6 +222,32 @@ requests:
 	}
 }
 
+func TestParseDispatchRejectsRuntimeTelemetryRoute(t *testing.T) {
+	raw := []byte(`
+app:
+  id: x
+  httpBaseURL: http://127.0.0.1:8080
+nats:
+  url: nats://127.0.0.1:4222
+requests:
+  subject: s
+  queueGroup: g
+  workerPoolSize: 1
+  routes:
+    - name: r
+      match: {type: t}
+      dispatch:
+        method: POST
+        path: /x
+        timeout: 1s
+        telemetryRoute: attacker-controlled
+      reply: {source: s, type: t.reply}
+`)
+	if _, err := Parse(raw); err == nil || !strings.Contains(err.Error(), "field telemetryRoute") {
+		t.Fatalf("expected runtime telemetryRoute to be rejected, got: %v", err)
+	}
+}
+
 func TestParseRequestRouteRejectsSubjectAndSourceKeys(t *testing.T) {
 	raw := []byte(`
 app:

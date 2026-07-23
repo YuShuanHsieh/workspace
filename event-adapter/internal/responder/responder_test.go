@@ -289,6 +289,9 @@ func TestHandleDirectDispatchesUnmatchedRequest(t *testing.T) {
 	if captured.Timeout != 3*time.Second {
 		t.Errorf("dispatch timeout = %v, want 3s", captured.Timeout)
 	}
+	if captured.TelemetryRoute != clevent.DirectRouteName {
+		t.Errorf("telemetry route = %q, want %q", captured.TelemetryRoute, clevent.DirectRouteName)
+	}
 	if len(captured.Headers) != 0 {
 		t.Errorf("dispatch headers = %v, want empty", captured.Headers)
 	}
@@ -346,6 +349,9 @@ func TestHandleExactRouteTakesPrecedenceOverInvalidDirectControls(t *testing.T) 
 
 	if captured.Method != "POST" || captured.Path != "/controlled" || captured.Timeout != configuredTimeout {
 		t.Fatalf("captured dispatch = %+v, want configured POST /controlled with 7s timeout", captured)
+	}
+	if captured.TelemetryRoute != routes[0].Name {
+		t.Errorf("telemetry route = %q, want %q", captured.TelemetryRoute, routes[0].Name)
 	}
 	if captured.Headers["X-Mode"] != "configured" {
 		t.Errorf("configured headers not preserved: %v", captured.Headers)

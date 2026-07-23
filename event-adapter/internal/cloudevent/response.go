@@ -30,7 +30,7 @@ func BuildResponse(in *Event, route config.RouteConfig, status int, contentType 
 		return nil, fmt.Errorf("response: incoming event is nil")
 	}
 	out := ce.New()
-	out.SetID(deterministicID(in.ID(), route.Name, route.Response.Type, route.Response.Subject))
+	out.SetID(deterministicID(in.Source(), in.ID(), route.Name, route.Response.Type, route.Response.Subject))
 	out.SetType(route.Response.Type)
 	out.SetSource(route.Response.Source)
 	out.SetSubject(route.Response.Subject)
@@ -60,7 +60,7 @@ func BuildReply(in *Event, reply config.ReplyConfig, routeName string, status in
 		return nil, fmt.Errorf("reply: incoming event is nil")
 	}
 	out := ce.New()
-	out.SetID(deterministicID(in.ID(), routeName, reply.Type))
+	out.SetID(deterministicID(in.Source(), in.ID(), routeName, reply.Type))
 	out.SetType(reply.Type)
 	out.SetSource(reply.Source)
 	out.SetTime(time.Now().UTC())
@@ -86,7 +86,7 @@ func BuildReply(in *Event, reply config.ReplyConfig, routeName string, status in
 func BuildErrorReply(in *Event, source string, status int, message string) *ce.Event {
 	out := ce.New()
 	if in != nil {
-		out.SetID(deterministicID(in.ID(), source, ErrorReplyType))
+		out.SetID(deterministicID(in.Source(), in.ID(), source, ErrorReplyType))
 	} else {
 		out.SetID(deterministicID(message, source, ErrorReplyType))
 	}

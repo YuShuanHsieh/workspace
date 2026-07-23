@@ -24,6 +24,8 @@ type Result struct {
 
 var ErrNilEvent = errors.New("dispatcher: nil event")
 
+type telemetryRouteContextKey struct{}
+
 type Dispatcher struct {
 	baseURL string
 	client  *http.Client
@@ -38,6 +40,23 @@ func New(baseURL string, client *http.Client) *Dispatcher {
 		}
 	}
 	return &Dispatcher{baseURL: strings.TrimRight(baseURL, "/"), client: client}
+}
+
+// SpanName returns a bounded client-span name based on the configured route,
+// never the concrete dispatch path or query.
+func SpanName(_ string, r *http.Request) string {
+	route, _ := r.Context().Value(telemetryRouteContextKey{}).(string)
+	if route == "" {
+		route = "local-dispatch"
+	}
+	return r.Method + " " + route
+}
+
+// ShouldTrace omits client spans for query-bearing dispatches because the
+// instrumentation records url.full, which may expose query secrets. Application
+// request metrics still record these calls, trading trace coverage for safety.
+func ShouldTrace(r *http.Request) bool {
+	return r.URL.RawQuery == ""
 }
 
 func (d *Dispatcher) Dispatch(ctx context.Context, dc config.DispatchConfig, ev *clevent.Event) (Result, error) {
@@ -69,6 +88,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, dc config.DispatchConfig, ev 
 	if dc.Method == http.MethodGet {
 		reqBody = http.NoBody
 	}
+	ctx = context.WithValue(ctx, telemetryRouteContextKey{}, dc.TelemetryRoute)
 	req, err := http.NewRequestWithContext(ctx, dc.Method, u, reqBody)
 	if err != nil {
 		return Result{}, fmt.Errorf("dispatcher: create request: %w", err)

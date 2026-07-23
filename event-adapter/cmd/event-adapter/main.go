@@ -202,18 +202,18 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		}
 	}()
 	m := metrics.New(obs.Meter("event-adapter"))
-	// Dispatch over an o11y-instrumented transport so outbound calls to the app
-	// produce client spans named "METHOD /path" (e.g. "POST /orders") instead of
-	// the default "HTTP POST". CheckRedirect mirrors dispatcher.New's own default.
+	// Dispatch over an o11y-instrumented transport with bounded route-based span
+	// names. Query-bearing requests intentionally omit client spans because the
+	// instrumentation records url.full, which can expose query secrets.
+	// CheckRedirect mirrors dispatcher.New's own default.
 	dispatchClient := &http.Client{
 		Transport: o11yhttp.NewTransport(
 			http.DefaultTransport,
 			obs.TracerProvider(),
 			obs.MeterProvider(),
 			obs.Propagator,
-			o11yhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
-				return r.Method + " " + r.URL.Path
-			}),
+			o11yhttp.WithSpanNameFormatter(dispatcher.SpanName),
+			o11yhttp.WithFilter(dispatcher.ShouldTrace),
 		),
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
