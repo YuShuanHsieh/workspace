@@ -81,6 +81,17 @@ test('ignores events for another correlation ID, unknown events, malformed event
   }
 });
 
+test('accepts strict RFC 3339 timestamps and rejects permissive Date.parse formats', () => {
+  const cfg = config();
+  const trace = createTrace(cfg, 'request-1');
+  const valid = reduceLiveEvent(trace, event({ timestamp: '2026-07-23T10:00:00.123+05:30' }), cfg);
+
+  assert.equal(valid.steps.get('dispatch').timestamp, '2026-07-23T10:00:00.123+05:30');
+  for (const timestamp of ['2026-07-23', '2026-07-23T10:00:00', 'July 23, 2026', '2026-02-30T10:00:00Z']) {
+    assert.equal(reduceLiveEvent(trace, event({ timestamp }), cfg), trace);
+  }
+});
+
 test('ignores an event whose supplied status does not match its mapping', () => {
   const cfg = config();
   const trace = createTrace(cfg, 'request-1');
@@ -119,6 +130,17 @@ test('is idempotent for duplicate events and orders observations by timestamp', 
   assert.equal(reconciled.updatedAt, '2026-07-23T10:00:00.000Z');
 });
 
+test('deduplicates semantically identical details with different property insertion order', () => {
+  const cfg = config();
+  const first = event({ detail: { attempt: 1, httpstatus: 200 } });
+  const reordered = event({ detail: { httpstatus: 200, attempt: 1 } });
+  const once = reduceLiveEvent(createTrace(cfg, 'request-1'), first, cfg);
+  const duplicate = reduceLiveEvent(once, reordered, cfg);
+
+  assert.equal(duplicate, once);
+  assert.equal(once.steps.get('dispatch').events.length, 1);
+});
+
 test('uses later timestamps for equal-precedence detail without downgrading confirmed state', () => {
   const cfg = config();
   const first = reduceLiveEvent(createTrace(cfg, 'request-1'), event({ detail: { attempt: 1 } }), cfg);
@@ -143,4 +165,17 @@ test('preserves unaffected step references while reducing multiple steps', () =>
   assert.equal(reply.steps.get('reply').status, 'completed');
   assert.equal(reply.startedAt, '2026-07-23T10:00:00.000Z');
   assert.equal(reply.updatedAt, '2026-07-23T10:01:00.000Z');
+});
+
+test('keeps concurrent request traces isolated', () => {
+  const cfg = config();
+  const first = createTrace(cfg, 'request-1');
+  const second = createTrace(cfg, 'request-2');
+  const updatedFirst = reduceLiveEvent(first, event(), cfg);
+  const updatedSecond = reduceLiveEvent(second, event({ correlationid: 'request-2', event: 'dispatch.failed', status: 'failed' }), cfg);
+
+  assert.equal(updatedFirst.steps.get('dispatch').status, 'completed');
+  assert.equal(updatedSecond.steps.get('dispatch').status, 'failed');
+  assert.equal(first.steps.get('dispatch').status, 'waiting');
+  assert.equal(second.steps.get('dispatch').status, 'waiting');
 });
