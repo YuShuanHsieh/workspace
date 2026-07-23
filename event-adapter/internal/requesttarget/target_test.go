@@ -15,6 +15,7 @@ func TestNormalizeMethodAcceptsSupportedMethods(t *testing.T) {
 		{method: "Put", want: http.MethodPut},
 		{method: "patch", want: http.MethodPatch},
 		{method: "delete", want: http.MethodDelete},
+		{method: "  delete\t", want: http.MethodDelete},
 	}
 
 	for _, tt := range tests {
@@ -30,8 +31,12 @@ func TestNormalizeMethodAcceptsSupportedMethods(t *testing.T) {
 	}
 }
 
-func TestNormalizeMethodRejectsOptions(t *testing.T) {
-	if _, err := NormalizeMethod(http.MethodOptions); err == nil {
-		t.Fatal("NormalizeMethod(OPTIONS) returned nil error")
+func TestNormalizeMethodRejectsUnsupportedMethods(t *testing.T) {
+	for _, method := range []string{http.MethodOptions, http.MethodHead, ""} {
+		t.Run(method, func(t *testing.T) {
+			if _, err := NormalizeMethod(method); err == nil {
+				t.Fatalf("NormalizeMethod(%q) returned nil error", method)
+			}
+		})
 	}
 }

@@ -326,6 +326,22 @@ func TestValidateAcceptsDeleteDispatchMethodForEventAndRequestRoutes(t *testing.
 	}
 }
 
+func TestValidateRejectsNonCanonicalDispatchMethod(t *testing.T) {
+	const want = "routes[0].dispatch.method: must be GET, POST, PUT, PATCH, or DELETE"
+	for _, method := range []string{"delete", " DELETE "} {
+		t.Run(method, func(t *testing.T) {
+			cfg := validConfig()
+			cfg.Routes[0].Dispatch.Method = method
+			for _, err := range Validate(cfg) {
+				if err.Error() == want {
+					return
+				}
+			}
+			t.Fatalf("expected validation error %q, got %v", want, Validate(cfg))
+		})
+	}
+}
+
 func TestValidateDuplicateRequestType(t *testing.T) {
 	reqs := baseRequests()
 	dup := reqs.Routes[0]

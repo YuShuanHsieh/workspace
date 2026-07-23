@@ -236,7 +236,8 @@ func validateRoute(prefix string, r RouteConfig) []error {
 
 func validateDispatch(prefix string, d DispatchConfig) []error {
 	var errs []error
-	if _, err := requesttarget.NormalizeMethod(d.Method); err != nil {
+	normalizedMethod, err := requesttarget.NormalizeMethod(d.Method)
+	if err != nil || normalizedMethod != d.Method {
 		errs = append(errs, ValidationError{Path: prefix + ".dispatch.method", Msg: "must be GET, POST, PUT, PATCH, or DELETE"})
 	}
 	if !strings.HasPrefix(d.Path, "/") {
