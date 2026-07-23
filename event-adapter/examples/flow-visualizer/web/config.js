@@ -1,8 +1,8 @@
 const LANE_OWNERS = new Set(['caller', 'platform', 'application']);
 const EVENT_MAPPINGS = [
-  ['startWhen', 'active'],
-  ['completeWhen', 'completed'],
-  ['failWhen', 'failed'],
+  { property: 'startWhen', status: 'active' },
+  { property: 'completeWhen', status: 'completed' },
+  { property: 'failWhen', status: 'failed' },
 ];
 
 export function normalizeConfig(input) {
@@ -99,11 +99,11 @@ function normalizeSteps(input, laneByID) {
       throw new Error(`${path}.lane references unknown lane: ${lane}`);
     }
 
-    const mappings = EVENT_MAPPINGS.flatMap(([property, status]) => {
+    const mappings = EVENT_MAPPINGS.flatMap(({ property, status }) => {
       if (step[property] === undefined) return [];
       const mapping = object(step[property], `${path}.${property}`);
       assertKeys(mapping, `${path}.${property}`, ['event']);
-      return [{ event: requiredString(mapping.event, `${path}.${property}.event`), status }];
+      return [{ property, event: requiredString(mapping.event, `${path}.${property}.event`), status }];
     });
     if (mappings.length === 0) {
       throw new Error(`${path} must define an event mapping`);
@@ -132,8 +132,7 @@ function normalizeSteps(input, laneByID) {
     if (fields.length > 0) {
       normalized.detailFields = [...fields];
     }
-    for (const { event, status } of mappings) {
-      const property = EVENT_MAPPINGS.find(([, candidate]) => candidate === status)[0];
+    for (const { property, event } of mappings) {
       normalized[property] = { event };
     }
     return normalized;
