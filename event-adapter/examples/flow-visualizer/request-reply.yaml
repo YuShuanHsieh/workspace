@@ -1,0 +1,77 @@
+version: 1
+title: Event-adapter request-reply
+comparison:
+  beforeLabel: "Before: every application owns"
+  before: [NATS client, CloudEvents, Routing, HTTP translation, Reply envelopes, Error mapping]
+  afterLabel: "After: application owns"
+  after: One local HTTP business handler
+source:
+  transport: sse
+  url: /api/demo/events
+  correlationField: requestId
+lanes:
+  - { id: caller, label: Caller, owner: caller }
+  - { id: nats, label: NATS, owner: platform }
+  - { id: adapter, label: Event-adapter, owner: platform }
+  - { id: application, label: Application, owner: application }
+steps:
+  - id: request-sent
+    order: 1
+    lane: caller
+    label: Send NATS request
+    description: Publish to the request subject with a reply inbox
+    completeWhen: { event: demo.request_sent }
+    failWhen: { event: demo.request_failed }
+    detailFields: [subject]
+  - id: responder-selected
+    order: 2
+    lane: nats
+    label: Deliver to one responder
+    description: Queue group selects one adapter instance
+    completeWhen: { event: nats.responder_selected }
+    detailFields: [queueGroup]
+  - id: validate
+    order: 3
+    lane: adapter
+    label: Validate CloudEvent
+    startWhen: { event: adapter.validation_started }
+    completeWhen: { event: adapter.validated }
+    failWhen: { event: adapter.validation_failed }
+    detailFields: [eventType]
+  - id: route
+    order: 4
+    lane: adapter
+    label: Match request route
+    completeWhen: { event: adapter.route_matched }
+    failWhen: { event: adapter.route_failed }
+    detailFields: [route]
+  - id: dispatch
+    order: 5
+    lane: adapter
+    label: Dispatch local HTTP
+    startWhen: { event: adapter.dispatch_started }
+    completeWhen: { event: adapter.dispatch_completed }
+    failWhen: { event: adapter.dispatch_failed }
+    detailFields: [method, path]
+  - id: handler
+    order: 6
+    lane: application
+    label: Run business handler
+    startWhen: { event: application.handler_started }
+    completeWhen: { event: application.handler_completed }
+    failWhen: { event: application.handler_failed }
+    detailFields: [httpStatus]
+  - id: build-reply
+    order: 7
+    lane: adapter
+    label: Build reply CloudEvent
+    completeWhen: { event: adapter.reply_built }
+    failWhen: { event: adapter.reply_failed }
+    detailFields: [httpStatus]
+  - id: reply-received
+    order: 8
+    lane: caller
+    label: Return reply
+    completeWhen: { event: demo.reply_received }
+    failWhen: { event: demo.reply_failed }
+    detailFields: [httpStatus, elapsedMs]

@@ -1,0 +1,11 @@
+{"requestId":"req-demo-001","event":"demo.request_sent","status":"completed","timestamp":"2026-07-23T10:00:00.000Z","detail":{"subject":"q.orders.request"}}
+{"requestId":"req-demo-001","event":"nats.responder_selected","status":"completed","timestamp":"2026-07-23T10:00:00.010Z","detail":{"queueGroup":"order-responders"}}
+{"requestId":"req-demo-001","event":"adapter.validation_started","status":"started","timestamp":"2026-07-23T10:00:00.012Z","detail":{}}
+{"requestId":"req-demo-001","event":"adapter.validated","status":"completed","timestamp":"2026-07-23T10:00:00.014Z","detail":{"eventType":"com.workspace.order.create.request"}}
+{"requestId":"req-demo-001","event":"adapter.route_matched","status":"completed","timestamp":"2026-07-23T10:00:00.016Z","detail":{"route":"order-create"}}
+{"requestId":"req-demo-001","event":"adapter.dispatch_started","status":"started","timestamp":"2026-07-23T10:00:00.018Z","detail":{"method":"POST","path":"/requests/orders"}}
+{"requestId":"req-demo-001","event":"application.handler_started","status":"started","timestamp":"2026-07-23T10:00:00.020Z","detail":{}}
+{"requestId":"req-demo-001","event":"application.handler_completed","status":"completed","timestamp":"2026-07-23T10:00:00.046Z","detail":{"httpStatus":200}}
+{"requestId":"req-demo-001","event":"adapter.dispatch_completed","status":"completed","timestamp":"2026-07-23T10:00:00.047Z","detail":{"method":"POST","path":"/requests/orders"}}
+{"requestId":"req-demo-001","event":"adapter.reply_built","status":"completed","timestamp":"2026-07-23T10:00:00.049Z","detail":{"httpStatus":200}}
+{"requestId":"req-demo-001","event":"demo.reply_received","status":"completed","timestamp":"2026-07-23T10:00:00.052Z","detail":{"httpStatus":200,"elapsedMs":52}}
