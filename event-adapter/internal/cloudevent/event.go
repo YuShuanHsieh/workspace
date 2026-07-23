@@ -1,7 +1,9 @@
 package cloudevent
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	ce "github.com/cloudevents/sdk-go/v2/event"
@@ -135,6 +137,9 @@ func parseDispatchPathParams(raw json.RawMessage) (map[string]string, error) {
 func parseDispatchString(name string, raw json.RawMessage) (string, error) {
 	if len(raw) == 0 {
 		return "", nil
+	}
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return "", fmt.Errorf("cloudevent: %s must be a string: %w", name, errors.New("got null"))
 	}
 	var value string
 	if err := json.Unmarshal(raw, &value); err != nil {

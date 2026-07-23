@@ -110,6 +110,8 @@ func TestParseRejectsNonStringDirectDispatchMetadata(t *testing.T) {
 	}{
 		{name: "method", field: "dispatchmethod", value: `123`},
 		{name: "path", field: "dispatchpath", value: `{"order":"ord-456"}`},
+		{name: "null method", field: "dispatchmethod", value: `null`},
+		{name: "null path", field: "dispatchpath", value: `null`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			raw := []byte(`{"specversion":"1.0","id":"evt-dd3","source":"workspace/task","type":"com.workspace.task.created","datacontenttype":"application/json","` + tc.field + `":` + tc.value + `,"data":{"taskId":"t1"}}`)
