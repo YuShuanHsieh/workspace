@@ -2,8 +2,6 @@ package metrics
 
 import (
 	"context"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -38,24 +36,17 @@ type Metrics struct {
 	//   event_adapter_delivery_latency[s]    → event_adapter_delivery_latency_seconds
 	//   event_adapter_backpressure_triggered → event_adapter_backpressure_triggered_total
 	//   event_adapter_panics_recovered       → event_adapter_panics_recovered_total{component}
-	//   event_adapter_events_processed_per_second (gauge, emitted verbatim)
-	//   event_adapter_pending_backlog            (gauge, emitted verbatim)
+	//
+	// Throughput (events/sec) and pending backlog are intentionally NOT emitted
+	// here: throughput is derived in Prometheus via rate(event_adapter_delivery_total),
+	// and the backlog is exported from NATS/JetStream (num_pending) by the NATS
+	// exporter. Computing them in-process required per-scrape mutexes (and a NATS
+	// round-trip for the backlog) for no observability gain.
 	deliveryTotal         metric.Int64Counter
 	conversionDuration    metric.Float64Histogram
 	deliveryLatency       metric.Float64Histogram
 	backpressureTriggered metric.Int64Counter
 	panicsRecovered       metric.Int64Counter
-
-	// throughput state: events_processed_per_second is computed as the delta of
-	// processedTotal divided by the wall-clock elapsed between observations.
-	processedTotal atomic.Int64
-	tpMu           sync.Mutex
-	tpLastCount    int64
-	tpLastNano     int64
-
-	// backlogFn supplies the current pending-event backlog at scrape time.
-	backlogMu sync.RWMutex
-	backlogFn func(context.Context) int64
 }
 
 func New(meter metric.Meter) *Metrics {
@@ -113,28 +104,6 @@ func New(meter metric.Meter) *Metrics {
 		deliveryLatency:       sliLatencyHist("event_adapter_delivery_latency"),
 		backpressureTriggered: mustC("event_adapter_backpressure_triggered"),
 		panicsRecovered:       mustC("event_adapter_panics_recovered"),
-	}
-
-	// events_processed_per_second: observed as a rate computed from processedTotal.
-	if _, err := meter.Float64ObservableGauge(
-		"event_adapter_events_processed_per_second",
-		metric.WithFloat64Callback(func(_ context.Context, o metric.Float64Observer) error {
-			o.Observe(m.throughput())
-			return nil
-		}),
-	); err != nil {
-		panic(err)
-	}
-
-	// pending_backlog: observed from the injected backlog provider.
-	if _, err := meter.Int64ObservableGauge(
-		"event_adapter_pending_backlog",
-		metric.WithInt64Callback(func(ctx context.Context, o metric.Int64Observer) error {
-			o.Observe(m.backlog(ctx))
-			return nil
-		}),
-	); err != nil {
-		panic(err)
 	}
 
 	return m
@@ -212,7 +181,6 @@ func (m *Metrics) InvalidRequestEvent(ctx context.Context, reason string) {
 func (m *Metrics) DeliverySuccess(ctx context.Context, route string) {
 	m.deliveryTotal.Add(ctx, 1, metric.WithAttributes(
 		attribute.String("route", route), attribute.String("status", "success")))
-	m.processedTotal.Add(1)
 }
 
 // DeliveryFailure records one event that failed to publish to NATS. reason is
@@ -221,7 +189,6 @@ func (m *Metrics) DeliverySuccess(ctx context.Context, route string) {
 func (m *Metrics) DeliveryFailure(ctx context.Context, route, _ string) {
 	m.deliveryTotal.Add(ctx, 1, metric.WithAttributes(
 		attribute.String("route", route), attribute.String("status", "failed")))
-	m.processedTotal.Add(1)
 }
 
 // ConversionDuration records the HTTP-response → CloudEvent conversion latency.
@@ -244,42 +211,4 @@ func (m *Metrics) BackpressureTriggered(ctx context.Context) {
 // identifies where it was recovered ("responder" or "consumer").
 func (m *Metrics) PanicRecovered(ctx context.Context, component string) {
 	m.panicsRecovered.Add(ctx, 1, metric.WithAttributes(attribute.String("component", component)))
-}
-
-// SetBacklogProvider installs the function used to observe the pending backlog.
-func (m *Metrics) SetBacklogProvider(fn func(context.Context) int64) {
-	m.backlogMu.Lock()
-	m.backlogFn = fn
-	m.backlogMu.Unlock()
-}
-
-func (m *Metrics) backlog(ctx context.Context) int64 {
-	m.backlogMu.RLock()
-	fn := m.backlogFn
-	m.backlogMu.RUnlock()
-	if fn == nil {
-		return 0
-	}
-	return fn(ctx)
-}
-
-// throughput returns events processed per second since the previous observation.
-func (m *Metrics) throughput() float64 {
-	m.tpMu.Lock()
-	defer m.tpMu.Unlock()
-	now := time.Now().UnixNano()
-	count := m.processedTotal.Load()
-	if m.tpLastNano == 0 {
-		m.tpLastNano = now
-		m.tpLastCount = count
-		return 0
-	}
-	elapsed := float64(now-m.tpLastNano) / float64(time.Second)
-	m.tpLastNano = now
-	prev := m.tpLastCount
-	m.tpLastCount = count
-	if elapsed <= 0 {
-		return 0
-	}
-	return float64(count-prev) / elapsed
 }

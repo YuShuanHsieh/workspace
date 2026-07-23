@@ -76,8 +76,8 @@ func (c *Client) ForceReconnect() error {
 }
 
 // ConsumerPending returns the number of messages the JetStream consumer has not
-// yet delivered (NumPending). Used for the pending-backlog metric and the
-// backpressure decision.
+// yet delivered (NumPending). Used for the backpressure decision. (The
+// pending-backlog metric is exported from NATS/JetStream directly, not here.)
 func (c *Client) ConsumerPending(stream, durable string) (int64, error) {
 	if c.js == nil {
 		return 0, fmt.Errorf("nats: jetstream context is nil")
