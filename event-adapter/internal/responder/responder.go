@@ -18,6 +18,7 @@ import (
 	"event-adapter/internal/dispatcher"
 	"event-adapter/internal/natsjs"
 	pathtemplate "event-adapter/internal/pathtemplate"
+	"event-adapter/internal/requesttarget"
 )
 
 type Dispatcher interface {
@@ -156,16 +157,45 @@ func (r *Responder) handle(ctx context.Context, m natsjs.RequestMsg) {
 	}
 	ev = parsed
 	route, ok := r.matcher.Match(ev)
+	direct := false
 	if !ok {
-		r.metrics.InvalidRequestEvent(ctx, "no_route")
-		r.respond(m, clevent.BuildErrorReply(ev, r.appID, http.StatusNotFound, "no matching route"))
-		return
+		if !r.cfg.DirectDispatch.Enabled {
+			r.metrics.InvalidRequestEvent(ctx, "no_route")
+			r.respond(m, clevent.BuildErrorReply(ev, r.appID, http.StatusNotFound, "no matching route"))
+			return
+		}
+		target, targetErr := requesttarget.Resolve(
+			ev.DispatchMethod,
+			ev.DispatchPath,
+			r.cfg.DirectDispatch.AllowedPathPrefixes,
+		)
+		if targetErr != nil {
+			r.metrics.InvalidRequestEvent(ctx, "invalid_dispatch_target")
+			r.respond(m, clevent.BuildDirectErrorReply(ev, r.appID, http.StatusBadRequest, targetErr.Error()))
+			return
+		}
+		route = config.RequestRouteConfig{
+			Name: clevent.DirectRouteName,
+			Dispatch: config.DispatchConfig{
+				Method:  target.Method,
+				Path:    target.Path,
+				Timeout: r.cfg.DirectDispatch.Timeout,
+			},
+			Reply: clevent.DirectReplyConfig(r.appID),
+		}
+		direct = true
 	}
 	r.metrics.RequestReceived(ctx, route.Name)
 	start := time.Now()
 	defer func() { r.metrics.RequestReplyLatency(ctx, route.Name, time.Since(start)) }()
 
-	res, derr := r.disp.Dispatch(ctx, route.Dispatch, ev)
+	dispatchConfig := route.Dispatch
+	dispatchConfig.TelemetryRoute = route.Name
+	replyBuilder := clevent.BuildReply
+	if direct {
+		replyBuilder = clevent.BuildDirectReply
+	}
+	res, derr := r.disp.Dispatch(ctx, dispatchConfig, ev)
 	if derr != nil {
 		r.metrics.RequestDispatchError(ctx, route.Name)
 		status := http.StatusBadGateway
@@ -175,7 +205,7 @@ func (r *Responder) handle(ctx context.Context, m natsjs.RequestMsg) {
 		case errors.Is(derr, context.DeadlineExceeded):
 			status = http.StatusGatewayTimeout
 		}
-		reply, berr := clevent.BuildReply(ev, route.Reply, route.Name, status, "application/json", errorBody(derr.Error()), "")
+		reply, berr := replyBuilder(ev, route.Reply, route.Name, status, "application/json", errorBody(derr.Error()), "")
 		if berr != nil {
 			r.respond(m, clevent.BuildErrorReply(ev, r.appID, http.StatusInternalServerError, berr.Error()))
 			return
@@ -183,7 +213,7 @@ func (r *Responder) handle(ctx context.Context, m natsjs.RequestMsg) {
 		r.respond(m, reply)
 		return
 	}
-	reply, berr := clevent.BuildReply(ev, route.Reply, route.Name, res.StatusCode, res.ContentType, res.Body, res.Location)
+	reply, berr := replyBuilder(ev, route.Reply, route.Name, res.StatusCode, res.ContentType, res.Body, res.Location)
 	if berr != nil {
 		r.respond(m, clevent.BuildErrorReply(ev, r.appID, http.StatusInternalServerError, berr.Error()))
 		return

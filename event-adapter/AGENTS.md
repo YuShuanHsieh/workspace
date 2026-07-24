@@ -2,11 +2,11 @@
 
 NATS → local HTTP dispatch sidecar. Bridges NATS messages to a colocated app's
 loopback HTTP handlers so the app needs no NATS code. Two inbound delivery models
-share one dispatch core (`parse CloudEvent → match by type → POST to local app`):
+share one dispatch core (`parse CloudEvent → match by type → dispatch to local app`):
 
 - **Request-reply (primary):** core-NATS request → dispatch → reply on the
   caller's inbox. Synchronous; no ack/retry/DLQ. Configured by the `requests:`
-  block.
+  block. Direct dispatch is an opt-in request-reply fallback.
 - **JetStream event consumption (opt-in):** durable consumer → dispatch →
   publish response CloudEvent; retry + DLQ. Configured by the `nats:` + `routes:`
   blocks.
@@ -91,6 +91,10 @@ requests:
   subject: q.tenant-a.app.uploads.request   # core-NATS subject (may be wildcard)
   queueGroup: upload-responders             # one delivery per group; horizontal scale
   workerPoolSize: 16                         # bounded in-flight dispatches
+  directDispatch:
+    enabled: true
+    timeout: 3s
+    allowedPathPrefixes: [/orders/]
   routes:
     - name: upload-presign
       match:
@@ -103,6 +107,37 @@ requests:
         source: upload-service
         type: com.workspace.uploads.presign.reply
 ```
+
+`requests.directDispatch` is request-reply-only and opt-in. An exact
+`requests.routes` type always wins. If no exact route matches and direct
+dispatch is enabled, the publisher must supply resolved `dispatchmethod` and
+`dispatchpath` metadata; the latter is a relative path joined only to the
+validated loopback `app.httpBaseURL`. Supported methods are `GET`, `POST`,
+`PUT`, `PATCH`, and `DELETE`. `allowedPathPrefixes` (when non-empty) limits
+validated paths using path-segment boundaries. Invalid targets return a 400
+reply without calling the app; disabled direct dispatch with no matching route
+returns 404.
+
+`directDispatch.timeout` is required and must be positive; it applies to every
+direct dispatch.
+
+Direct replies use type `io.eventadapter.direct.reply`, source `app.id`, and no
+subject. They preserve correlation/causation, HTTP status, redirect location,
+and response content type/body. Incoming publisher headers and cookies continue
+to follow the existing forwarding and reserved-header rules, and the direct
+timeout applies to the backend call.
+Specifically, inbound CloudEvent `dispatchheaders` and `dispatchcookies` are
+request metadata and are distinct from reply fields; response headers/cookies
+are not copied into the direct reply CloudEvent. Operators should configure
+`allowedPathPrefixes` whenever the local app exposes internal or admin endpoints.
+`dispatchmethod` is case-insensitive and normalized to uppercase. Both
+`dispatchmethod` and `dispatchpath` are control metadata stripped before
+CloudEvent SDK parsing, so they are not sent as `ce-` headers. Paths require
+exactly one leading slash and reject full/network URLs, fragments, backslashes,
+traversal (including encoded separators), and control characters. Direct reply
+IDs are deterministic, and telemetry uses the bounded route label `direct`.
+Static JetStream routes may use `DELETE`, but JetStream never accepts
+publisher-selected targets.
 
 ## Delivery guarantees
 

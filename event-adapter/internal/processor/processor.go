@@ -96,7 +96,9 @@ func (p *Processor) Process(ctx context.Context, subject string, ev *clevent.Eve
 		delivery = 1
 	}
 
-	res, dispatchErr := p.dispatcher.Dispatch(ctx, route.Dispatch, ev)
+	dispatchConfig := route.Dispatch
+	dispatchConfig.TelemetryRoute = route.Name
+	res, dispatchErr := p.dispatcher.Dispatch(ctx, dispatchConfig, ev)
 	if dispatchErr != nil {
 		// A failed dispatch is a delivery failure regardless of whether it
 		// retries or dead-letters; count it so the success-rate SLO reflects

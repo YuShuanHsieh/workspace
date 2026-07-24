@@ -17,6 +17,12 @@ handlers:
       status: 200
       contentType: application/json
       body: '{"uploadId":"up-1","url":"https://example-bucket.s3/put?sig=abc"}'
+  - method: DELETE
+    path: /requests/orders/{orderId}
+    response:
+      status: 200
+      contentType: application/json
+      body: '{"deleted":"ord-456","hard":true}'
   - method: POST
     path: /events/redirect-me
     requireHeaders:

@@ -80,6 +80,11 @@ requests:
   subject: q.tenant-a.app.uploads.request
   queueGroup: upload-responders
   workerPoolSize: 8
+  directDispatch:
+    enabled: true
+    timeout: 3s
+    allowedPathPrefixes:
+      - /requests/orders/
   routes:
     - name: upload-presign
       match:
@@ -103,4 +108,3 @@ requests:
         type: com.workspace.redirect.reply
 observability:
   environment: testing
-

@@ -31,6 +31,10 @@ func TestBuildResponseUsesDeterministicIDAndCausation(t *testing.T) {
 	if a.ID() != b.ID() {
 		t.Fatalf("response id must be deterministic: %q != %q", a.ID(), b.ID())
 	}
+	wantID := deterministicID(in.ID(), route.Name, route.Response.Type, route.Response.Subject)
+	if a.ID() != wantID {
+		t.Errorf("response id = %q, want legacy id %q", a.ID(), wantID)
+	}
 	if a.Type() != route.Response.Type || a.Source() != route.Response.Source {
 		t.Fatalf("unexpected response metadata: type=%q source=%q", a.Type(), a.Source())
 	}
@@ -45,6 +49,27 @@ func TestBuildResponseUsesDeterministicIDAndCausation(t *testing.T) {
 	}
 	if got := a.Extensions()["httpstatus"]; got != int32(200) {
 		t.Fatalf("unexpected httpstatus: %v", got)
+	}
+}
+
+func TestBuildResponsePreservesLegacyIDAcrossIncomingSources(t *testing.T) {
+	first := mustEvent(t, `{"specversion":"1.0","id":"evt-shared","source":"workspace/tasks-a","type":"com.workspace.task.created","data":{}}`)
+	second := mustEvent(t, `{"specversion":"1.0","id":"evt-shared","source":"workspace/tasks-b","type":"com.workspace.task.created","data":{}}`)
+	route := config.RouteConfig{
+		Name:     "task-created",
+		Response: config.ResponseConfig{Type: "com.workspace.task.processed", Source: "task-service", Subject: "tasks.processed"},
+	}
+
+	a, err := BuildResponse(first, route, 200, "application/json", nil, "")
+	if err != nil {
+		t.Fatalf("BuildResponse first: %v", err)
+	}
+	b, err := BuildResponse(second, route, 200, "application/json", nil, "")
+	if err != nil {
+		t.Fatalf("BuildResponse second: %v", err)
+	}
+	if a.ID() != b.ID() {
+		t.Errorf("legacy response IDs must ignore incoming source: %q != %q", a.ID(), b.ID())
 	}
 }
 
@@ -101,6 +126,112 @@ func TestBuildReplySuccess(t *testing.T) {
 	}
 	if got := out.Extensions()["correlationid"]; got != "corr-9" {
 		t.Errorf("correlationid = %v", got)
+	}
+	wantID := deterministicID(in.ID(), "upload-presign", reply.Type)
+	if out.ID() != wantID {
+		t.Errorf("static reply id = %q, want legacy id %q", out.ID(), wantID)
+	}
+}
+
+func TestBuildDirectReplyUsesGenericEnvelope(t *testing.T) {
+	in := mustEvent(t, `{"specversion":"1.0","id":"req-direct","source":"client","type":"orders.delete","correlationid":"corr-1","data":{}}`)
+
+	a, err := BuildDirectReply(in, DirectReplyConfig("order-service"), DirectRouteName, 204, "application/json", nil, "")
+	if err != nil {
+		t.Fatalf("BuildDirectReply: %v", err)
+	}
+	b, err := BuildDirectReply(in, DirectReplyConfig("order-service"), DirectRouteName, 204, "application/json", nil, "")
+	if err != nil {
+		t.Fatalf("BuildDirectReply: %v", err)
+	}
+
+	if a.Type() != DirectReplyType {
+		t.Errorf("type = %q, want %q", a.Type(), DirectReplyType)
+	}
+	if a.Source() != "order-service" {
+		t.Errorf("source = %q, want %q", a.Source(), "order-service")
+	}
+	if a.Subject() != "" {
+		t.Errorf("reply must have no subject, got %q", a.Subject())
+	}
+	if got := a.Extensions()["httpstatus"]; got != int32(204) {
+		t.Errorf("httpstatus = %v, want %v", got, int32(204))
+	}
+	if got := a.Extensions()["causationid"]; got != "req-direct" {
+		t.Errorf("causationid = %v, want %q", got, "req-direct")
+	}
+	if got := a.Extensions()["correlationid"]; got != "corr-1" {
+		t.Errorf("correlationid = %v, want %q", got, "corr-1")
+	}
+	if a.ID() == "" || a.ID() != b.ID() {
+		t.Errorf("direct reply id must be nonempty and deterministic: %q != %q", a.ID(), b.ID())
+	}
+}
+
+func TestBuildDirectReplyIDIncludesIncomingSource(t *testing.T) {
+	first := mustEvent(t, `{"specversion":"1.0","id":"req-shared","source":"client-a","type":"orders.delete","data":{}}`)
+	second := mustEvent(t, `{"specversion":"1.0","id":"req-shared","source":"client-b","type":"orders.delete","data":{}}`)
+	reply := DirectReplyConfig("order-service")
+
+	a, err := BuildDirectReply(first, reply, DirectRouteName, 204, "application/json", nil, "")
+	if err != nil {
+		t.Fatalf("BuildDirectReply first: %v", err)
+	}
+	b, err := BuildDirectReply(second, reply, DirectRouteName, 204, "application/json", nil, "")
+	if err != nil {
+		t.Fatalf("BuildDirectReply second: %v", err)
+	}
+	if a.ID() == b.ID() {
+		t.Errorf("direct reply IDs collide for distinct CloudEvent sources")
+	}
+}
+
+func TestBuildReplyRequiresDirectRouteAndTypeForSourceAwareID(t *testing.T) {
+	first := mustEvent(t, `{"specversion":"1.0","id":"req-shared","source":"client-a","type":"orders.delete","data":{}}`)
+	second := mustEvent(t, `{"specversion":"1.0","id":"req-shared","source":"client-b","type":"orders.delete","data":{}}`)
+	tests := []struct {
+		name      string
+		routeName string
+		replyType string
+	}{
+		{name: "direct route with static reply type", routeName: DirectRouteName, replyType: "orders.configured.reply"},
+		{name: "static route with direct reply type", routeName: "configured-route", replyType: DirectReplyType},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reply := config.ReplyConfig{Source: "order-service", Type: tt.replyType}
+			a, err := BuildReply(first, reply, tt.routeName, 204, "application/json", nil, "")
+			if err != nil {
+				t.Fatalf("BuildReply first: %v", err)
+			}
+			b, err := BuildReply(second, reply, tt.routeName, 204, "application/json", nil, "")
+			if err != nil {
+				t.Fatalf("BuildReply second: %v", err)
+			}
+			wantID := deterministicID(first.ID(), tt.routeName, tt.replyType)
+			if a.ID() != wantID || b.ID() != wantID {
+				t.Errorf("non-direct reply IDs must preserve legacy formula")
+			}
+		})
+	}
+}
+
+func TestBuildReplyPreservesLegacyIDWhenStaticRouteUsesDirectMetadataValues(t *testing.T) {
+	first := mustEvent(t, `{"specversion":"1.0","id":"req-shared","source":"client-a","type":"orders.delete","data":{}}`)
+	second := mustEvent(t, `{"specversion":"1.0","id":"req-shared","source":"client-b","type":"orders.delete","data":{}}`)
+	reply := config.ReplyConfig{Source: "order-service", Type: DirectReplyType}
+
+	a, err := BuildReply(first, reply, DirectRouteName, 204, "application/json", nil, "")
+	if err != nil {
+		t.Fatalf("BuildReply first: %v", err)
+	}
+	b, err := BuildReply(second, reply, DirectRouteName, 204, "application/json", nil, "")
+	if err != nil {
+		t.Fatalf("BuildReply second: %v", err)
+	}
+	wantID := deterministicID(first.ID(), DirectRouteName, DirectReplyType)
+	if a.ID() != wantID || b.ID() != wantID {
+		t.Errorf("static reply IDs must preserve legacy formula: got %q and %q, want %q", a.ID(), b.ID(), wantID)
 	}
 }
 
@@ -195,10 +326,65 @@ func TestBuildErrorReply(t *testing.T) {
 	if data["error"] != "no matching route" {
 		t.Errorf("error body = %v", data)
 	}
+	wantID := deterministicID(in.ID(), "upload-service", ErrorReplyType)
+	if out.ID() != wantID {
+		t.Errorf("error reply id = %q, want legacy id %q", out.ID(), wantID)
+	}
 
 	other := mustEvent(t, `{"specversion":"1.0","id":"req-405","source":"client","type":"com.x.request","data":{"a":1}}`)
 	out2 := BuildErrorReply(other, "upload-service", 404, "no matching route")
 	if out.ID() == out2.ID() {
 		t.Fatalf("error-reply IDs must vary by triggering request, got %q", out.ID())
+	}
+}
+
+func TestBuildErrorReplyPreservesLegacyIDAcrossIncomingSources(t *testing.T) {
+	first := mustEvent(t, `{"specversion":"1.0","id":"req-shared","source":"client-a","type":"com.x.request","data":{}}`)
+	second := mustEvent(t, `{"specversion":"1.0","id":"req-shared","source":"client-b","type":"com.x.request","data":{}}`)
+
+	a := BuildErrorReply(first, "upload-service", 404, "no matching route")
+	b := BuildErrorReply(second, "upload-service", 404, "no matching route")
+	if a.ID() != b.ID() {
+		t.Errorf("legacy error reply IDs must ignore incoming source: %q != %q", a.ID(), b.ID())
+	}
+}
+
+func TestBuildDirectErrorReplyIncludesIncomingSource(t *testing.T) {
+	first := mustEvent(t, `{"specversion":"1.0","id":"req-shared","source":"client-a","type":"orders.delete","correlationid":"corr-1","data":{}}`)
+	second := mustEvent(t, `{"specversion":"1.0","id":"req-shared","source":"client-b","type":"orders.delete","correlationid":"corr-1","data":{}}`)
+
+	a := BuildDirectErrorReply(first, "order-service", 400, "invalid target")
+	aAgain := BuildDirectErrorReply(first, "order-service", 400, "invalid target")
+	b := BuildDirectErrorReply(second, "order-service", 400, "invalid target")
+	if a.ID() == b.ID() {
+		t.Errorf("direct error reply IDs collide for distinct CloudEvent sources")
+	}
+	if a.ID() != aAgain.ID() {
+		t.Errorf("direct error reply ID is not deterministic: %q != %q", a.ID(), aAgain.ID())
+	}
+	if a.Type() != ErrorReplyType || a.Source() != "order-service" {
+		t.Errorf("unexpected envelope type=%q source=%q", a.Type(), a.Source())
+	}
+	if got := a.Extensions()["httpstatus"]; got != int32(400) {
+		t.Errorf("httpstatus = %v, want 400", got)
+	}
+	if got := a.Extensions()["causationid"]; got != "req-shared" {
+		t.Errorf("causationid = %v, want req-shared", got)
+	}
+	if got := a.Extensions()["correlationid"]; got != "corr-1" {
+		t.Errorf("correlationid = %v, want corr-1", got)
+	}
+	var data map[string]string
+	if err := a.DataAs(&data); err != nil {
+		t.Fatalf("data: %v", err)
+	}
+	if data["error"] != "invalid target" {
+		t.Errorf("error body = %v", data)
+	}
+
+	directNil := BuildDirectErrorReply(nil, "order-service", 400, "invalid target")
+	legacyNil := BuildErrorReply(nil, "order-service", 400, "invalid target")
+	if directNil.ID() != legacyNil.ID() {
+		t.Errorf("nil direct error ID must retain legacy message-based formula")
 	}
 }

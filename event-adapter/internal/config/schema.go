@@ -114,6 +114,7 @@ type DispatchConfig struct {
 	Timeout        time.Duration     `yaml:"timeout"`
 	Headers        map[string]string `yaml:"headers"`
 	ForwardHeaders []string          `yaml:"forwardHeaders"`
+	TelemetryRoute string            `yaml:"-"`
 }
 
 type ResponseConfig struct {
@@ -137,7 +138,14 @@ type RequestsConfig struct {
 	Subject        string               `yaml:"subject"`
 	QueueGroup     string               `yaml:"queueGroup"`
 	WorkerPoolSize int                  `yaml:"workerPoolSize"`
+	DirectDispatch DirectDispatchConfig `yaml:"directDispatch"`
 	Routes         []RequestRouteConfig `yaml:"routes"`
+}
+
+type DirectDispatchConfig struct {
+	Enabled             bool          `yaml:"enabled"`
+	Timeout             time.Duration `yaml:"timeout"`
+	AllowedPathPrefixes []string      `yaml:"allowedPathPrefixes"`
 }
 
 type RequestRouteConfig struct {

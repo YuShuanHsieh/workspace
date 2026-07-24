@@ -205,4 +205,3 @@ func TestResolveBadConfigDoesNotWrapPermanent(t *testing.T) {
 		t.Fatal("config errors must not wrap ErrPermanent")
 	}
 }
-

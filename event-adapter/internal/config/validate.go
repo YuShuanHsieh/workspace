@@ -3,12 +3,12 @@ package config
 import (
 	"fmt"
 	"net"
-	"net/http"
 	"net/url"
 	"slices"
 	"strings"
 
 	"event-adapter/internal/pathtemplate"
+	"event-adapter/internal/requesttarget"
 )
 
 // validEnvironments is the allowlist for observability.environment, matching the
@@ -170,8 +170,21 @@ func validateRequests(rc *RequestsConfig) []error {
 	if rc.WorkerPoolSize <= 0 {
 		errs = append(errs, ValidationError{Path: "requests.workerPoolSize", Msg: "must be positive"})
 	}
-	if len(rc.Routes) == 0 {
-		errs = append(errs, ValidationError{Path: "requests.routes", Msg: "must contain at least one route"})
+	if len(rc.Routes) == 0 && !rc.DirectDispatch.Enabled {
+		errs = append(errs, ValidationError{Path: "requests", Msg: "must configure routes or enable directDispatch"})
+	}
+	if rc.DirectDispatch.Enabled {
+		if rc.DirectDispatch.Timeout <= 0 {
+			errs = append(errs, ValidationError{Path: "requests.directDispatch.timeout", Msg: "must be positive"})
+		}
+		for i, prefix := range rc.DirectDispatch.AllowedPathPrefixes {
+			if err := requesttarget.ValidatePrefix(prefix); err != nil {
+				errs = append(errs, ValidationError{
+					Path: fmt.Sprintf("requests.directDispatch.allowedPathPrefixes[%d]", i),
+					Msg:  err.Error(),
+				})
+			}
+		}
 	}
 	seen := make(map[string]int, len(rc.Routes))
 	for i, r := range rc.Routes {
@@ -236,8 +249,9 @@ func validateRoute(prefix string, r RouteConfig) []error {
 
 func validateDispatch(prefix string, d DispatchConfig) []error {
 	var errs []error
-	if d.Method != http.MethodPost && d.Method != http.MethodPut && d.Method != http.MethodPatch && d.Method != http.MethodGet {
-		errs = append(errs, ValidationError{Path: prefix + ".dispatch.method", Msg: "must be POST, PUT, PATCH, or GET"})
+	normalizedMethod, err := requesttarget.NormalizeMethod(d.Method)
+	if err != nil || normalizedMethod != d.Method {
+		errs = append(errs, ValidationError{Path: prefix + ".dispatch.method", Msg: "must be GET, POST, PUT, PATCH, or DELETE"})
 	}
 	if !strings.HasPrefix(d.Path, "/") {
 		errs = append(errs, ValidationError{Path: prefix + ".dispatch.path", Msg: "must start with /"})

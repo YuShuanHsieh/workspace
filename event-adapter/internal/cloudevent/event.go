@@ -1,7 +1,9 @@
 package cloudevent
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	ce "github.com/cloudevents/sdk-go/v2/event"
@@ -12,6 +14,8 @@ type Event struct {
 	DispatchHeaders    map[string]string
 	DispatchCookies    map[string]string
 	DispatchPathParams map[string]string
+	DispatchMethod     string
+	DispatchPath       string
 }
 
 func (e *Event) MarshalJSON() ([]byte, error) {
@@ -44,6 +48,16 @@ func Parse(raw []byte) (*Event, error) {
 		return nil, err
 	}
 	delete(probe, "dispatchpathparams")
+	dispatchMethod, err := parseDispatchString("dispatchmethod", probe["dispatchmethod"])
+	if err != nil {
+		return nil, err
+	}
+	delete(probe, "dispatchmethod")
+	dispatchPath, err := parseDispatchString("dispatchpath", probe["dispatchpath"])
+	if err != nil {
+		return nil, err
+	}
+	delete(probe, "dispatchpath")
 	cleaned, err := json.Marshal(probe)
 	if err != nil {
 		return nil, fmt.Errorf("cloudevent: clean envelope: %w", err)
@@ -72,6 +86,8 @@ func Parse(raw []byte) (*Event, error) {
 		DispatchHeaders:    dispatchHeaders,
 		DispatchCookies:    dispatchCookies,
 		DispatchPathParams: dispatchPathParams,
+		DispatchMethod:     dispatchMethod,
+		DispatchPath:       dispatchPath,
 	}, nil
 }
 
@@ -116,4 +132,18 @@ func parseDispatchPathParams(raw json.RawMessage) (map[string]string, error) {
 		return nil, fmt.Errorf("cloudevent: dispatchpathparams must be a string-valued object: %w", err)
 	}
 	return values, nil
+}
+
+func parseDispatchString(name string, raw json.RawMessage) (string, error) {
+	if len(raw) == 0 {
+		return "", nil
+	}
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return "", fmt.Errorf("cloudevent: %s must be a string: %w", name, errors.New("got null"))
+	}
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return "", fmt.Errorf("cloudevent: %s must be a string: %w", name, err)
+	}
+	return value, nil
 }

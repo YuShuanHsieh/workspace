@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"testing"
 	"time"
 
@@ -16,13 +17,15 @@ import (
 )
 
 type fakeDispatcher struct {
-	result dispatcher.Result
-	err    error
-	calls  int
+	result       dispatcher.Result
+	err          error
+	calls        int
+	lastDispatch config.DispatchConfig
 }
 
-func (f *fakeDispatcher) Dispatch(context.Context, config.DispatchConfig, *clevent.Event) (dispatcher.Result, error) {
+func (f *fakeDispatcher) Dispatch(_ context.Context, cfg config.DispatchConfig, _ *clevent.Event) (dispatcher.Result, error) {
 	f.calls++
+	f.lastDispatch = cfg
 	return f.result, f.err
 }
 
@@ -108,6 +111,28 @@ func TestProcessorRecordsDeliverySuccessAndConversion(t *testing.T) {
 	}
 	if rec.success != 1 || rec.failure != 0 || rec.convs != 1 {
 		t.Fatalf("metrics success=%d failure=%d convs=%d, want 1/0/1", rec.success, rec.failure, rec.convs)
+	}
+}
+
+func TestProcessorPassesBoundedTelemetryRouteToDispatcher(t *testing.T) {
+	pub := &fakePublisher{}
+	h := &fakeHandle{deliveries: 1}
+	disp := &fakeDispatcher{result: dispatcher.Result{
+		StatusCode:  http.StatusOK,
+		ContentType: "application/json",
+		Body:        []byte(`{"ok":true}`),
+	}}
+	route := testRoute(1)
+	route.Dispatch = config.DispatchConfig{Method: http.MethodPost, Path: "/events/tasks/task-42", Timeout: time.Second}
+
+	if err := New(disp, pub).Process(context.Background(), "input.subject", newTestEvent(t), route, h); err != nil {
+		t.Fatalf("Process returned error: %v", err)
+	}
+	if disp.lastDispatch.TelemetryRoute != route.Name {
+		t.Errorf("telemetry route = %q, want %q", disp.lastDispatch.TelemetryRoute, route.Name)
+	}
+	if route.Dispatch.TelemetryRoute != "" {
+		t.Errorf("route dispatch config was mutated: telemetry route = %q", route.Dispatch.TelemetryRoute)
 	}
 }
 

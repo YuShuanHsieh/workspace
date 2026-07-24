@@ -172,6 +172,55 @@ func TestRequestReplyPresign(t *testing.T) {
 	}
 }
 
+func TestRequestReplyDirectDelete(t *testing.T) {
+	nc, err := nats.Connect("nats://127.0.0.1:4222")
+	if err != nil {
+		t.Fatalf("connect nats: %v", err)
+	}
+	defer nc.Close()
+
+	fixture, err := os.ReadFile("fixtures/direct-delete.json")
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+
+	msg, err := nc.Request("q.tenant-a.app.uploads.request", fixture, 15*time.Second)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+
+	var reply map[string]any
+	if err := json.Unmarshal(msg.Data, &reply); err != nil {
+		t.Fatalf("decode reply: %v", err)
+	}
+	if reply["type"] != "io.eventadapter.direct.reply" {
+		t.Errorf("type = %v, want io.eventadapter.direct.reply", reply["type"])
+	}
+	if reply["source"] != "task-service" {
+		t.Errorf("source = %v, want task-service", reply["source"])
+	}
+	if reply["causationid"] != "req-direct-delete-1" {
+		t.Errorf("causationid = %v, want req-direct-delete-1", reply["causationid"])
+	}
+	if reply["correlationid"] != "corr-direct-delete-1" {
+		t.Errorf("correlationid = %v, want corr-direct-delete-1", reply["correlationid"])
+	}
+	status, ok := reply["httpstatus"].(float64)
+	if !ok || status != 200 {
+		t.Errorf("httpstatus = %v, want 200", reply["httpstatus"])
+	}
+	data, ok := reply["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("response.data is not an object: %v", reply["data"])
+	}
+	if data["deleted"] != "ord-456" {
+		t.Errorf("data.deleted = %v, want ord-456", data["deleted"])
+	}
+	if data["hard"] != true {
+		t.Errorf("data.hard = %v, want true", data["hard"])
+	}
+}
+
 // TestJetStreamRedirectPublishesHTTPLocation verifies that when the dispatched
 // HTTP endpoint returns a 3xx with a Location header, the response CloudEvent
 // published on the response subject carries httpstatus=307 and httplocation,
