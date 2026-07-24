@@ -197,7 +197,7 @@ or read your commands.
 | `evt.app.{{tag(namespace)}}.>` | ✓ | ✓ | Own event bus (PUB + SUB replicas). |
 | `dlq.app.{{tag(namespace)}}.>` | ✓ | ✓ | Own dead-letter. **Route DLQ to a separate stream** with long retention (§6.4). |
 | `evt.marketplace.{{tag(namespace)}}.>` | ✓ | | Publish **my** catalog events. |
-| `run.app.{{tag(namespace)}}.>` | | ✓ | **Reserved** — receive external triggers on my own namespace. No producer today; when a scheduler/webhook appears, add a separate `scoped_platform` producer key — no change here (§8). |
+| `run.app.{{tag(namespace)}}.>` | | ✓ | **Reserved** — receive external triggers on my own namespace. No producer today; when a scheduler/webhook appears, add a separate `scoped_platform` producer key — no change here (§9). |
 | `twsp.user.>` | ✓ | | Push to any addressed user; recipient chosen from the event. Safety = user-side SUB scope. |
 | `cmd.app.{{tag(calls)}}.>` | ✓ | | Invoke registered **peer** apps. |
 | `resp.app.{{tag(calls)}}.>` | | ✓ | Receive responses from apps I called. |
@@ -217,7 +217,7 @@ only sub-marketplace. A peer relationship therefore can't forge your events or
 read your commands.
 
 **Deliberately absent:**
-- `PUB run.app.<ns>.>` — apps don't trigger each other; that's a platform action (§8).
+- `PUB run.app.<ns>.>` — apps don't trigger each other; that's a platform action (§9).
 - Broad `$JS.API.>` and any `$JS.API.STREAM.DELETE`/`PURGE` — stream lifecycle
   stays with the NATS team; the app never deletes/purges streams.
 - Blank `PUB evt.marketplace.>` — every producer scoped to its own subtree.
@@ -637,7 +637,7 @@ Client-side requirement: `nats.CustomInboxPrefix("_INBOX.alice")` in the nats.go
 | `EVT_<NS>` | `evt.app.<ns>.>` | limits or interest | short (hours) |
 | `DLQ_<NS>` | `dlq.app.<ns>.>` | limits | long (7–30 days) |
 
-Same reasoning for `RESP_<NS>` streams (see §7).
+Same reasoning for `RESP_<NS>` streams (see §8).
 
 ### 6.5 `$JS.API.>` — never grant broad
 
@@ -731,7 +731,133 @@ not identity forgery. Scoping those tags to the registries closes it completely:
 
 ---
 
-## 7. Sizing considerations (from the review)
+## 7. Multi-site / supercluster federation
+
+The platform runs across multiple sites (independent clusters), each with its own
+NATS cluster and its own datastore, joined into one NATS **supercluster** by
+gateway links. **Each app and each user is homed in exactly one site** (a specific
+site, or a designated central site). This section extends the single-site model
+above to the multi-site topology **without changing the two scoped-key templates**.
+
+### 7.1 The governing rule: siteID only on cross-gateway subjects
+
+Because every site has its **own** NATS cluster, a client connected to a site is
+*already* scoped to that site — so putting a site token on intra-site subjects is
+redundant. The rule:
+
+> **siteID appears in a subject only when the subject must name a *destination*
+> (or *home*) site for cross-gateway routing.** All same-site traffic stays
+> site-free.
+
+Consequences:
+
+- **The two scoped-key templates (§4) are unchanged** and operate **per site**. All
+  the flows in the companion flows doc happen **within one site**: `cmd.app.<ns>`,
+  `resp.app.<ns>`, `evt.app.<ns>`, `twsp.user.<acct>`, etc. carry **no** site token.
+- Each service connects to **one** NATS — its own site's — and is told its site id
+  and the list of peer sites by configuration (one NATS URL per site).
+- The gateway wiring itself is an ops/IaC concern; it is **not** encoded in any
+  service or in these permission templates.
+
+### 7.2 Cross-site interaction: a federation lane, not gateway-wide subscription
+
+Apps do **not** subscribe across the gateway into other sites' subtrees. Instead,
+cross-site interaction flows through a dedicated **federation lane** whose subject
+names the **destination site**, and a **federation worker** at the destination
+consumes it and re-injects it into that site's local NATS as an ordinary message:
+
+```
+fed.<destSite>.external.cmd.<ns>.<...>     # cross-site invoke of app <ns> homed at <destSite>
+fed.<destSite>.external.evt.<ns>.<...>     # cross-site event delivery
+```
+
+- The publishing app publishes to `fed.<destSite>.external.…`; the supercluster
+  gateway routes it to `<destSite>`.
+- A **federation worker** at each site consumes **only** `fed.<ownSite>.external.>`
+  and re-publishes into the local NATS as a normal `cmd.app.<ns>` / `evt.app.<ns>`.
+  The `external` token is the **structural guard**: the worker can never re-apply
+  same-site traffic, only genuinely-remote events.
+- The **receiving app needs no cross-site permission at all** — it just receives an
+  ordinary local `cmd`/`evt`. Cross-site complexity is concentrated in one lane and
+  one worker, not spread across every app's key.
+- For **order-sensitive / durability-critical** cross-site events, buffer through a
+  local outbox stream drained by a forwarder with per-peer FIFO, so a down peer
+  can't stall healthy peers. (Live, loss-tolerant events can publish to the
+  federation lane directly.)
+
+### 7.3 Federation permissions (two new tags)
+
+Only the federation lane needs new grants; the six intra-site tags (§4.0) are
+unchanged. Two multi-site tags are added:
+
+| Tag | Value | Cardinality | On |
+|-----|-------|:-----------:|----|
+| `site` | the principal's **own** home site | single | every principal |
+| `fed_dest` | a destination site the principal may federate to | multi | apps that make cross-site calls |
+
+**Source app** (publishing cross-site) gains:
+```text
+pub  fed.{{tag(fed_dest)}}.external.>       # only to sites it's allowed to reach
+```
+
+**Federation worker** (a dedicated principal per site, like the app flow but for
+federation) gets:
+```text
+sub  fed.{{tag(site)}}.external.>           # consume only its own site's inbound lane
+# + the app-flow re-inject grants (pub cmd.app.*, pub evt.app.*) it needs locally
+```
+
+`fed_dest` is populated from the registry (which sites the app has approved
+cross-site relationships with); an app with no cross-site relationships gets no
+`fed_dest` value, so the federation PUB rule drops — same tag-driven model as §4.
+
+### 7.4 Site resolution: replicate a small directory into each site
+
+To stamp a site-qualified `fed_dest` (or to decide local-vs-remote at all),
+auth-service must resolve **which site owns a given app or user**. The established
+pattern is to **store the home site on each app/user record and replicate a small
+directory into every site's local store**, so resolution happens **locally at mint
+with no central hot-path dependency**:
+
+- `app_directory(namespace → home_site)` — small, changes only on app
+  registration/relocation; replicated to every site.
+- The grant tables (§4.5) — `user_app_entitlements`, `app_call_grants`,
+  `marketplace_subscriptions` — likewise resolvable locally.
+- **Central-site-registered apps** are just apps whose `home_site` is the central
+  site; the directory is **fanned out from the central site** to all sites.
+- A user's home site is stored on the user record (or derived from where they
+  authenticate).
+
+The directory is the one piece of state that must be **eventually consistent
+across sites** — a stale entry means auth-service stamps the wrong destination
+site and the message lands where the target app isn't listening. Everything else
+(business data) stays site-local; **only the address directory + grant rows are
+replicated**, not entire datastores.
+
+### 7.5 JetStream across sites
+
+JetStream streams are **cluster-local** — a stream lives in one site. Stream names
+are per-site. Cross-site **durable** consumption requires a stream **mirror/source**
+into the consuming site; the consumer there names the local mirror stream in its
+`stream`/`consumer` tags. Live cross-site delivery (the federation lane above) is
+core NATS and crosses gateways freely; plan **durable** cross-site paths as
+explicit mirrors.
+
+### 7.6 Net
+
+| Concern | Multi-site answer |
+|---------|-------------------|
+| Site token in every subject? | **No** — per-site NATS makes it redundant; siteID only on cross-gateway (`fed.<destSite>…`) subjects. |
+| Intra-site permissions | **Unchanged** — the two scoped keys (§4), operating per site. |
+| Cross-site reach | A **federation lane** naming the destination site + a **federation worker** that re-injects locally. Apps never subscribe across the gateway. |
+| New tags | `site` (own home site) and `fed_dest` (destinations allowed) — federation lane only. |
+| Site resolution | Replicate a small **`app_directory` + grant rows** into each site; resolve **locally at mint**. Central apps fan out from the central site. |
+| JetStream cross-site | Stream **mirror/source** into the consuming site; consumer tags name the local mirror. |
+| Gateway wiring | Ops/IaC — not in service code, not in the templates. |
+
+---
+
+## 8. Sizing considerations (from the review)
 
 Rough numbers from the source deck; expand with:
 
@@ -743,7 +869,7 @@ Rough numbers from the source deck; expand with:
 
 ---
 
-## 8. Deferred / open questions
+## 9. Deferred / open questions
 
 - **`run.app.<ns>.>`** — external **trigger surface** (scheduler / webhook / admin "run now"); the producer is platform/infra, a different principal class from users and apps. The app-flow key already **reserves the consume side** (`SUB run.app.{{tag(namespace)}}.>`) so nothing changes when it's enabled. No producer today. When needed, introduce a separate `scoped_platform` signing key for the trigger service (`PUB run.app.<target>.>`, scoped by a "which apps may I trigger" tag) — the app template stays untouched. Do **not** grant apps `PUB run.app.*` (apps don't trigger each other).
 - **Presence / typing on the user side.** Does the user need `PUB twsp.user.{{tag(account)}}.>` for presence blips? If yes, add explicitly.
@@ -753,7 +879,7 @@ Rough numbers from the source deck; expand with:
 
 ---
 
-## 9. Summary
+## 10. Summary
 
 The workspace-product authorization model is **two scoped signing keys + one entitlement service** stamping six tags (§4.0):
 

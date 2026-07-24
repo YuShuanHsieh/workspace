@@ -35,6 +35,11 @@ loss OK → **core pub/sub**; must-not-lose / offline / replay → **JetStream**
 apps you may invoke. `subscribes` = marketplace producers you consume. All
 user-facing return paths are keyed by `account`.
 
+**Scope:** every scenario below is **intra-site** — one site's NATS cluster. In a
+multi-site supercluster, these flows are unchanged (site tokens are not added to
+these subjects); cross-site interaction goes through a separate federation lane
+and worker. See `workspacenatspermissions.md` §7 for the multi-site model.
+
 ---
 
 ## Scenario index
