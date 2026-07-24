@@ -3,7 +3,8 @@
 NATS-to-local-HTTP dispatch sidecar. Bridges NATS messages to an app's loopback
 HTTP handlers so the app never embeds NATS client code.
 
-Design source: `../prd/event-adapter/prd.md`. Request-reply design:
+Design source: `../prd/event-adapter/prd.md`. Request-reply designs:
+`../docs/superpowers/specs/2026-06-07-event-adapter-req-reply-design.md` and
 `../docs/superpowers/specs/2026-07-23-event-adapter-direct-request-dispatch-design.md`.
 
 Two inbound delivery models share one dispatch core (`parse CloudEvent → match by

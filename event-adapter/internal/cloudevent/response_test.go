@@ -136,13 +136,13 @@ func TestBuildReplySuccess(t *testing.T) {
 func TestBuildDirectReplyUsesGenericEnvelope(t *testing.T) {
 	in := mustEvent(t, `{"specversion":"1.0","id":"req-direct","source":"client","type":"orders.delete","correlationid":"corr-1","data":{}}`)
 
-	a, err := BuildReply(in, DirectReplyConfig("order-service"), DirectRouteName, 204, "application/json", nil, "")
+	a, err := BuildDirectReply(in, DirectReplyConfig("order-service"), DirectRouteName, 204, "application/json", nil, "")
 	if err != nil {
-		t.Fatalf("BuildReply: %v", err)
+		t.Fatalf("BuildDirectReply: %v", err)
 	}
-	b, err := BuildReply(in, DirectReplyConfig("order-service"), DirectRouteName, 204, "application/json", nil, "")
+	b, err := BuildDirectReply(in, DirectReplyConfig("order-service"), DirectRouteName, 204, "application/json", nil, "")
 	if err != nil {
-		t.Fatalf("BuildReply: %v", err)
+		t.Fatalf("BuildDirectReply: %v", err)
 	}
 
 	if a.Type() != DirectReplyType {
@@ -173,13 +173,13 @@ func TestBuildDirectReplyIDIncludesIncomingSource(t *testing.T) {
 	second := mustEvent(t, `{"specversion":"1.0","id":"req-shared","source":"client-b","type":"orders.delete","data":{}}`)
 	reply := DirectReplyConfig("order-service")
 
-	a, err := BuildReply(first, reply, DirectRouteName, 204, "application/json", nil, "")
+	a, err := BuildDirectReply(first, reply, DirectRouteName, 204, "application/json", nil, "")
 	if err != nil {
-		t.Fatalf("BuildReply first: %v", err)
+		t.Fatalf("BuildDirectReply first: %v", err)
 	}
-	b, err := BuildReply(second, reply, DirectRouteName, 204, "application/json", nil, "")
+	b, err := BuildDirectReply(second, reply, DirectRouteName, 204, "application/json", nil, "")
 	if err != nil {
-		t.Fatalf("BuildReply second: %v", err)
+		t.Fatalf("BuildDirectReply second: %v", err)
 	}
 	if a.ID() == b.ID() {
 		t.Errorf("direct reply IDs collide for distinct CloudEvent sources")
@@ -213,6 +213,25 @@ func TestBuildReplyRequiresDirectRouteAndTypeForSourceAwareID(t *testing.T) {
 				t.Errorf("non-direct reply IDs must preserve legacy formula")
 			}
 		})
+	}
+}
+
+func TestBuildReplyPreservesLegacyIDWhenStaticRouteUsesDirectMetadataValues(t *testing.T) {
+	first := mustEvent(t, `{"specversion":"1.0","id":"req-shared","source":"client-a","type":"orders.delete","data":{}}`)
+	second := mustEvent(t, `{"specversion":"1.0","id":"req-shared","source":"client-b","type":"orders.delete","data":{}}`)
+	reply := config.ReplyConfig{Source: "order-service", Type: DirectReplyType}
+
+	a, err := BuildReply(first, reply, DirectRouteName, 204, "application/json", nil, "")
+	if err != nil {
+		t.Fatalf("BuildReply first: %v", err)
+	}
+	b, err := BuildReply(second, reply, DirectRouteName, 204, "application/json", nil, "")
+	if err != nil {
+		t.Fatalf("BuildReply second: %v", err)
+	}
+	wantID := deterministicID(first.ID(), DirectRouteName, DirectReplyType)
+	if a.ID() != wantID || b.ID() != wantID {
+		t.Errorf("static reply IDs must preserve legacy formula: got %q and %q, want %q", a.ID(), b.ID(), wantID)
 	}
 }
 

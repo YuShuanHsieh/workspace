@@ -157,6 +157,7 @@ func (r *Responder) handle(ctx context.Context, m natsjs.RequestMsg) {
 	}
 	ev = parsed
 	route, ok := r.matcher.Match(ev)
+	direct := false
 	if !ok {
 		if !r.cfg.DirectDispatch.Enabled {
 			r.metrics.InvalidRequestEvent(ctx, "no_route")
@@ -182,6 +183,7 @@ func (r *Responder) handle(ctx context.Context, m natsjs.RequestMsg) {
 			},
 			Reply: clevent.DirectReplyConfig(r.appID),
 		}
+		direct = true
 	}
 	r.metrics.RequestReceived(ctx, route.Name)
 	start := time.Now()
@@ -189,6 +191,10 @@ func (r *Responder) handle(ctx context.Context, m natsjs.RequestMsg) {
 
 	dispatchConfig := route.Dispatch
 	dispatchConfig.TelemetryRoute = route.Name
+	replyBuilder := clevent.BuildReply
+	if direct {
+		replyBuilder = clevent.BuildDirectReply
+	}
 	res, derr := r.disp.Dispatch(ctx, dispatchConfig, ev)
 	if derr != nil {
 		r.metrics.RequestDispatchError(ctx, route.Name)
@@ -199,7 +205,7 @@ func (r *Responder) handle(ctx context.Context, m natsjs.RequestMsg) {
 		case errors.Is(derr, context.DeadlineExceeded):
 			status = http.StatusGatewayTimeout
 		}
-		reply, berr := clevent.BuildReply(ev, route.Reply, route.Name, status, "application/json", errorBody(derr.Error()), "")
+		reply, berr := replyBuilder(ev, route.Reply, route.Name, status, "application/json", errorBody(derr.Error()), "")
 		if berr != nil {
 			r.respond(m, clevent.BuildErrorReply(ev, r.appID, http.StatusInternalServerError, berr.Error()))
 			return
@@ -207,7 +213,7 @@ func (r *Responder) handle(ctx context.Context, m natsjs.RequestMsg) {
 		r.respond(m, reply)
 		return
 	}
-	reply, berr := clevent.BuildReply(ev, route.Reply, route.Name, res.StatusCode, res.ContentType, res.Body, res.Location)
+	reply, berr := replyBuilder(ev, route.Reply, route.Name, res.StatusCode, res.ContentType, res.Body, res.Location)
 	if berr != nil {
 		r.respond(m, clevent.BuildErrorReply(ev, r.appID, http.StatusInternalServerError, berr.Error()))
 		return

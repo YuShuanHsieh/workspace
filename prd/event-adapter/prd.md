@@ -414,7 +414,8 @@ These targets should be validated with load tests before production rollout.
 
 The request-reply responder lets a backend service answer NATS request-reply calls over its existing loopback HTTP handlers, with no NATS code of its own. It is the **primary** model; the JetStream consumption path (sections 4–10) is opt-in for durable fan-out.
 
-Design reference: [`../../docs/superpowers/specs/2026-07-23-event-adapter-direct-request-dispatch-design.md`](../../docs/superpowers/specs/2026-07-23-event-adapter-direct-request-dispatch-design.md).
+Design references: [request-reply](../../docs/superpowers/specs/2026-06-07-event-adapter-req-reply-design.md)
+and [direct request dispatch](../../docs/superpowers/specs/2026-07-23-event-adapter-direct-request-dispatch-design.md).
 
 ### 17.1 When to use which model
 
